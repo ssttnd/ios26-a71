@@ -1,3 +1,18 @@
+## 2026-11-19: from-scratch install path (docs/INSTALL.md, tools/a71-install.py)
+
+`tools/a71-install.py` steps: `pull` (TWRP backup + firmware + stock DTB), `fetch` (newest successful CI
+artifacts of the branch to research/ci), `write-root`, `package` (one payload with everything the phone got
+over the waves: Metal bundle + sweet-native-env, wland/netsvc + modem/WLAN firmware + vendor bdwlan.b00/regdb +
+rmtfs copies, adspboot + ADSP firmware + SunfishAudio.driver + VirtualAudio back, sweetdbg + key, launchd.plist
+without fairplayd.H2 + wland job + rebuild job, patched lockdownd, Wi-Fi network service, 32 app moves, optional
+time zone), `boot` (README boot line + sweetpayload=1 + RTC offset, payload write, flash). Linux is still needed
+once for mkiosroot.sh + sweet-root-tweaks.py + shim/build.sh.
+**Tested without the phone:** fetch (xnu 2535fbc, metal cea8851, wifi a554b73, audio 7f9bca2, wallpaper cdf29d4),
+`package backup/ios16-root-20H392-a71-v13.img` -> 102 MiB payload, launchd 530 -> 531 jobs, fairplayd gone;
+the boot line with sweetpayload=1 fits the 607 bytes. **Not tested:** pull, write-root, boot on a phone, and a
+full fresh install. Guess, not checked: the wave3 job drops (vmd, ReportCrash, axassetsd) are not in the
+package; adspboot.args uses -20 dB.
+
 ## A71 handoff 2026-11-06 (READ FIRST): lock screen reached
 
 **Observed (owner, on screen):** after writing root v13 and a plain system reboot:

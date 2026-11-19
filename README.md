@@ -45,6 +45,9 @@ The phone boots iOS from its `boot` partition. TWRP stays in `recovery` and is h
 
 ## First install
 
+Step by step from a stock phone: **`docs/INSTALL.md`**, driven by `tools/a71-install.py`
+(`pull`, `fetch`, `write-root`, `package`, `boot`). The outline:
+
 **This erases `userdata`.** Back up the phone first, at least `persist`, `efs`, `sec_efs`, `modemst1`,
 `modemst2`, `fsg`, `fsc` and `boot`, and keep the `boot` backup: it is the way back to Android.
 
