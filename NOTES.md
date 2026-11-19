@@ -280,3 +280,23 @@
   rtcoff 1778420636; packer added sweetbattery=2, sweetm2restart=2, DCS brightness on, sweetcharge default;
   cmdline 533 bytes. Package VERIFY OK, boot VERIFY OK `3bc04ed8a20a0a5929d1cf8b7e0562dada9b8e03d04cd06ec96e1b9ecad0f14b`.
   Fallback: metal-c (`40ccca6a...`).
+
+## 2026-11-19 22:20 — all-a results; MobileGestalt override protected; wallpaper; all-b flashed
+
+- all-a (owner, two boots): battery right (log `s2mu106 66% 3988mV 21mA`), torch ok, gestures ok after the GPU
+  restart (sweetm2restart=2), power off by holding the key not reported. Settings still hang on the second boot
+  although fairplayd.H2 is gone there (0 lines) and the speech synthesizers no longer crash (package 11/11).
+  Control Center back to 3 empty buttons, home screen icons vanish. Lock screen date "31 Dec 04:00": the kernel
+  set the calendar right (`calendar set from the PM6150 RTC: 1795107806 s`) and no SWEET TIME setter appeared;
+  Scion reports the same lock screen date on iOS 27 (guess: lock screen rendering, not the clock).
+- Cause of the lost override (read in TWRP): the cache now uid 501 gid 0 mode 0666, same CacheUUID and 23G90, our
+  two CacheExtra keys gone: MobileGestaltHelper (runs as mobile) rewrote the file in place, which my mode 0666
+  allowed (its directory is root 0755). Now written root 0644.
+- Package `build/a71-ios26-wall.payload` (25 entries, `13d7bd1d...`, recipe userspace/wallpaper26/build-payload.sh):
+  MobileGestalt override root 0644, Control Center layout moved aside again, Bergamota sweetnet26 tools from
+  CI 44573984243 (sweetfp26.dylib replaces /usr/local/lib/sweetfp.dylib, old one in /var/local/pb-backup;
+  sweetlegacywall, sweetposterset), a gradient /var/local/wallpaper.png, /var/local/wall.sh run once by the new
+  launchd job org.a71.wallpaper-once (log /var/local/wall.log, marker /var/local/wall.done); launchd.plist without
+  fairplayd.H2, with that job (692 jobs). The job runs from the second boot.
+- `build/a71-ios26-all-b.img` = all-a + `sweetdtlog=Preferences` (Settings os_log on the console), VERIFY OK
+  `3e069f06...`. USB log `logs/usb-ios26-all-b.txt`.

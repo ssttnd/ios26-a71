@@ -54,6 +54,7 @@ def main():
     parser.add_argument('--payload', action='store_true', help='apply a verified raw package on this boot')
     parser.add_argument('--cpufreq', action='store_true', help='SM7150 cpufreq-hw: highest non-boost row (donor 2000; Adreno build)')
     parser.add_argument('--rtcoff', type=int, help='seconds to add to the PM6150 RTC (now - /sys/class/rtc/rtc0/since_epoch in TWRP)')
+    parser.add_argument('--dtlog', help='sweetdtlog=NAME[,NAME]: their os_log on the console (donor 0205)')
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
@@ -105,6 +106,8 @@ def main():
         cmdline = cmdline.replace('sweetbattery=0', 'sweetbattery=2').replace(' sweetcharge=0', '')
     if args.rtcoff:
         cmdline += f' sweetrtcoff={args.rtcoff}'
+    if args.dtlog:
+        cmdline += f' sweetdtlog={args.dtlog}'
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=args.output.parent) as temp:
