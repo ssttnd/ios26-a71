@@ -6,6 +6,10 @@ on:
       runner:
         description: macOS runner for the XNU build
         default: macos-15-intel
+      adreno:
+        description: Include the SM7150 Adreno 618 and A71 bundle installer patches
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -13,6 +17,7 @@ permissions:
 env:
   DXB_SHA: 663906528d1cd5ea8fde7de6f16de73db9511549
   BERGAMOTA_SHA: 37a7a7a917fc09945ed2f7d1ae68b84d4525b4cb
+  REDMI_SHA: 4ff9b8ea41812307b867c334c77f4c290ccf1dd8
   MACOS_VERSION: "26.5"
   KERNEL_CONFIG: DEVELOPMENT
   MACHINE_CONFIG: SWEET
@@ -65,6 +70,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Stage XNU build dependencies and patches
+        env:
+          BUILD_ADRENO: ${{ inputs.adreno }}
         run: |
           git init -q dxb
           git -C dxb fetch -q --depth 1 https://github.com/blacktop/darwin-xnu-build "$DXB_SHA"
@@ -72,7 +79,14 @@ jobs:
           git init -q berg
           git -C berg fetch -q --depth 1 https://github.com/ry-diffusion/Bergamota "$BERGAMOTA_SHA"
           git -C berg checkout -q --detach FETCH_HEAD
-          python3 tools/stage-xnu26.py dxb berg
+          if [ "$BUILD_ADRENO" = true ]; then
+            git init -q redmi
+            git -C redmi fetch -q --depth 1 https://github.com/DC28088/ios-sweet "$REDMI_SHA"
+            git -C redmi checkout -q --detach FETCH_HEAD
+            python3 tools/stage-xnu26.py dxb berg --adreno-donor redmi
+          else
+            python3 tools/stage-xnu26.py dxb berg
+          fi
       - name: Select Xcode and install build tools
         run: |
           xc=$(find /Applications -maxdepth 1 -name 'Xcode_26.1*.app' | sort -V | tail -1)
@@ -112,9 +126,17 @@ jobs:
           path: out/
           if-no-files-found: warn
       - name: Verify and publish kernel
+        env:
+          BUILD_ADRENO: ${{ inputs.adreno }}
         run: |
           src=dxb/fakeroot/System/Library/Kernels/kernel.development.sweet
           grep -aFq 'xnu-12377.121.6' "$src"
+          grep -aFq 'Samsung S6SY771 (sec_ts)' "$src"
+          if [ "$BUILD_ADRENO" = true ]; then
+            grep -aFq 'SWEET GPU: GPUCC audit v2' "$src"
+            grep -aFq 'SWEET RENDER: Metal plugin' "$src"
+            grep -aFq 'SWEET PAYLOAD: finished' "$src"
+          fi
           cp "$src" dxb/series-SHA256SUMS out/
           (cd out && shasum -a 256 kernel.development.sweet > SHA256SUMS)
       - uses: actions/upload-artifact@v4
