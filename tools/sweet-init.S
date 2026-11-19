@@ -59,6 +59,14 @@ _start:
 	bl	write_console
 
 tick:
+	bl	sleep_5s
+	adr	x1, alive
+	adr	x2, alive_end
+	sub	x2, x2, x1
+	bl	write_console
+	b	tick
+
+sleep_5s:
 	/* select(0, NULL, NULL, NULL, &5s) as a portable sleep */
 	mov	x0, #0
 	mov	x1, #0
@@ -67,12 +75,7 @@ tick:
 	adr	x4, five_sec
 	mov	x16, #SYS_select
 	svc	#0x80
-
-	adr	x1, alive
-	adr	x2, alive_end
-	sub	x2, x2, x1
-	bl	write_console
-	b	tick
+	ret
 
 /* write(x19, x1, x2) */
 write_console:
@@ -82,6 +85,7 @@ write_console:
 	ret
 
 hang:
+	bl	sleep_5s
 	b	hang
 
 	.p2align 3

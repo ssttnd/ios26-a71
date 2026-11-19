@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - name: Build HFSX RAM disk with diagnostic PID 1
         run: |
-          mkdir -p out smoke-root/sbin
+          mkdir -p out smoke-root/sbin smoke-root/dev
           xcrun clang -target arm64-apple-ios26.0 -c tools/sweet-init.S -o sweet-init.o
           python3 tools/mkinit.py sweet-init.o smoke-root/sbin/launchd
           chmod 755 smoke-root/sbin/launchd
@@ -36,6 +36,7 @@ jobs:
             -format UDRW -srcfolder smoke-root out/a71-smoke.dmg
           python3 tools/hfsread.py out/a71-smoke.dmg --dump /sbin/launchd check-launchd
           cmp smoke-root/sbin/launchd check-launchd
+          PYTHONPATH=tools python3 -c "from hfsread import HFS; assert HFS('out/a71-smoke.dmg').info('/dev')['type'] == 'dir'"
           python3 - <<'PY'
           from pathlib import Path
           from struct import unpack_from

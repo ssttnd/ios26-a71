@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Build the minimal Apple Device Tree that the SWEET xnu needs to boot.
 
-Only what the early boot path actually reads (see NOTES.md); every MMIO
-address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem]
+Only what the early boot path reads. Usage:
+    mkadt.py OUT.adt [--dump] [--qemu] [--highmem] [--ios26] [--product-adt N104AP.adt]
 """
-import hashlib, os, struct, sys
+import argparse, hashlib, os, struct, sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adt  # noqa: E402
@@ -56,15 +57,14 @@ BOOT_MANIFEST_HASH = hashlib.sha384(b'sweet boot manifest').digest()
 D22AP_ADT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../research/ipsw-x/d22ap.adt')
 
 
-def d22ap_product(path=D22AP_ADT):
-    """/product properties of the real D22AP tree, without the syscfg
-    placeholders iBoot would fill in (flag bit set) and the node bookkeeping."""
-    if not os.path.exists(path):
-        print(f'warning: {path} missing, no /product node', file=sys.stderr)
-        return None
-    root, _ = adt.parse(open(path, 'rb').read())
+def read_product(path, target):
+    """Read /product without syscfg placeholders and node bookkeeping."""
+    root, _ = adt.parse(Path(path).read_bytes())
+    compatible = (root.prop('compatible') or b'').split(b'\0')
+    if target.encode().lower() not in [value.lower() for value in compatible]:
+        raise SystemExit(f'{path}: expected a {target} device tree')
     for c in root.children:
-        if dict((k, v) for k, f, v in c.props).get('name') == b'product\0':
+        if c.name == 'product':
             return [(k, v) for k, f, v in c.props if not f and k not in ('name', 'AAPL,phandle')]
     raise SystemExit(f'{path}: no /product node')
 
@@ -80,14 +80,20 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False):
+def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
+    target, machine, target_type = ('N104AP', 'iPhone12,1', 'N104') if ios26 else ('D22AP', 'iPhone10,3', 'D22')
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
-    # Carve the panic log off the top so the kernel never allocates over it.
-    panic_base = phys_base + mem_size - PANIC_LOG_SIZE
-    mem_size -= PANIC_LOG_SIZE
+    # XNU 8796's QEMU path needs /pram. The XNU 12377 donor boots without it.
+    # On A71, 12377 faults in PE_create_console while zeroing the I/O mapping.
+    panic_properties = []
+    if not ios26:
+        mem_size -= PANIC_LOG_SIZE
+        panic_properties.append(('embedded-panic-log-size', u32(PANIC_LOG_SIZE)))
     gicd, gicr, timebase = (QEMU_GICD, QEMU_GICR, QEMU_TIMEBASE) if qemu else (GICD, GICR, TIMEBASE)
-    seed = seed if seed is not None else os.urandom(64)
+    seed = seed if seed is not None else os.urandom(256 if ios26 else 64)
+    if ios26 and len(seed) != 256:
+        raise ValueError('XNU 12377 requires a 256-byte random seed')
     phandle = iter(range(1, 1000))
     ph = lambda: ('AAPL,phandle', u32(next(phandle)))
 
@@ -96,8 +102,9 @@ def build(seed=None, qemu=False, highmem=False):
         ('dram-base', u64(phys_base)),
         ('dram-size', u64(mem_size)),
         ('random-seed', seed),
+        *([('kernel-ctrr-to-be-enabled', u32(1))] if ios26 else []),
         ('debug-enabled', u32(1)),
-        ('embedded-panic-log-size', u32(PANIC_LOG_SIZE)),
+        *panic_properties,
         ('firmware-version', cstr('sweet-shim')),
         ('system-firmware-version', cstr('sweet-shim')),
         # iBoot's SHA-384 of the boot manifest; /sbin/mount -P 1 exits unless
@@ -109,16 +116,14 @@ def build(seed=None, qemu=False, highmem=False):
         ('crypto-hash-method', cstr('sha2-384')),
         # MobileGestalt's screen class: display-scale (u32, default 0) comes
         # from /chosen, the pixel size from IOMobileFramebuffer. Scale 0 makes
-        # SpringBoard's FBSDisplayMode "infxinf@0x" invalid. 1080x2400 @3x =
-        # 360x800 points (like iPhone X class devices).
-        ('display-scale', u32(3)),
+        # SpringBoard's FBSDisplayMode "infxinf@0x" invalid.
+        ('display-scale', u32(2 if ios26 else 3)),
         # XNU derives IOPlatformUUID (gethostuuid) from these on arm; without
         # them CFPreferences cannot use kCFPreferencesCurrentHost (no ByHost
         # files), so e.g. DataMigration never records LastSystemVersion and
-        # migrates on every boot. Synthetic ECID (not the phone's); chip-id
-        # of the A11 that the iPhone X userland expects.
+        # migrates on every boot. Use a synthetic ECID and the target chip-id.
         ('unique-chip-id', struct.pack('<Q', SWEET_ECID)),
-        ('chip-id', u32(0x8015)),
+        ('chip-id', u32(0x8030 if ios26 else 0x8015)),
         # MobileGestalt's legacy device identity otherwise waits for a WLAN
         # IOService for each bundle scanned by MobileInstallation. These are
         # stable, locally administered placeholders, not factory radio MACs.
@@ -138,6 +143,9 @@ def build(seed=None, qemu=False, highmem=False):
         # The iOS shared cache is in no trust cache, so dyld can only map it
         # with CSR_ALLOW_UNRESTRICTED_FS (vm_unix.c shared region checks).
         node('asmb', [ph(), ('lp-sip0', u64(0x6f)), ('lp-sip1', u32(1))])])
+    if ios26:
+        chosen.children.append(node('manifest-properties', [ph()]))
+        chosen.props.extend([(key, 0, u32(0)) for key in ('board-id', 'chip-epoch', 'security-domain')])
 
     # SWEET SMP: all eight cores in physical-core order (0-5 Cortex-A55,
     # 6-7 Cortex-A76), one homogeneous cluster. The kernel defaults to one
@@ -195,8 +203,8 @@ def build(seed=None, qemu=False, highmem=False):
             ph(),
             ('device_type', cstr('display-subsystem')),
             ('compatible', cstr('sweet,display')),
-            ('canvas-width', u32(1125)),
-            ('canvas-height', u32(2436)),
+            ('canvas-width', u32(828 if ios26 else 1125)),
+            ('canvas-height', u32(1792 if ios26 else 2436)),
         ])])
 
     fbcon = node('sweet-fbcon', [
@@ -229,7 +237,12 @@ def build(seed=None, qemu=False, highmem=False):
         ('opposed-power-vol-buttons', u32(1)),
     ])
 
-    product_props = d22ap_product()
+    if product_adt is None and not ios26:
+        if os.path.exists(D22AP_ADT):
+            product_adt = D22AP_ADT
+        else:
+            print(f'warning: {D22AP_ADT} missing, no /product node', file=sys.stderr)
+    product_props = read_product(product_adt, target) if product_adt else []
     # Match the 8-bit BGRA framebuffer. P3 makes CoreAnimation request b3a8/w30r
     # render targets, which the display and GPU paths do not support.
     if product_props:
@@ -237,29 +250,36 @@ def build(seed=None, qemu=False, highmem=False):
                          for k, v in product_props]
     product = [node('product', [ph()] + product_props)] if product_props else []
 
-    # Panic log region. /pram reg = <phys size>; it sits just above the
-    # dram-size we expose, so XNU maps it but never allocates into it.
-    pram = node('pram', [ph(), ('reg', u64(panic_base) + u64(PANIC_LOG_SIZE))])
+    # /pram has an absolute <phys, size> just outside kernel-managed DRAM.
+    pram = [] if ios26 else [node('pram', [ph(), ('reg', u64(phys_base + mem_size, PANIC_LOG_SIZE))])]
 
-    # Identity of the iPhone X whose userland runs here: compatible[0] is
-    # hw.model/hw.target (D22AP), model is hw.machine/hw.product
-    # (iPhone10,3). 'xiaomi,sweet' stays for SweetPlatformExpert matching.
+    # compatible[0] is hw.model/hw.target. model is hw.machine/hw.product.
+    # Keep the inherited sweet alias for driver matching on SM7150.
+    boards = ('samsung,a71', 'xiaomi,sweet') if ios26 and not qemu else ('xiaomi,sweet',)
     return node('device-tree', [
         ph(),
-        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('qcom,sm7150') + cstr('AppleARM')),
-        ('model', cstr('iPhone10,3')),
-        ('target-type', cstr('D22')),
-        ('target-sub-type', cstr('D22AP')),
+        ('compatible', b''.join(map(cstr, (target, machine, *boards, 'qcom,sm7150', 'AppleARM')))),
+        ('model', cstr(machine)),
+        ('target-type', cstr(target_type)),
+        ('target-sub-type', cstr(target)),
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([] if qemu else [ufs]))
+    ], [chosen, defaults, cpus, arm_io, fbcon, buttons] + pram + product + ([] if qemu else [ufs]))
 
 
 if __name__ == '__main__':
-    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('output', type=Path)
+    parser.add_argument('--qemu', action='store_true')
+    parser.add_argument('--highmem', action='store_true')
+    parser.add_argument('--ios26', action='store_true')
+    parser.add_argument('--product-adt', type=Path)
+    parser.add_argument('--dump', action='store_true')
+    args = parser.parse_args()
+    root = build(qemu=args.qemu, highmem=args.highmem, ios26=args.ios26, product_adt=args.product_adt)
     blob = adt.serialize(root)
-    open(sys.argv[1], 'wb').write(blob)
-    if '--dump' in sys.argv:
+    args.output.write_bytes(blob)
+    if args.dump:
         adt.dump(adt.parse(blob)[0])
-    print(f'{sys.argv[1]}: {len(blob)} bytes', file=sys.stderr)
+    print(f'{args.output}: {len(blob)} bytes', file=sys.stderr)

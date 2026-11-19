@@ -4,13 +4,12 @@
 import argparse
 from hashlib import sha256
 from pathlib import Path
-from shutil import copyfile
 
 
 def stage(builder, donor):
     project = Path(__file__).resolve().parents[1] / 'xnu' / 'patches-12377'
     patches = builder / 'patches' / '26.0'
-    scripts = []
+    staged = []
     donor_series = donor / 'xnu' / 'patches-12377'
     if not donor_series.is_dir() or not patches.is_dir():
         raise SystemExit('expected Bergamota and darwin-xnu-build checkouts')
@@ -37,13 +36,13 @@ def stage(builder, donor):
             dest = patches / f'sweet-{patch.name}'
             if dest.exists():
                 raise SystemExit(f'duplicate patch: {patch.name}')
-            copyfile(patch, dest)
-            scripts.append(dest)
+            dest.write_bytes(patch.read_bytes().replace(b'\r\n', b'\n'))
+            staged.append(dest)
     (builder / 'series-SHA256SUMS').write_text(
-        ''.join(f'{sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in sorted(scripts)),
+        ''.join(f'{sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in sorted(staged)),
         encoding='utf-8', newline='\n',
     )
-    print(f'Staged {len(scripts)} project files in {patches}')
+    print(f'Staged {len(staged)} project files in {patches}')
 
 
 if __name__ == '__main__':
