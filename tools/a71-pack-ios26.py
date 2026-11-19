@@ -23,7 +23,7 @@ BASE_ARGS = (
 )
 SMOKE_ARGS = BASE_ARGS + ' rd=md0 sweetlog=0 -enable_kprintf_spam'
 ROOT_ARGS = BASE_ARGS + ' rd=ufsroot0 ufsrw=1 rootrw=1 sweetfb_scale=1 launchd_unsecure_cache=1 launchd_disable_all_timeouts=1'
-ADRENO_ARGS = ' sweetgpu=9 sweetgpukhz=650000 sweetfb_dcsbl=0 sweetfb_direct=0 sweetddr=0 sweetcharge=0'
+ADRENO_ARGS = ' sweetgpu=9 sweetgpukhz=650000 sweetfb_dcsbl=0 sweetfb_direct=0 sweetddr=0 sweetcharge=0 sweetjetsamlimits=0'
 
 
 def add_adreno_firmware(tree, directory):
@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--metal', action='store_true', help='select the installed SweetMetal2 bundle')
     parser.add_argument('--payload', action='store_true', help='apply a verified raw package on this boot')
     parser.add_argument('--cpufreq', action='store_true', help='SM7150 cpufreq-hw: highest non-boost row (donor 2000; Adreno build)')
+    parser.add_argument('--rtcoff', type=int, help='seconds to add to the PM6150 RTC (now - /sys/class/rtc/rtc0/since_epoch in TWRP)')
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
@@ -95,6 +96,15 @@ def main():
         cmdline = cmdline.replace('sweetcpufreq=0', 'sweetcpufreq=1')
     if args.usb:
         cmdline = cmdline.replace('sweetusb=0', 'sweetusb=3')
+    # A71 ports in the kernel (xnu 2108-2115) switch their boot-args on; the first copy of an argument wins.
+    if args.adreno_firmware and b'SWEET RENDER: restarted SpringBoard' in kernel:
+        cmdline += ' sweetm2restart=2'
+    if args.adreno_firmware and b'DSI0 off or out of its mode' in kernel:
+        cmdline = cmdline.replace(' sweetfb_dcsbl=0', '')
+    if b'SWEET BATTERY: s2mu106' in kernel:
+        cmdline = cmdline.replace('sweetbattery=0', 'sweetbattery=2').replace(' sweetcharge=0', '')
+    if args.rtcoff:
+        cmdline += f' sweetrtcoff={args.rtcoff}'
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=args.output.parent) as temp:
