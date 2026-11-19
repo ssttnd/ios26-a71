@@ -339,3 +339,16 @@
   downloaded it in the browser; kernel hash matches SHA256SUMS.
 - `build/a71-ios26-all-d.img` = that kernel + all-b options with --usb and sweetdtlog=PosterBoard,GradientPosterExtension
   (cmdline 580 bytes), VERIFY OK `7ce69769...`. Expect `SWEET USB: SMMU bank ...` lines. USB log `logs/usb-ios26-all-d.txt`.
+
+## 2026-11-19 22:52 — all-d booted; the SMMU guess was wrong
+
+- all-d first boot after the TWRP flash: booted (owner). USB log `logs/usb-ios26-all-d.txt` (3.5 MB): Metal published.
+- 2117 logged `SMMU SMR3 0x80000540 S2CR 0x00000001 matches the stream (type 0 bank 1)` and
+  `SMMU bank 1 SCTLR 0x000000e0: translation already off`: bank 1 does not translate, USB DMA was already physical.
+  So the USB SMMU is NOT the cause of the corrupt boots (my guess in the 22:30 entry is refuted); 2117 changes
+  nothing on this phone and stays as a check. One clean first boot proves nothing (metal-a was clean too).
+  Open: what overwrites memory on some first boots after a TWRP flash (shim blue screen before XNU, eventhandler
+  assert, UEFI text in the log ring). Candidates not checked: RAM the bootloader/TZ still uses inside XNU's
+  map (ADT memory map vs the A71 reserved-memory nodes), USB ACM log thread reading the ring while it wraps,
+  DMA of other devices TWRP left running.
+- Pending on all-d: second boot runs org.a71.poster-probe (poster list, dynamic descriptors, gradient select).
