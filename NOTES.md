@@ -59,8 +59,20 @@
 
 ## A71 hardware port
 
-- `2000-a71-sec-ts-touch.patch` adds the iOS 16 Samsung touchscreen power,
+- `b058eab` adds `2000-a71-sec-ts-touch.patch` with the Samsung power,
   reset, ID probe and event handling to the 12377 driver. It reuses the
   XNU 12377 HID event queue and GPIO I2C paths, selects Samsung via
   `samsung,a71`, and is opt-in during bring-up. Its diff applies to the
   staged donor source. Compilation and device validation are pending.
+
+## Full iOS 26.6.2 root preparation
+
+- iPhone12,1 IPSW `23G90` downloaded from Apple. Its SHA-256 matched the CDN
+  header (`02d1f0774bac11889483d372b0ecc094ad53681aa85beed9fd56634197effab3`).
+- Root build runs in a headless Ubuntu 24.04 VM under QEMU/WHPX launched from
+  the Windows workspace, without WSL. `research/root-vm/build-ios26-root.log`
+  holds its progress. Bergamota `37a7a7a` Renegade, apfs-fuse `66b86bd`,
+  ipsw `3.1.749`, berga-tools v3. Raw 24 GiB HFSX, with jailbreak and
+  Bergamota renderer payload disabled. This root has not yet booted.
+- Owner authorized replacing `userdata` only after a verified backup.
+  The phone is back on iOS 16 until the new root and backup are ready.

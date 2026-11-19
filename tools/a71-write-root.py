@@ -60,6 +60,9 @@ if real in sh("cat /proc/mounts"):
 
 full = hashlib.sha256()
 with open(IMG, "rb") as f:
+    if hashlib.file_digest(f, "sha256").hexdigest() != EXPECT:
+        sys.exit("local image does not match EXPECTED_SHA256; userdata was not written")
+    f.seek(0)
     for i in range(nch):
         data = f.read(CH_MIB << 20)
         full.update(data)
