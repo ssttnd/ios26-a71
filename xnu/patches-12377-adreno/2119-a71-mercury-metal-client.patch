@@ -1,0 +1,10 @@
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -58,5 +58,5 @@
+ bool extra_client(const char *name)
+ {
+- static const char *const names[]={"AegirPoster"};
++ static const char *const names[]={"AegirPoster", "MercuryPosterExtension"};
+  for(const char *n:names)if(!strcmp(name,n))return true;
+  return false;
