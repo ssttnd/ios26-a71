@@ -396,3 +396,25 @@
   `research/mg/`. It has `ArtworkDeviceSubType=1792` and the `SupportsDynamicIsland` override is absent.
   Plan to test the targeted capability override with a restore payload before changing the artwork subtype.
 - Added `TODO.md` at the owner's request to track the five UI items and their acceptance checks.
+
+## 2026-11-19 — Metal mip views in CI; wallpaper and Island test packages prepared
+
+- `a91329b` adds a pinned iOS 26 Metal build using Redmi `4ff9b8e` plus an A71 patch for same-format, 2D
+  views of mip ranges. Views keep the original Gallium resource and translate the relative level for texture
+  sampling, image bindings, CPU transfers, rendering and clears. Locally verified that the patch applies
+  to the generated source with `git apply --check --whitespace=error`. Actions `44584865459` is building the
+  `SweetMetal2` compatibility bundle. Compiled and visual results pending. This patch does not address all
+  Metal features, including render pass attachment level on a parent texture.
+- `build/a71-ios26-stock-dynamic-wall.payload` sets the existing poster probe's `poster.want` to Mercury
+  `fluidity.dynamic`. SHA-256 `c874a5801805ffc32346783b1fdc49a35398b96135afb185a726665a8cc65ac1`.
+  Check whether `poster.want` exists in TWRP and preserve any existing file before applying. Mercury being
+  listed as a descriptor does not verify rendering. The root recipe skipped Bergamota's Mercury-specific
+  renderer because its dylibs were absent. Test on the current NativeMetal first.
+- `build/a71-ios26-island-test.payload` appends just `SupportsDynamicIsland=true` to the real cache and copies
+  the original into root-only `/private/var/local/mg-backup/MobileGestalt.plist.before-island`. Validated binary
+  plist round trip and exact preservation of all other keys. Test SHA-256
+  `aea963f7c08f9e8c6cfd61609ddd68a602db87ec11542581a817224a488b2eaf`, restore payload
+  `5cd50f06f7d6b7efbeff7c8b9caad1d9a737c5fcc5f346aab73de0d55324369d`. Recheck cache hash in TWRP before applying.
+- No wallpaper or Island test payload was written. The verified full-panel image is on `boot`. Settings CI
+  `44583376344` and Metal CI `44584865459` were still building as of 23:11 local. Next hardware run should
+  isolate settings kernel behavior, then verify wallpaper selection/appearance and Dynamic Island.
