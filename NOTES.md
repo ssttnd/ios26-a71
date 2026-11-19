@@ -300,3 +300,20 @@
   fairplayd.H2, with that job (692 jobs). The job runs from the second boot.
 - `build/a71-ios26-all-b.img` = all-a + `sweetdtlog=Preferences` (Settings os_log on the console), VERIFY OK
   `3e069f06...`. USB log `logs/usb-ios26-all-b.txt`.
+
+## 2026-11-19 22:30 — all-b panicked; USB SMMU bank translates (guess at the corruption); all-c flashed
+
+- all-b first boot (owner: panic, back in TWRP). USB log: package `finished 25/25 errno=0`, then cut off at
+  backboardd start. TWRP ring (`logs/ios26-all-b-panic.txt`, 1872 lines) ends in text XNU does not print:
+  `Exit EBS [ 5459] UEFI End`, format strings with literal `%s`, `Log Flush : 0 m`: memory holding the log ring was
+  overwritten. No panic text saved.
+- Pattern so far: all three corrupt boots (metal-b shim blue screen, metal-c eventhandler assert, all-b) were
+  sweetusb=3 images on the first boot after a TWRP flash; metal-a (no USB) and the second boots did not corrupt.
+- Every sweetusb=3 log: `SWEET USB: SMMU SMR3 0x80000540 S2CR 0x00000001 already matches the stream`: S2CR type 0 =
+  translate through bank 1, whose page tables are whatever the last kernel (TWRP's Linux) left; sweet_usb DMA uses
+  physical addresses. Guess (not proven): USB DMA lands in the wrong memory. xnu 2117 turns that bank's translation
+  off (SCTLR.M = 0) if only USB uses it, else moves the stream to its own pass-through bank, and logs which.
+  Kernel CI `44575804195` (8cf9a40) building.
+- `build/a71-ios26-all-c.img` = all-b without --usb (sweetusb=0), VERIFY OK `12f7bb58...`. The wall package was
+  applied in the all-b boot (25/25), so the wallpaper job, MobileGestalt 0644 override and the Control Center
+  reset are on the root. Settings os_log (sweetdtlog=Preferences) goes to the UFS ring only (TWRP).
