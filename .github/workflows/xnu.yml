@@ -18,11 +18,7 @@ on:
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
-  push:
-    branches: [main, a71-gpu]
-    paths:
-      - "xnu/patches/**"
-      - ".github/workflows/xnu.yml"
+  # ios26-a71: manual runs only until the iOS 26 kernel exists (macOS minutes of a private repo are limited).
 
 concurrency:
   group: xnu-${{ github.ref }}
