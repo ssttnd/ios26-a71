@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write a boot image to the A71 from TWRP, verify it by readback, reboot into iOS.
 
-  a71-flash-boot.py ADB_EXE IMAGE EXPECTED_SHA256
+  a71-flash-boot.py ADB_EXE IMAGE EXPECTED_SHA256 [--no-reboot]
 
 Destructive: overwrites the start of the boot partition. Confirm with the owner
 first. Uses a plain system reboot: `adb reboot` from TWRP returns to recovery.
@@ -9,6 +9,7 @@ first. Uses a plain system reboot: `adb reboot` from TWRP returns to recovery.
 import hashlib, subprocess, sys
 
 ADB, IMG, EXPECT = sys.argv[1:4]
+NO_REBOOT = "--no-reboot" in sys.argv[4:]
 TGT = "/dev/block/by-name/boot"
 
 
@@ -39,5 +40,7 @@ if got != h:
     sys.exit("VERIFY FAILED: not rebooting; restore boot from the backup")
 sh("rm -f /tmp/new-boot.img")
 print("VERIFY OK")
+if NO_REBOOT:
+    sys.exit(0)
 subprocess.Popen([ADB, "shell", "setprop sys.powerctl reboot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 print("reboot requested")

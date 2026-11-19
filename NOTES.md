@@ -154,3 +154,27 @@
   reported that Settings opens and immediately freezes. There is no log
   for this separate event yet. Whether it is the same compositor abort
   remains unverified.
+
+## 2026-11-19 — button test and Metal preparation
+
+- `logs/ios26-settings-freeze.txt` (flush 48, 1,417,276 bytes) captured the
+  second boot. `Preferences` started and framebuffer swaps continued. No
+  `CRASH Preferences`, `CRASH backboardd`, `CRASH SpringBoard`, or panic
+  appears in the recovered ring. The reported Settings stall is unexplained.
+- The touch image had `sweetkeys=0`. `build/a71-ios26-keys.img` uses the
+  same verified touch kernel with `sweetkeys=1`. After owner authorization,
+  TWRP verified its `boot` readback SHA-256
+  `1ae8e60bbd90139821c2d872ac4eef63980bae8452fecf630fedd3a975d38638`.
+  Announced and requested reboot. Button behavior is pending confirmation.
+- Commit `2f36327` builds an optional Adreno kernel using DC28088 `4ff9b8e`
+  through patch 2011 on the same Bergamota base. The Redmi touch diff is
+  omitted in favor of A71 SEC_TS. Patch 2100 ports the A71 raw package
+  installer and requires both `samsung,a71` and `sweetpayload=1`. Local
+  patch checks passed. Actions run `44560785792` is building it.
+- Donor Metal build 36, CI `44101448882` at `19236822`, passed its bundle
+  hash manifest check. Package `build/a71-ios26-metal36.payload` has 11 entries,
+  8,966,144 bytes, SHA-256
+  `51c0a91d059d384f4d60483015fdfb9f673c78865222735213995c059fd9debe`.
+  It installs `SweetMetal2.bundle` and `FD_MESA_DEBUG=sysmem`. Neither is
+  in the original iOS 26 root. The package has not been written. A71 GMU,
+  SQE and signed ZAP files were checked by the ADT packer offline.
