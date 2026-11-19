@@ -209,8 +209,22 @@ static int rt_find(struct pipe_resource *r)
       if (rt_tab[i].lin && (rt_tab[i].lin == r || rt_tab[i].shadow == r)) return i;
    return -1;
 }
+/* resources drawn into: never given a sampled copy (it would go stale inside a command) */
+static struct pipe_resource *rt_written[32];
+static bool rt_was_written(struct pipe_resource *r)
+{
+   for (unsigned i = 0; i < 32; i++)
+      if (rt_written[i] == r) return true;
+   return false;
+}
+void native_src_forget(struct rwa_device *d, struct pipe_resource *r);
 struct pipe_resource *native_rt(struct rwa_device *d, struct pipe_resource *r, bool write)
 {
+   if (r && write && !rt_was_written(r)) {
+      static unsigned next;
+      rt_written[next++ % 32] = r;
+      if (d) native_src_forget(d, r);
+   }
    if (rt_on < 0) {
       rt_on = access("/var/local/sweet-ubwc-rt", F_OK) == 0;
       fprintf(stderr, "SweetNativeMetal: UBWC shadow render targets %s\n", rt_on ? "on" : "off");
@@ -311,7 +325,8 @@ struct pipe_sampler_view *native_src_view(struct rwa_device *d, struct pipe_samp
    if (!v || !v->texture) return v;
    struct pipe_resource *r = v->texture;
    if (r->target != PIPE_TEXTURE_2D || r->array_size > 1 || r->nr_samples > 1 ||
-       (uint64_t)r->width0 * r->height0 < 250000 || rt_find(r) >= 0 || !d->screen->resource_get_param)
+       (uint64_t)r->width0 * r->height0 < 250000 || rt_find(r) >= 0 || rt_was_written(r) ||
+       !d->screen->resource_get_param)
       return v;
    int i;
    for (i = 0; i < SRC_N && src_tab[i].lin != r && src_tab[i].copy != r; i++) ;
