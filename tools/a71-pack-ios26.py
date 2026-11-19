@@ -49,6 +49,7 @@ def main():
     root.add_argument('--product-adt', type=Path, help='N104AP ADT for booting an installed iOS 26 root from userdata')
     parser.add_argument('--touch', action='store_true', help='enable the Samsung SEC_TS driver in an A71 kernel build')
     parser.add_argument('--keys', action='store_true', help='enable the power and volume key driver')
+    parser.add_argument('--wifi', action='store_true', help='enable the A71 WLAN device tree and wland kernel interfaces')
     parser.add_argument('--adreno-firmware', type=Path, help='enable A618 stage 9 using firmware from this A71')
     parser.add_argument('--metal', action='store_true', help='select the installed SweetMetal2 bundle')
     parser.add_argument('--payload', action='store_true', help='apply a verified raw package on this boot')
@@ -70,6 +71,8 @@ def main():
         parser.error('expected an XNU 12377 kernel')
     if args.touch and b'Samsung S6SY771 (sec_ts)' not in kernel:
         parser.error('--touch requires an XNU build with the A71 SEC_TS patch')
+    if args.wifi and (args.ramdisk or b'flame wlan: /dev/wlan ready' not in kernel or b'sweetsmmuwlan' not in kernel):
+        parser.error('--wifi requires the installed root and an A71 WLAN kernel')
     if args.metal and not args.adreno_firmware:
         parser.error('--metal requires --adreno-firmware')
     if args.ramdisk and (args.adreno_firmware or args.payload):
@@ -101,6 +104,8 @@ def main():
         cmdline = SMOKE_ARGS
     cmdline += ' sweettouch=1 sweettouchdelay=3' if args.touch else ' sweettouch=0'
     cmdline += ' sweetkeys=1' if args.keys else ' sweetkeys=0'
+    if args.wifi:
+        cmdline += ' sweetpmem=1 sweetsmmuwlan=1 sweetnull=wland'
     cmdline += ADRENO_ARGS if args.adreno_firmware else ' sweetgpu=0'
     if args.metal:
         cmdline += ' sweetmtl=2 sweetgles=0'
@@ -135,6 +140,11 @@ def main():
         temp = Path(temp)
         tree = temp / 'a71.adt'
         tree.write_bytes(adt.serialize(mkadt.build(highmem=True, ios26=True, product_adt=args.product_adt)))
+        if args.wifi:
+            wlan_tree = temp / 'a71-wlan.adt'
+            subprocess.run([sys.executable, str(Path(__file__).with_name('adt-add-wlan.py')),
+                            str(tree), str(wlan_tree)], check=True)
+            tree = wlan_tree
         if args.adreno_firmware:
             tree = add_adreno_firmware(tree, args.adreno_firmware)
         payload, info = mkpayload.build(args.kernel, tree, cmdline, args.ramdisk)
