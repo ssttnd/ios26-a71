@@ -242,3 +242,21 @@
 - Owner photo before this boot (first boot after the TWRP flash): shim blue screen `PANIC SYNC`, STAGE loader,
   ESR 0x96000000, ELR 0x801EA5A0, FAR 0x6C207369C1952320, X30 0x3030454646464646 (ASCII "00EFFFFF"); reset, next boot
   fine. Cause unknown (guess: a pointer read from stale RAM in the first stage; ELR is outside the 180 KiB shim image).
+
+## 2026-11-19 21:50 — metal-c with jetsam limits off and the Control Center fix (old kernel)
+
+- Owner on metal-b: Metal visible (dock outline = Liquid Glass), Settings hangs, Control Center blur but no
+  modules. USB log: many `sig 9` jetsam kills (`ns 1 code 0x7`): lsd, linkd, donotdisturbd, deviceaccessd ...
+  Guess: Settings waits on a killed lsd. Donor fix `sweetjetsamlimits=0` (2006, in the Adreno kernel) now on
+  every Adreno image.
+- Read from the phone in TWRP with the new `tools/a71-hfs-get.py` (raw reads, no mount; files in research/mg,
+  ignored: the MobileGestalt cache holds device identifiers): MobileGestalt cache 9678 bytes, CacheExtra had
+  neither `li+w2foswFu0srn5UxdOug` (arm64e) nor `jdLgKT+0BZmGrzd9J0cuPA` (camera-flash); ControlsIconState.plist
+  289 bytes, empty layout (as the donor had).
+- `build/a71-ios26-cc-old.payload` (15 entries, `f04f4994...`): originals to /var/local/mg-backup and
+  /var/local/cc-backup, MobileGestalt cache with both keys true (mode 0666), rm of ControlsIconState.plist and
+  ControlsMigrationSettings.plist (this kernel has no package mv). `build/a71-ios26-metal-c.img` = metal-b +
+  sweetjetsamlimits=0, boot VERIFY OK `40ccca6a...`. Result pending.
+- RTC offset read in TWRP: 1778420636 s (rtc0 since_epoch 16686302), for --rtcoff with the 2108 kernel.
+- Prepared for the combined kernel: `build/a71-ios26-cc.payload` (20 entries: the same with mv, plus the four
+  speech synthesizers moved).
