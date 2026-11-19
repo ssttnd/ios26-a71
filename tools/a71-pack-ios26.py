@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--metal', action='store_true', help='select the installed SweetMetal2 bundle')
     parser.add_argument('--payload', action='store_true', help='apply a verified raw package on this boot')
     parser.add_argument('--cpufreq', action='store_true', help='SM7150 cpufreq-hw: highest non-boost row (donor 2000; Adreno build)')
+    parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
 
@@ -69,6 +70,8 @@ def main():
         parser.error('expected a kernel built with the Adreno option')
     if args.payload and b'SWEET PAYLOAD: finished' not in kernel:
         parser.error('expected an A71 kernel with the raw installer')
+    if args.usb and b'Sweet iOS (USB log)' not in kernel:
+        parser.error('--usb requires a kernel with xnu 2101')
     if args.cpufreq and b'SWEET CPUFREQ: domain %u hardware not enabled' not in kernel:
         parser.error('--cpufreq requires a kernel with the SM7150 cpufreq patch')
     cmdline = ROOT_ARGS
@@ -90,6 +93,8 @@ def main():
         cmdline += ' sweetpayload=1'
     if args.cpufreq:  # the first copy of a boot-arg wins: replace, do not append
         cmdline = cmdline.replace('sweetcpufreq=0', 'sweetcpufreq=1')
+    if args.usb:
+        cmdline = cmdline.replace('sweetusb=0', 'sweetusb=3')
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=args.output.parent) as temp:

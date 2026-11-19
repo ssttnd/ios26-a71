@@ -208,3 +208,22 @@
   reboot requested. Fallback: `build/a71-ios26-keys.img` (1ae8e60b...). Result pending.
 - Not in this image: sweetm2restart (iOS 16 0200; SpringBoard restart when the GPU comes up) and A71 battery,
   brightness, USB, Wi-Fi, audio.
+
+## 2026-11-19 21:40 — metal-a result, GPU firmware fix, metal-b flashed, combined kernel building
+
+- metal-a (owner): a little smoother, Metal not active, Settings froze again. TWRP log `logs/ios26-metal-a.txt`:
+  cpufreq A55 1804.8 MHz, A76 2208 MHz (was 300), L3 1459.2; 8/8 CPUs; payload 11/11; GMU and HFI up, then
+  `CP firmware properties errno=22 SQE=32304 MDT=6860 ZAP=1968` and `rendering unavailable`: donor sizes are
+  Redmi's. Also SiriAUSP/MauiAUSP/MacinTalkAUSP/KonaSynthesizer abort (sig 6) in a loop (donor saw the same).
+- Kernel CI `44565383497` (ed4492b: 2100-2107 = payload, USB ACM 2101, A71 GPU firmware facts 2102 = iOS 16
+  0190, 0202, 0216, 0218, 0220, 0222) succeeded; kernel `7e4eeae2...b943`, series hashes match the repo.
+- `build/a71-ios26-metal-b.img` = that kernel + touch, keys, A71 GPU firmware, `--metal --payload --cpufreq --usb`
+  (sweetusb=3); package `build/a71-ios26-noausp.payload` (moves the four speech synthesizer .appex from
+  /System/Library/ExtensionKit/Extensions to /private/var/local/disabled-appex; reversible) VERIFY OK `9d057494...`,
+  boot VERIFY OK `95561ac06e89dcd34f5531175c0b04cdc65141e92584cb4d85dfd49a55a13884`. USB log recording to
+  `logs/usb-ios26-metal-b.txt`. Result pending.
+- Combined kernel CI `44568269777` (fc3b49e) building: 2108-2115 hand ports (battery, power off, charger, torch,
+  pmem injection, privileges, Wi-Fi/ADSP, command-mode brightness). Series checked with git apply in order on the
+  staged tree (scratch copy of research/xnu-12377); not compiled before this run.
+- Resolution: iOS draws 828x1792 (iPhone 11 @2x) scaled to 1080x2400 (`presented as 828x1792, scale 1`). Plan
+  after Metal works: canvas 1242x2688 + MobileGestalt scale 3 (same 414x896 points), ADT and MG only.
