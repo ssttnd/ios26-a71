@@ -138,3 +138,19 @@
   unlocked the phone, and Settings opened. The phone is on iOS 26.6.2 with
   this image. GPU acceleration, radio, audio and USB remain outside the
   verified result. The first CPU-only boot showed a black wallpaper.
+
+## 2026-11-19 — first CPU renderer abort
+
+- Owner reported a SpringBoard reload. The TWRP log
+  `logs/ios26-touch-springboard.txt` (flush 19, 701,826 bytes) confirms the
+  Samsung S6SY771 driver attached. `backboardd[64]` aborted with signal 6 on
+  `push_surface`, `ogl-context.cpp:1186` (`found != slist->end()`). The log
+  shows both backboardd and SpringBoard executing again. No kernel panic or
+  separate SpringBoard crash was recorded for this event.
+- DC28088's iOS 26 log records the same assertion on the Bergamota-only
+  Redmi kernel with CPU rendering (boot 26c8b). The Metal path avoids this
+  renderer on Redmi. A71 Adreno 618/Metal has not been brought up on iOS 26.
+- After a normal reboot from TWRP without changing `boot`, the owner
+  reported that Settings opens and immediately freezes. There is no log
+  for this separate event yet. Whether it is the same compositor abort
+  remains unverified.
