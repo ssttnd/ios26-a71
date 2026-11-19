@@ -373,3 +373,26 @@
   the captured segment kept sampling the same PID with no Preferences crash line. The exit remains unexplained.
 - The new boot also repeats `hfs_getnewvnode` sanity-check failures (`hfs_cnode.c:946`, reason 0), seen in
   all-d. Cause and impact are unverified. No filesystem repair was attempted.
+
+## 2026-11-19 — full-panel mode verified; dynamic poster inventory
+
+- Settings fix is `60c653d` (xnu 2118) on `codex/a71-settings`. Actions run `44583376344` is building
+  the Adreno kernel. The HFS ring and USB log show Preferences eventually leaving the InterfaceNamer wait
+  on the old kernel, after several minutes, consistent with the fallback timeout.
+- Owner reported bars across the top and bottom. The old run measured `scale 1 (pad 0,31)` for an
+  828×1792 canvas on the 1080×2400 panel. `build/a71-ios26-full-panel.img` uses the same 44575804195 kernel
+  and diagnostic args with `--fb-scale 2`. TWRP verified the 22,478,848-byte boot readback SHA-256
+  `184ab2f62455ad598ec30b3db811cc4e865911496e078958fbf011c27d853b5b`. USB reported `scale 2 (pad 0,0)`
+  and the owner confirmed both bars disappeared. This setting slightly stretches the canvas vertically.
+- Read `/private/var/local/poster.log` in TWRP (5,866 bytes, saved in ignored `research/wall/`). Lock role
+  has a Mercury `space.dynamic` config and a selected CollectionsPoster `5010`. Home role has zero
+  configs (`-2203`). GradientPoster descriptors fail `-2218`, creation fails `-2220`; old USB trace lists
+  `darkBlue.preset1.DOWNLOADABLE`. Owner clarified they want the stock iOS 26 wallpaper. The 23G90 root
+  contains MercuryPosterExtension.appex (`com.apple.MercuryPoster`) and its `default.fluidity` resource.
+  PosterBoard advertised `fluidity.dynamic` and four fixed variants in all-d. The recipe now requests
+  `fluidity.dynamic`. Selection and visible wallpaper still need verification. The full-panel boot did
+  not replay a payload.
+- Owner also requested Dynamic Island. The phone cache was read in TWRP and stored under ignored
+  `research/mg/`. It has `ArtworkDeviceSubType=1792` and the `SupportsDynamicIsland` override is absent.
+  Plan to test the targeted capability override with a restore payload before changing the artwork subtype.
+- Added `TODO.md` at the owner's request to track the five UI items and their acceptance checks.

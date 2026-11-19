@@ -58,6 +58,8 @@ def main():
     parser.add_argument('--sample', help='sample the user stacks of NAME[,NAME]')
     parser.add_argument('--sample-interval-ms', type=int, help='time between user stack samples (minimum 50 ms)')
     parser.add_argument('--fb-hz', type=int, choices=(10, 15, 20, 30, 60), help='limit copies to the panel to this rate')
+    parser.add_argument('--fb-scale', type=int, choices=(1, 2), default=1,
+                        help='1 fits the canvas inside the panel, 2 fills the panel')
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
@@ -83,7 +85,7 @@ def main():
         parser.error('--sample-interval-ms requires --sample and a value of at least 50')
     if args.sample and b'SMP: sampling %s' not in kernel:
         parser.error('--sample requires a kernel with the SWEET process sampler')
-    cmdline = ROOT_ARGS
+    cmdline = ROOT_ARGS.replace('sweetfb_scale=1', f'sweetfb_scale={args.fb_scale}')
     if args.ramdisk:
         ramdisk = HFS(args.ramdisk)
         with ramdisk.f:

@@ -1,6 +1,11 @@
 name: sweet-native-metal
 on:
   workflow_dispatch:
+    inputs:
+      ios26:
+        description: Build the iOS 26 SweetMetal2 compatibility bundle
+        type: boolean
+        default: false
   push:
     branches: [a71-gpu]
     paths:
@@ -8,8 +13,12 @@ on:
       - "tools/build-sweet-native-metal.py"
       - "tools/prepare-sweet-native-metal.py"
       - ".github/workflows/native-metal.yml"
+permissions:
+  contents: read
+
 jobs:
   build:
+    if: inputs.ios26 != true
     runs-on: macos-15-intel
     timeout-minutes: 100
     steps:
@@ -40,3 +49,48 @@ jobs:
         with:
           name: sweet-native-metal-diagnostics
           path: userspace/diagnostics/native-metal/
+
+  build-ios26:
+    if: inputs.ios26 == true
+    runs-on: macos-15-intel
+    timeout-minutes: 100
+    env:
+      REDMI_SHA: 4ff9b8ea41812307b867c334c77f4c290ccf1dd8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare the pinned iOS 26 renderer
+        run: |
+          git init -q redmi
+          git -C redmi fetch -q --depth 1 https://github.com/DC28088/ios-sweet.git "$REDMI_SHA"
+          git -C redmi checkout -q --detach FETCH_HEAD
+          cat >> redmi/tools/prepare-sweet-native-metal.py <<'PY'
+
+          if __name__ == '__main__':
+              import os
+              import subprocess
+              import sys
+
+              # Apply after the donor generates its Mesa and Objective-C sources.
+              generated = sys.argv[1]
+              subprocess.run(['git', 'init', '-q', generated], check=True)
+              subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_METAL_PATCH']], check=True)
+          PY
+      - name: Build the SweetMetal2 compatibility bundle
+        env:
+          A71_METAL_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-mip-views.patch
+        run: |
+          brew install bison flex ninja
+          export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"
+          python3 redmi/tools/build-sweet-native-metal.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a71-sweet-metal26
+          path: redmi/userspace/out/native-legacy/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: a71-sweet-metal26-build-logs
+          path: redmi/research/sweet-native-metal-build/*.log

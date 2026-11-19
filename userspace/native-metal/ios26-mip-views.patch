@@ -1,0 +1,229 @@
+Alias same-format 2D mip ranges in the existing Gallium resource. CoreAnimation
+uses single-level BGRA8 views for iOS 26 backdrop effects.
+
+diff --git a/tools/mesa/air/air_metal.h b/tools/mesa/air/air_metal.h
+--- a/tools/mesa/air/air_metal.h
++++ b/tools/mesa/air/air_metal.h
+@@ -138,6 +138,8 @@
+ struct rwa_texture *rwa_texture_create(struct rwa_device *device,
+ 				       const struct rwa_texture_shape *shape,
+ 				       char *why, size_t why_size);
++struct rwa_texture *rwa_texture_mip_view(struct rwa_texture *parent, unsigned first_level,
++                                        unsigned level_count, struct rwa_texture_shape *shape);
+ void rwa_texture_destroy(struct rwa_texture *texture);
+ 
+ /*
+diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
+--- a/tools/mesa/air/air_metal.c
++++ b/tools/mesa/air/air_metal.c
+@@ -223,6 +223,8 @@
+    struct rwa_texture_shape shape;
+    const char *format_name;         /* the MTLPixelFormat, spelled out */
+    unsigned layers;                 /* array slices, or the six faces of a cube */
++   unsigned first_level;            /* base level of this view in the shared resource */
++   unsigned level_count;
+ 
+    /* what MTLTextureUsage allowed, which is checked at every dispatch: a kernel that
+     * writes a texture the application declared read-only is an application's mistake,
+@@ -1387,6 +1389,7 @@
+    }
+    texture->device = device;
+    texture->shape = *shape;
++   texture->level_count = mips;
+    texture->format_name = fmt->name;
+    texture->layers = array_size;
+    texture->shader_read = read;
+@@ -1534,6 +1537,35 @@
+    return texture_of_shape(device, shape, &import, why, why_size);
+ }
+ 
++struct rwa_texture *
++rwa_texture_mip_view(struct rwa_texture *parent, unsigned first_level,
++                     unsigned level_count, struct rwa_texture_shape *shape)
++{
++   if (!parent || !shape || parent->res->target != PIPE_TEXTURE_2D ||
++       parent->res->nr_samples > 1 || first_level >= parent->level_count ||
++       !level_count || level_count > parent->level_count - first_level)
++      return NULL;
++
++   struct rwa_texture *view = calloc(1, sizeof(*view));
++   if (!view)
++      return NULL;
++
++   view->device = parent->device;
++   pipe_resource_reference(&view->res, parent->res);
++   view->format_name = parent->format_name;
++   view->layers = 1;
++   view->shader_read = parent->shader_read;
++   view->shader_write = parent->shader_write;
++   view->first_level = parent->first_level + first_level;
++   view->level_count = level_count;
++   view->shape = parent->shape;
++   view->shape.width = u_minify(view->res->width0, view->first_level);
++   view->shape.height = u_minify(view->res->height0, view->first_level);
++   view->shape.mip_levels = level_count;
++   *shape = view->shape;
++   return view;
++}
++
+ void
+ rwa_texture_destroy(struct rwa_texture *texture)
+ {
+@@ -1574,10 +1606,11 @@
+     */
+    unsigned o[3] = { origin ? origin[0] : 0, origin ? origin[1] : 0, origin ? origin[2] : 0 };
+ 
+-   if (level > res->last_level) {
+-      say(why, why_size, "level %u of a texture with %u", level, res->last_level + 1);
++   if (level >= texture->level_count) {
++      say(why, why_size, "level %u of a texture with %u", level, texture->level_count);
+       return false;
+    }
++   level += texture->first_level;
+ 
+    bool volume = res->target == PIPE_TEXTURE_3D;
+    bool rows = res->target != PIPE_TEXTURE_1D && res->target != PIPE_TEXTURE_1D_ARRAY;
+@@ -1740,7 +1773,7 @@
+                  box.height, row, vals);
+       }
+    }
+-   texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level,
++   texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
+                                           PIPE_MAP_WRITE, &box, bytes, row,
+                                           row * box.height);
+    return 0;
+@@ -1793,7 +1826,7 @@
+       return -1;
+ 
+    struct pipe_transfer *xfer = NULL;
+-   const uint8_t *map = pipe->texture_map(pipe, texture->res, level, PIPE_MAP_READ, &box,
++   const uint8_t *map = pipe->texture_map(pipe, texture->res, level + texture->first_level, PIPE_MAP_READ, &box,
+                                           &xfer);
+    if (!map) {
+       say(why, why_size, "the GPU driver would not map a %ux%u region of this texture for "
+@@ -1886,7 +1919,7 @@
+    }
+ 
+    struct pipe_transfer *xfer = NULL;
+-   const uint8_t *map = pipe->texture_map(pipe, texture->res, level, PIPE_MAP_READ, &box,
++   const uint8_t *map = pipe->texture_map(pipe, texture->res, level + texture->first_level, PIPE_MAP_READ, &box,
+                                           &xfer);
+    if (!map) {
+       say(why, why_size, "the GPU driver would not map a %ux%u region of this %s texture "
+@@ -3858,6 +3891,10 @@
+          if (!t->view) {
+             struct pipe_sampler_view tmpl = { 0 };
+             u_sampler_view_default_template(&tmpl, t->res, t->res->format);
++            if (t->res->target == PIPE_TEXTURE_2D) {
++               tmpl.u.tex.first_level = t->first_level;
++               tmpl.u.tex.last_level = t->first_level + t->level_count - 1;
++            }
+             t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);
+             if (!t->view) {
+                say(why, why_size, "%s would not make a sampler view of the %s bound at "
+@@ -3881,7 +3918,7 @@
+                       (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
+             .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
+                              (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
+-            .u.tex.level = 0,
++            .u.tex.level = t->first_level,
+             .u.tex.first_layer = 0,
+             .u.tex.last_layer = (t->shape.type == RWA_TYPE_3D ? t->res->depth0
+                                                               : t->layers) - 1,
+@@ -6667,9 +6704,14 @@
+ static struct pipe_surface *
+ native_render_surface(struct rwa_texture *texture)
+ {
+-   if (!texture->native_surface)
++   if (!texture->native_surface) {
++      const struct pipe_surface tmpl = {
++         .format = texture->res->format,
++         .u.tex.level = texture->first_level,
++      };
+       texture->native_surface = texture->device->pipe->create_surface(texture->device->pipe,
+-         texture->res, &(struct pipe_surface){ .format = texture->res->format });
++                                                                    texture->res, &tmpl);
++   }
+    struct pipe_surface *surface = NULL;
+    if (texture->native_surface) pipe_surface_reference(&surface, texture->native_surface);
+    return surface;
+diff --git a/tools/mesa/air/sweet_native_ext.c b/tools/mesa/air/sweet_native_ext.c
+--- a/tools/mesa/air/sweet_native_ext.c
++++ b/tools/mesa/air/sweet_native_ext.c
+@@ -259,7 +259,7 @@
+       if(!surface){say(why,n,"failed to create clear surface");return -1;}
+       union pipe_color_union value;
+       memcpy(value.f,values[i],sizeof(value.f));
+-      d->pipe->clear_render_target(d->pipe,surface,&value,0,0,res->width0,res->height0,false);
++      d->pipe->clear_render_target(d->pipe,surface,&value,0,0,surface->width,surface->height,false);
+       pipe_surface_reference(&surface,NULL);
+    }
+    if(z || s) {
+@@ -271,7 +271,7 @@
+       }
+       struct pipe_surface *surface=native_render_surface(depth);
+       if(!surface){say(why,n,"failed to create depth clear surface");return -1;}
+-      d->pipe->clear_depth_stencil(d->pipe,surface,flags,z?*z:0,s?*s:0,0,0,res->width0,res->height0,false);
++      d->pipe->clear_depth_stencil(d->pipe,surface,flags,z?*z:0,s?*s:0,0,0,surface->width,surface->height,false);
+       pipe_surface_reference(&surface,NULL);
+    }
+    return d->in_command?0:finish_or_say_why(d,true,"clear",why,n);
+diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -867,6 +867,8 @@
+ 	struct rwa_texture *_texture;
+ 	struct rwa_texture_shape _shape;
+     CFTypeRef _nativeSurface;
++	SweetNativeMetalTexture *_nativeParentTexture;
++	NSUInteger _nativeParentLevel;
+ 	int _responsibleProcess;   /* as on the buffer: accounting, not behaviour */
+ }
+ @property (readonly) struct rwa_texture *mesaTexture;
+@@ -2566,6 +2568,7 @@
+ 		mesa.texture_destroy(_texture);
+ 	}
+     if(_nativeSurface)CFRelease(_nativeSurface);
++	[_nativeParentTexture release];
+ 	[_owner release];[super dealloc];
+ }
+ 
+@@ -2583,8 +2586,8 @@
+ - (NSUInteger)usage                { NATIVE_OBJECT_LOCK;  return _shape.usage; }
+ - (BOOL)isFramebufferOnly          { NATIVE_OBJECT_LOCK;  return NO; }
+ - (BOOL)allowGPUOptimizedContents  { NATIVE_OBJECT_LOCK;  return NO; }
+-- (id)parentTexture                { NATIVE_OBJECT_LOCK;  return nil; }
+-- (NSUInteger)parentRelativeLevel  { NATIVE_OBJECT_LOCK;  return 0; }
++- (id)parentTexture                { NATIVE_OBJECT_LOCK;  return _nativeParentTexture; }
++- (NSUInteger)parentRelativeLevel  { NATIVE_OBJECT_LOCK;  return _nativeParentLevel; }
+ - (NSUInteger)parentRelativeSlice  { NATIVE_OBJECT_LOCK;  return 0; }
+ - (id)buffer                       { NATIVE_OBJECT_LOCK;  return nil; }
+ - (NSUInteger)bufferOffset         { NATIVE_OBJECT_LOCK;  return 0; }
+@@ -2755,6 +2758,27 @@
+ 		}
+ 		if (format == sf)
+ 			return [self retain];
++	}
++	if (!_nativeSurface && format == sf && type == MTLTextureType2D && type == _shape.type &&
++	    slices.location == 0 && slices.length == 1 && levels.location < _shape.mip_levels &&
++	    levels.length > 0 && levels.length <= _shape.mip_levels - levels.location) {
++		struct rwa_texture_shape viewShape;
++		struct rwa_texture *view = rwa_texture_mip_view(_texture, (unsigned)levels.location,
++		                                                 (unsigned)levels.length, &viewShape);
++		if (view) {
++			SweetNativeMetalTexture *result = [SweetNativeMetalTexture alloc];
++			if (!result) {
++				mesa.texture_destroy(view);
++				return nil;
++			}
++			result = [result initWithRedwoodDevice:_owner texture:view shape:&viewShape];
++			if (!result) {
++				return nil;
++			}
++			result->_nativeParentTexture = [self retain];
++			result->_nativeParentLevel = levels.location;
++			return result;
++		}
+ 	}
+ 	static unsigned refused;
+ 	if (refused++ < 16)
