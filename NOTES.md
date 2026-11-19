@@ -178,3 +178,19 @@
   It installs `SweetMetal2.bundle` and `FD_MESA_DEBUG=sysmem`. Neither is
   in the original iOS 26 root. The package has not been written. A71 GMU,
   SQE and signed ZAP files were checked by the ADT packer offline.
+
+## 2026-11-19 21:10 — keys confirmed; handoff to a new agent; next: Adreno + Metal
+
+- Owner: `build/a71-ios26-keys.img` (sweetkeys=1) boots, slowly (long Apple logo); power and volume
+  buttons work. Boot time not measured, no log of that boot pulled yet. The second agent was stopped.
+- Goal set by the owner: everything that worked on the iOS 16 port works on iOS 26. Reference for the A71
+  side: `ios-a71` patches 0184-0229 (touch, USB ACM, RTC, payload, battery/charge, panel and brightness,
+  torch, PSCI halt, PMEM, Wi-Fi SMMU and link events, ADSP/SMMU audio, GPU 700 MHz, LLCC, swap wait).
+  Donor for the SoC side: DC28088 NOTES (iOS 26 on sweet: GPU, Metal builds to 36, wallpaper, Control
+  Centre via MobileGestalt arm64e override, Bluetooth, sound; Wi-Fi blocked on wlan_pd UNINIT).
+- Found in the donor NOTES (2026-11-17 08:20 IST): `serial=3` starts `serial_keyboard_poll` at kernel
+  priority 95 and it spins a whole core (cyclic gPESF list); their fix was `serial=1` and patch 2008.
+  `tools/a71-pack-ios26.py` now uses `serial=1` (guess: part of the slow boot here; not measured).
+- Plan: (1) Adreno kernel CI 44560785792 (2000-2011 + 2100) + touch + keys + A71 GPU firmware +
+  `--metal --payload` with `build/a71-ios26-metal36.payload`; (2) USB console (0187 port); (3) Wi-Fi;
+  (4) audio; (5) battery, brightness, torch, RTC; (6) sweetdbg and the launchd/lockdownd fixes.
