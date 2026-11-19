@@ -1,0 +1,414 @@
+A71 (Wi-Fi, ADSP and link parts of iOS 16 0206, 0207, 0210-0215, 0217): RSSI bounds, link quality
+and link-state events for wland, clock setter log, ADSP audio SMMU stream 0x1b21 and its translating
+bank (sweetsmmuadsp), rpmh/pmem pieces. Framebuffer and AMFI parts of those patches are left out.
+
+diff --git a/bsd/dev/redwood_apple80211.c b/bsd/dev/redwood_apple80211.c
+index 1c7e5e1..ecb1fe0 100644
+--- a/bsd/dev/redwood_apple80211.c
++++ b/bsd/dev/redwood_apple80211.c
+@@ -36,6 +36,7 @@
+ #include <libkern/libkern.h>
+ #include <sys/errno.h>
+ #include <sys/kern_event.h>
++#include <pexpert/pexpert.h>	/* 0210 */
+ #include <sys/kernel.h>
+ #include <sys/proc.h>
+ #include <sys/redwood_input.h>
+@@ -191,9 +192,13 @@ _Static_assert(sizeof(struct apple80211_scan_result) == 1164 && offsetof(struct
+     offsetof(struct apple80211_scan_result, age_ms) == 0x84 && offsetof(struct apple80211_scan_result, elements) == 0x8c,
+     "a scan's result as iOS 16.5 has it");
+ 
++/* 0215: RSSI_BOUNDS, set at run time (-90..-45 too few bars at -75 dBm, -95..-50 too few, -100..-60 too many) */
++int redwood_rssi_low = -98, redwood_rssi_high = -55;
++int redwood_rssi_linkevt;	/* 0217: PMEM_INJECT kind 3 */
++
+ /* Apple80211's events (APPLE80211_M_...) */
+ enum { EVENT_POWER_CHANGED = 1, EVENT_SSID_CHANGED = 2, EVENT_BSSID_CHANGED = 3, EVENT_LINK_CHANGED = 4, EVENT_ASSOC_DONE = 9,
+-       EVENT_SCAN_DONE = 10 };
++       EVENT_SCAN_DONE = 10, EVENT_LINK_QUALITY = 17 /* 0210 */ };
+ 
+ static const char interface_name[16] = "en0";   /* (bsd/dev/redwood_net.c makes one interface, and that is its name) */
+ 
+@@ -393,12 +398,74 @@ get(struct apple80211req *request)
+ 		break;
+ 	}
+ 
++	/* 0207: the bounds of the signal scale wifid draws bars from (16 bytes: version, then dBm low/high) */
++	if (request->req_type == 106) {
++		struct {
++			uint32_t version;
++			int32_t low, high;
++			uint32_t unused;
++		} answer = { .version = 1, .low = redwood_rssi_low, .high = redwood_rssi_high };	/* 0215: set at run time */
++
++		return give(request, &answer, sizeof(answer));
++	}
++
+ 	/* the rest is about the network joined, and there is none unless the station says so */
+ 	if ((state = kalloc_data(sizeof(*state), Z_WAITOK)) == NULL) {
+ 		return ENOMEM;
+ 	}
+ 	redwood_sta_state(state);
+ 	switch (request->req_type) {
++	/*
++	 * 0206: wifid asked for these and drew an empty Wi-Fi icon while they were refused. Values for a
++	 * 1x1 2.4 GHz 802.11n link; the noise floor is the one the scan results report.
++	 */
++	case 17: {                              /* noise: the shape of RSSI (16) */
++		struct {
++			uint32_t version, radios, unit;
++			int32_t each[4], all, each_ext[4], all_ext;
++		} answer = { .version = 1, .radios = 1, .each = { -95 }, .all = -95, .each_ext = { -95 }, .all_ext = -95 };
++
++		error = state->phase != REDWOOD_STA_JOINED ? ENXIO : give(request, &answer, sizeof(answer));
++		break;
++	}
++	case 8:                                 /* rate, Mbit/s, in the value */
++		if (state->phase != REDWOOD_STA_JOINED) {
++			error = ENXIO;
++		} else {
++			request->req_val = 72;
++		}
++		break;
++	case 57:                                /* MCS index, in the value */
++		if (state->phase != REDWOOD_STA_JOINED) {
++			error = ENXIO;
++		} else {
++			request->req_val = 7;
++		}
++		break;
++	case 5:                                 /* power save: off */
++	case 18:                                /* interference mitigation: off */
++		request->req_val = 0;
++		break;
++	case 14: {                              /* PHY modes: supported B|G|N, active N (APPLE80211_MODE_*) */
++		struct {
++			uint32_t version, supported, active;
++		} answer = { .version = 1, .supported = (1u << 2) | (1u << 3) | (1u << 4),
++			     .active = state->phase == REDWOOD_STA_JOINED ? (1u << 4) : 0 };
++
++		error = give(request, &answer, sizeof(answer));
++		break;
++	}
++	case 51:                                /* country code, 3 bytes */
++		error = give(request, "US", 3);
++		break;
++	case 6: {                               /* protection mode: none */
++		struct {
++			uint32_t version, mode, threshold;
++		} answer = { .version = 1 };
++
++		error = give(request, &answer, sizeof(answer));
++		break;
++	}
+ 	case 13:                                /* the state: APPLE80211_S_INIT 0, _SCAN 1, _AUTH 2, _ASSOC 3, _RUN 4 */
+ 		request->req_val = state->phase == REDWOOD_STA_JOINED ? 4 : state->phase == REDWOOD_STA_JOINING ? 2 :
+ 		    state->phase == REDWOOD_STA_SCANNING ? 1 : 0;
+@@ -593,6 +660,9 @@ set(const struct apple80211req *request, char *said, size_t said_size)
+ 	}
+ 	case 10:
+ 		return set_scan(request, said, said_size);
++	case 51:                                /* 0206: country code: the firmware keeps its own; taken, not used */
++	case 383:                               /* 0206: wifid set this hundreds of times a boot; taken, not used */
++		return 0;
+ 	default:
+ 		return EOPNOTSUPP;
+ 	}
+@@ -632,12 +702,47 @@ redwood_apple80211_event(enum redwood_sta_event event, int status)
+ 	case REDWOOD_STA_POWER:
+ 		post(EVENT_POWER_CHANGED, NULL, 0);
+ 		break;
+-	case REDWOOD_STA_SCAN_DONE:
++	case REDWOOD_STA_SCAN_DONE: {
+ 		lck_mtx_lock(&apple80211_lock);
+ 		result_next = 0;
+ 		lck_mtx_unlock(&apple80211_lock);
+ 		post(EVENT_SCAN_DONE, NULL, 0);
++		/*
++		 * 0210: wave35, the status bar kept one bar (the -76 dBm of the join's link event) while Settings, from
++		 * fresh scans, drew two: after the join wifid never asks RSSI (16) again. While joined, each scan (the
++		 * background ones refresh state->bss.rssi, 0204) is followed by a link-quality event carrying the link
++		 * event's layout with the current signal. sweetrssievt=0 turns it off.
++		 */
++		static int lq_on = -1;
++		if (lq_on < 0) {
++			lq_on = 1;
++			(void)PE_parse_boot_argn("sweetrssievt", &lq_on, sizeof(lq_on));
++		}
++		struct redwood_sta_state *state = lq_on ? kalloc_data(sizeof(*state), Z_WAITOK | Z_ZERO) : NULL;
++		if (state != NULL) {
++			redwood_sta_state(state);
++			if (state->phase == REDWOOD_STA_JOINED) {
++				struct apple80211_link_changed lq = { .rssi = state->bss.rssi, .noise = (uint16_t)(int16_t)-95,
++					.snr = state->bss.rssi > -95 && state->bss.rssi < 0 ? (uint16_t)(state->bss.rssi + 95) : 0 };
++				/* 0217: run time (sweetdbg linkevt 1): the status bar takes its bars from a link event, so send one when
++				 * the signal has moved by 3 dB. Off by default: wifid may do more than redraw on it. */
++				static int32_t lq_last;
++				if (redwood_rssi_linkevt && (state->bss.rssi - lq_last >= 3 || lq_last - state->bss.rssi >= 3)) {
++					lq_last = state->bss.rssi;
++					printf("apple80211: link event for rssi %d\n", state->bss.rssi);
++					post(EVENT_LINK_CHANGED, &lq, sizeof(lq));
++				}
++				static unsigned lq_said;
++				if (lq_said < 20) {
++					lq_said++;
++					printf("apple80211: link quality event, rssi %d\n", state->bss.rssi);
++				}
++				post(EVENT_LINK_QUALITY, &lq, sizeof(lq));
++			}
++			kfree_data(state, sizeof(*state));
++		}
+ 		break;
++	}
+ 	case REDWOOD_STA_JOIN_DONE:
+ 		lck_mtx_lock(&apple80211_lock);
+ 		join_result = status == 0 ? 1 : status == EAUTH ? 21 : status == ETIMEDOUT ? 9 : 2;
+@@ -732,7 +837,7 @@ redwood_apple80211_ioctl(u_long command, void *data)
+ 	error = is_set ? set(request, what, sizeof(what)) : get(request);
+ 	note(request, is_set, error);
+ 	/* (a request that is repeated for ever is said a few hundred times) */
+-	if (said < 800) {
++	if (said < 4000) {	/* 0207: was 800, which ended before the joins */
+ 		said++;
+ 		printf("apple80211: %s %s %d (%s), value %d, %u bytes%s: %s", who, is_set ? "sets" : "gets", request->req_type,
+ 		    type_name(request->req_type), request->req_val, request->req_len, what, error == 0 ? "answered\n" : error ==
+diff --git a/bsd/dev/sweet_pmem.c b/bsd/dev/sweet_pmem.c
+index 5c4adc0..dc649e5 100644
+--- a/bsd/dev/sweet_pmem.c
++++ b/bsd/dev/sweet_pmem.c
+@@ -635,6 +635,15 @@ pm_ioctl(__unused dev_t dev, u_long cmd, caddr_t data, __unused int flag, __unus
+ 			sweet_hid_touch(in->a, in->b, in->c, in->d);
+ 		} else if (in->kind == 1 && in->a >= 0 && in->a < 4) {
+ 			sweet_hid_key(in->a, in->b);
++		} else if (in->kind == 2 && in->a < in->b && in->a >= -120 && in->b <= 0) {
++			/* 0215: RSSI_BOUNDS at run time (sweetdbg bars LOW HIGH) */
++			extern int redwood_rssi_low, redwood_rssi_high;
++			redwood_rssi_low = in->a;
++			redwood_rssi_high = in->b;
++			printf("SWEET PMEM: RSSI bounds %d..%d\n", in->a, in->b);
++		} else if (in->kind == 3) {
++			extern int redwood_rssi_linkevt;
++			redwood_rssi_linkevt = in->a != 0;	/* 0217 */
+ 		} else {
+ 			return EINVAL;
+ 		}
+diff --git a/bsd/dev/sweet_rpmh.c b/bsd/dev/sweet_rpmh.c
+index a8f0fcd..11a448b 100644
+--- a/bsd/dev/sweet_rpmh.c
++++ b/bsd/dev/sweet_rpmh.c
+@@ -1128,13 +1128,14 @@ smmu_sid_match(uint32_t smr, uint32_t sid, uint32_t mask)
+ 	uint32_t id = smr & 0x7fff, m = (smr >> 16) & 0x7fff;
+ 	return ((id ^ sid) & ~(m | mask) & 0x7fff) == 0;
+ }
++/* 0211: the same for any stream (name, sid, mask); the WLAN call keeps its old messages' shape */
+ static void
+-sweet_smmu_wlan_stream(volatile uint32_t *gr0, uint32_t id0, uint32_t id1)
++sweet_smmu_identity_stream(volatile uint32_t *gr0, uint32_t id0, uint32_t id1, const char *name, uint32_t SID, uint32_t MASK)
+ {
+ 	const uint32_t nsmr = id0 & 0xff, ncb = id1 & 0xff;
+ 	const uint64_t psize = (id1 >> 31) ? 0x10000 : 0x1000, npage = 1ull << (((id1 >> 28) & 7) + 1);
+ 	if (psize != 0x1000 || nsmr > 128 || ncb > 128 || (npage + ncb) * psize > 0x100000) {
+-		printf("SWEET SMMU: WLAN stream: unexpected geometry smr=%u cb=%u page=%#llx x %llu\n", nsmr, ncb, psize, npage);
++		printf("SWEET SMMU: %s stream: unexpected geometry smr=%u cb=%u page=%#llx x %llu\n", name, nsmr, ncb, psize, npage);
+ 		return;
+ 	}
+ 	volatile uint32_t *gr1 = (volatile uint32_t *)ml_io_map(0x15000000 + psize, psize);
+@@ -1154,8 +1155,8 @@ sweet_smmu_wlan_stream(volatile uint32_t *gr0, uint32_t id0, uint32_t id1)
+ 		if (((s2cr >> 16) & 3) == 0) {
+ 			used[(s2cr & 0xff) / 64] |= 1ull << ((s2cr & 0xff) % 64);
+ 		}
+-		if (smmu_sid_match(smr, SMMU_WLAN_SID, SMMU_WLAN_MASK)) {
+-			printf("SWEET SMMU: WLAN stream: SMR%u %#x already matches (S2CR %#x)\n", i, smr, s2cr);
++		if (smmu_sid_match(smr, SID, MASK)) {
++			printf("SWEET SMMU: %s stream: SMR%u %#x already matches (S2CR %#x)\n", name, i, smr, s2cr);
+ 			return;
+ 		}
+ 	}
+@@ -1172,7 +1173,7 @@ sweet_smmu_wlan_stream(volatile uint32_t *gr0, uint32_t id0, uint32_t id1)
+ 		}
+ 	}
+ 	if (slot < 0 || cb < 0) {
+-		printf("SWEET SMMU: WLAN stream: no free SMR/bank (SMR %d, bank %d)\n", slot, cb);
++		printf("SWEET SMMU: %s stream: no free SMR/bank (SMR %d, bank %d)\n", name, slot, cb);
+ 		return;
+ 	}
+ 	cbp[0x58 / 4] = 0xffffffff;     /* FSR clear */
+@@ -1186,16 +1187,133 @@ sweet_smmu_wlan_stream(volatile uint32_t *gr0, uint32_t id0, uint32_t id1)
+ 	gr1[cb] = 0x0001f000;                             /* CBAR */
+ 	cbp[0] = 0x000000e0;                              /* SCTLR last */
+ 	gr0[(0xc00 + 4 * slot) / 4] = (uint32_t)cb;       /* S2CR: translate via the bank */
+-	gr0[(0x800 + 4 * slot) / 4] = (1u << 31) | (SMMU_WLAN_MASK << 16) | SMMU_WLAN_SID;
++	gr0[(0x800 + 4 * slot) / 4] = (1u << 31) | (MASK << 16) | SID;
+ 	gr0[0x70 / 4] = 0;                                /* sTLBGSYNC */
+ 	for (int i = 0; i < 1000 && (gr0[0x74 / 4] & 1); i++) {
+ 		delay(1000);
+ 	}
+ 	const uint32_t smr = gr0[(0x800 + 4 * slot) / 4], s2cr = gr0[(0xc00 + 4 * slot) / 4];
+-	const bool ok = (smr >> 31) && smmu_sid_match(smr, SMMU_WLAN_SID, SMMU_WLAN_MASK) &&
++	const bool ok = (smr >> 31) && smmu_sid_match(smr, SID, MASK) &&
+ 	    ((s2cr >> 16) & 3) == 0 && (s2cr & 0xff) == (uint32_t)cb;
+-	printf("SWEET SMMU: WLAN %#x/%#x -> CB%d via SMR%d: SMR %#x S2CR %#x SCTLR %#x CBAR %#x -> %s\n",
+-	    SMMU_WLAN_SID, SMMU_WLAN_MASK, cb, slot, smr, s2cr, cbp[0], gr1[cb], ok ? "ok" : "NOT as written");
++	printf("SWEET SMMU: %s %#x/%#x -> CB%d via SMR%d: SMR %#x S2CR %#x SCTLR %#x CBAR %#x -> %s\n",
++	    name, SID, MASK, cb, slot, smr, s2cr, cbp[0], gr1[cb], ok ? "ok" : "NOT as written");
++}
++
++/*
++ * 0215: the ADSP's audio buffer through a TRANSLATING bank, built here at boot because a userland apps-SMMU access later
++ * stalls the CPU. A translation-off bank (0211/0213) reset the phone at the first ASM RUN; ios-flame's translating bank
++ * on the same SoC never did, so these are its values (phone/wifi/smmu.c R_*, "the SM7150 reference"). The DSP puts the
++ * stream in address bits 35:32, so the IOVA is mapped at both 0xa0000000 and 0x1a0000000. Tables and buffer sit in the
++ * unused tail of the splash region (two frames end at 0x9d3c6800), below 4 GB and never mapped cacheable.
++ */
++#define AUDIO_TABLES_PA 0x9d500000ull
++#define AUDIO_BUFFER_PA 0x9d600000ull
++#define AUDIO_BUFFER_LEN 0x40000ull
++#define AUDIO_IOVA      0xa0000000ull
++#define AUDIO_ALIAS     (1ull << 32)
++#define AUDIO_SID       0x1b21u
++static void
++sweet_smmu_audio_bank(volatile uint32_t *gr0, uint32_t id0, uint32_t id1)
++{
++	const uint32_t nsmr = id0 & 0xff, ncb = id1 & 0xff;
++	const uint64_t psize = (id1 >> 31) ? 0x10000 : 0x1000, npage = 1ull << (((id1 >> 28) & 7) + 1);
++	if (psize != 0x1000 || nsmr > 128 || ncb > 128 || (npage + ncb) * psize > 0x100000) {
++		printf("SWEET SMMU: ADSP audio: unexpected geometry\n");
++		return;
++	}
++	volatile uint32_t *gr1 = (volatile uint32_t *)ml_io_map(0x15000000 + psize, psize);
++	volatile uint64_t *tables = (volatile uint64_t *)ml_io_map(AUDIO_TABLES_PA, 0x3000);
++	if (!gr1 || !tables) {
++		return;
++	}
++	uint64_t used[2] = {0, 0};
++	int slot = -1;
++	for (uint32_t i = 0; i < nsmr; i++) {
++		const uint32_t smr = gr0[(0x800 + 4 * i) / 4], s2cr = gr0[(0xc00 + 4 * i) / 4];
++		if (!(smr >> 31)) {
++			if (slot < 0) {
++				slot = (int)i;
++			}
++			continue;
++		}
++		if (((s2cr >> 16) & 3) == 0) {
++			used[(s2cr & 0xff) / 64] |= 1ull << ((s2cr & 0xff) % 64);
++		}
++		if (smmu_sid_match(smr, AUDIO_SID, 0)) {
++			printf("SWEET SMMU: ADSP audio: SMR%u %#x already matches\n", i, smr);
++			return;
++		}
++	}
++	int cb = -1;
++	volatile uint32_t *cbp = NULL;
++	for (uint32_t c = 0; c < ncb && cb < 0; c++) {
++		if (used[c / 64] & (1ull << (c % 64)) || gr1[c] != 0) {
++			continue;
++		}
++		volatile uint32_t *page = (volatile uint32_t *)ml_io_map(0x15000000 + (npage + c) * psize, psize);
++		if (page && !(page[0] & 1)) {
++			cb = (int)c;
++			cbp = page;
++		}
++	}
++	if (slot < 0 || cb < 0) {
++		printf("SWEET SMMU: ADSP audio: no free SMR/bank (SMR %d, bank %d)\n", slot, cb);
++		return;
++	}
++	for (unsigned i = 0; i < 3 * 512; i++) {
++		tables[i] = 0;
++	}
++	const uint64_t l1 = AUDIO_TABLES_PA, l2 = l1 + 0x1000, l3 = l1 + 0x2000;
++	const uint64_t leaf = 3ull | (1ull << 6) | (2ull << 8) | (1ull << 10) | (1ull << 11);     /* attr 0, AP 01, SH 2, AF, nG */
++	tables[(AUDIO_IOVA >> 30) & 0x1ff] = l2 | 3;
++	tables[((AUDIO_IOVA | AUDIO_ALIAS) >> 30) & 0x1ff] = l2 | 3;
++	tables[512 + ((AUDIO_IOVA >> 21) & 0x1ff)] = l3 | 3;
++	for (uint64_t o = 0; o < AUDIO_BUFFER_LEN; o += 0x1000) {
++		tables[1024 + (((AUDIO_IOVA + o) >> 12) & 0x1ff)] = (AUDIO_BUFFER_PA + o) | leaf;
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++	const uint32_t sctlr = 0x00001127u, tcr = 0x00803519u, tcr2 = 1u | (1u << 4) | (7u << 15), mair0 = 0xf404ff44u, cbar = 0x0001f300u;
++	const uint64_t ttbr = l1 | ((uint64_t)cb << 48);
++	cbp[0] = 0;
++	cbp[0x58 / 4] = 0xffffffff;
++	cbp[0x20 / 4] = (uint32_t)ttbr;
++	cbp[0x24 / 4] = (uint32_t)(ttbr >> 32);
++	cbp[0x28 / 4] = 0;
++	cbp[0x2c / 4] = 0;
++	cbp[0x30 / 4] = tcr;
++	cbp[0x10 / 4] = tcr2;
++	cbp[0x38 / 4] = mair0;
++	cbp[0x3c / 4] = 0;
++	gr1[(0x800 + 4 * cb) / 4] = 0x00000001;
++	gr1[cb] = cbar;
++	cbp[0x610 / 4] = (uint32_t)cb;
++	cbp[0x618 / 4] = 0;
++	cbp[0x7f0 / 4] = 0;
++	for (int i = 0; i < 1000 && (cbp[0x7f4 / 4] & 1); i++) {
++		delay(1000);
++	}
++	cbp[0] = sctlr;
++	const bool bank_ok = cbp[0x30 / 4] == tcr && cbp[0x20 / 4] == (uint32_t)ttbr && gr1[cb] == cbar && (cbp[0] & ~0x1000u) == (sctlr & ~0x1000u);
++	if (!bank_ok) {
++		printf("SWEET SMMU: ADSP audio: CB%d NOT as written (SCTLR %#x TCR %#x CBAR %#x): no stream routed\n", cb, cbp[0], cbp[0x30 / 4], gr1[cb]);
++		return;
++	}
++	gr0[(0xc00 + 4 * slot) / 4] = (uint32_t)cb;
++	gr0[(0x800 + 4 * slot) / 4] = (1u << 31) | AUDIO_SID;
++	gr0[0x70 / 4] = 0;
++	for (int i = 0; i < 1000 && (gr0[0x74 / 4] & 1); i++) {
++		delay(1000);
++	}
++	const uint32_t smr = gr0[(0x800 + 4 * slot) / 4], s2cr = gr0[(0xc00 + 4 * slot) / 4];
++	printf("SWEET SMMU: ADSP audio %#x -> translating CB%d via SMR%d: SMR %#x S2CR %#x SCTLR %#x TCR %#x; IOVA %#llx -> PA %#llx -> %s\n",
++	    AUDIO_SID, cb, slot, smr, s2cr, cbp[0], cbp[0x30 / 4], AUDIO_IOVA, AUDIO_BUFFER_PA,
++	    (smr >> 31) && smmu_sid_match(smr, AUDIO_SID, 0) && (s2cr & 0xff) == (uint32_t)cb ? "ok" : "NOT as written");
++}
++
++static void
++sweet_smmu_wlan_stream(volatile uint32_t *gr0, uint32_t id0, uint32_t id1)
++{
++	sweet_smmu_identity_stream(gr0, id0, id1, "WLAN", SMMU_WLAN_SID, SMMU_WLAN_MASK);
+ }
+ 
+ /*
+@@ -1380,6 +1498,17 @@ sweet_smmu_probe_thread(void *arg, wait_result_t wr)
+ 	if (wlan) {
+ 		sweet_smmu_wlan_stream(smmu, id0, id1);
+ 	}
++	/*
++	 * 0211/0213: the audio DSP's buffers. LPASS puts the stream's low bits in DMA address bits 32-35; the DT's
++	 * msm-audio-ion stream is 0x1b21 (0x1b20 was refused: the SMR read back 0), so bits 35:32 = 1. Translation off:
++	 * a /dev/pmem buffer at 0x1xxxxxxxx is its own DSP address (adspboot --pcm-pa alloc, no SMMU access there).
++	 * sweetsmmuadsp=0 leaves it out.
++	 */
++	int adsp = 1;
++	PE_parse_boot_argn("sweetsmmuadsp", &adsp, sizeof(adsp));
++	if (adsp) {
++		sweet_smmu_audio_bank(smmu, id0, id1);	/* 0215 */
++	}
+ 	sweet_smmu_dump_mdss(smmu, id0, id1);
+ }
+ 
+diff --git a/bsd/kern/kern_time.c b/bsd/kern/kern_time.c
+index 1dc7e15..3c53cdb 100644
+--- a/bsd/kern/kern_time.c
++++ b/bsd/kern/kern_time.c
+@@ -219,6 +219,18 @@ settimeofday(__unused struct proc *p, struct settimeofday_args  *uap, __unused i
+ 		if (!timeval_fixusec(&atv)) {
+ 			return EPERM;
+ 		}
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++		/* 0207: the lock screen showed 1 January 1970 after the kernel had set the date from the RTC; say who
++		   sets the clock and to what (logged, not refused). */
++		{
++			char who[32] = "?";
++			clock_sec_t was = 0;
++			clock_usec_t wus = 0;
++			proc_selfname(who, sizeof(who));
++			clock_get_calendar_microtime(&was, &wus);
++			printf("SWEET TIME: %s[%d] sets the clock %ld -> %ld\n", who, proc_selfpid(), (long)was, (long)atv.tv_sec);
++		}
++#endif
+ 		setthetime(&atv);
+ 	}
+ 	if (uap->tzp) {

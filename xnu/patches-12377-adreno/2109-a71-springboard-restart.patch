@@ -1,0 +1,38 @@
+A71 (part of iOS 16 0200): sweetm2restart=2 restarts SpringBoard together with backboardd
+when Metal is published late; the first SpringBoard after boot may ignore the lock screen swipe.
+
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+index 64297c2..1ee66c8 100644
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -726,16 +726,24 @@ extern "C" int sweet_native_adreno_publish(NativeAdrenoVm *vm,NativeAdrenoSubmit
+     service. Restart it once here (Sunfish's install script does the same by
+     hand) so the fresh process finds MetalPluginName. */
+  int restart=1;PE_parse_boot_argn("sweetm2restart",&restart,sizeof(restart));
+- if(gles!=1 && restart==1) {
+-  for(int pid=1;pid<99999;pid++) {
++ if(gles!=1 && restart>=1) {
++  /* 0200: sweetm2restart=2 also restarts SpringBoard. On a late GPU start its restart came with
++     backboardd's; the first SpringBoard after boot may ignore the lock screen swipe. */
++  bool bb=false,sb=restart!=2;
++  for(int pid=1;pid<99999 && !(bb && sb);pid++) {
+    proc_t p=proc_find(pid);
+    if(!p)continue;
+-   const bool match=!strcmp(proc_best_name(p),"backboardd");
+-   if(match)proc_signal(pid,SIGKILL);
++   const bool is_bb=!strcmp(proc_best_name(p),"backboardd");
++   const bool is_sb=restart==2 && !strcmp(proc_best_name(p),"SpringBoard");
++   if(is_bb || is_sb)proc_signal(pid,SIGKILL);
+    proc_rele(p);
+-   if(match) {
++   if(is_bb) {
++    bb=true;
+     IOLog("SWEET RENDER: restarted backboardd for Metal discovery\n");
+-    break;
++   }
++   if(is_sb) {
++    sb=true;
++    IOLog("SWEET RENDER: restarted SpringBoard\n");
+    }
+   }
+  }
