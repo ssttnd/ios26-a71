@@ -260,3 +260,23 @@
 - RTC offset read in TWRP: 1778420636 s (rtc0 since_epoch 16686302), for --rtcoff with the 2108 kernel.
 - Prepared for the combined kernel: `build/a71-ios26-cc.payload` (20 entries: the same with mv, plus the four
   speech synthesizers moved).
+
+## 2026-11-19 22:05 — metal-c result; combined kernel built; all-a flashed
+
+- metal-c first boot: early kernel panic photo `assertion failed: strlen(name) <= (sizeof(new_list->el_name) - 1)`
+  (subr_eventhandler.c:125, assfail in uipc_socket.c:8260), during the cpufreq prints; nothing reached the UFS log
+  or USB. Same kernel as metal-b; the only new arg (sweetjetsamlimits=0) sets one flag. Rebooted from TWRP without
+  changes: booted. Guess: random memory corruption, like the shim blue screen before metal-b (both first boots right
+  after a TWRP flash). Not explained.
+- metal-c second boot (owner): Control Center has its modules (MobileGestalt arm64e/camera-flash override works);
+  no `sig 9` jetsam kills in `logs/usb-ios26-metal-c.txt` (154 in the metal-b boot, incl. lsd x5); Settings still
+  hangs. Preferences logs nothing; fairplayd.H2 respawns in a loop (as on iOS 16, where removing its launchd job
+  unblocked the FairPlay clients).
+- Phone `/System/Library/xpc/launchd.plist` read in TWRP: identical to the image (692 jobs). Package
+  `build/a71-ios26-fp.payload` (`c9c54edd...`): original to /var/local/apple-orig/launchd.plist, plist without
+  com.apple.fairplayd.H2 (691 jobs), the four speech synthesizers moved (needs 2116). Takes effect at the second boot.
+- Combined kernel CI `44568994432` (978c888, 2100-2116) succeeded at the first build; kernel `539bc512...`.
+- `build/a71-ios26-all-a.img`: that kernel + touch, keys, GPU firmware, metal, payload, cpufreq, usb,
+  rtcoff 1778420636; packer added sweetbattery=2, sweetm2restart=2, DCS brightness on, sweetcharge default;
+  cmdline 533 bytes. Package VERIFY OK, boot VERIFY OK `3bc04ed8a20a0a5929d1cf8b7e0562dada9b8e03d04cd06ec96e1b9ecad0f14b`.
+  Fallback: metal-c (`40ccca6a...`).
