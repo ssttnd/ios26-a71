@@ -88,7 +88,7 @@
   the XNU 12377 kernel (`b5c5424644f056908b880a723a8d54bd1cc98bfde5c0a5fccdea50c361bb76e8`,
   downloaded and hash checked) and its initial RAM disk. The updated RAM disk job
   (with `/dev`) also passed in `44550850053`. Its A71 SEC_TS kernel job is
-  still running.
+  passed as well. The touch kernel artifact is `14546595630`.
 - `build/ios26-root-a71-23G90.img` is the verified 24 GiB raw HFSX root.
   SHA-256 `54f7898e050730a21073b98a6af79769592d092dce4a6ffa60b1ffd60d7a59f3`.
   HFS fsck passed, boot-task paths and shared-cache signatures passed, and
@@ -113,3 +113,28 @@
   while compressing the USB transfer. Verified the compressed stream against
   a checksum in TWRP without writing partitions before starting the real
   write. Install log is `logs/ios26-first-userdata-write.log` (gitignored).
+- The full root write completed in TWRP. Nineteen chunks were written on the
+  first attempt and five matched already. The entire 24 GiB readback matched
+  SHA-256 `54f7898e050730a21073b98a6af79769592d092dce4a6ffa60b1ffd60d7a59f3`.
+- Flashed the full CPU-only boot image, verified the 21,721,088-byte readback
+  against `3f2b27496fbda3cdb49130a5f37e5edc370a4dcd3dbb39a74bd6dafd43e11727`,
+  and requested a system reboot.
+- Owner confirmed the full iOS 26.6.2 boot reached the lock screen. The owner
+  saw red clock digits on a black background. This image had touch disabled.
+  A long power-button hold turned the display off. Next test the A71 SEC_TS
+  build by replacing only `boot`.
+- TWRP log `logs/ios26-full-cpu-first.txt` (flush 27, 709,127 bytes) confirms
+  Darwin 25.5.0, 8/8 cores, HFS mounted on `ufsroot0`, and execution of
+  `launchd`, `SpringBoard`, and `backboardd`. No `panic(cpu` line.
+
+## Samsung touch image
+
+- Actions `44550850053` succeeded. The verified kernel SHA-256 was
+  `69cf90672f532a08602e1ee99d6b064ef7b8ed2fb70da778ed0f983eaa690a57`.
+- `build/a71-ios26-touch.img` enables `sweettouch=1 sweettouchdelay=3`.
+  TWRP wrote only `boot` and verified the 21,737,472-byte readback against
+  `bce68159404842a28022d858c8112ac44081ffea94802b1c1c0e0aeb345660ae`.
+  Requested normal reboot. Owner confirmed the system started, swipe-up
+  unlocked the phone, and Settings opened. The phone is on iOS 26.6.2 with
+  this image. GPU acceleration, radio, audio and USB remain outside the
+  verified result. The first CPU-only boot showed a black wallpaper.

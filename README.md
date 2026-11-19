@@ -5,7 +5,9 @@ Snapdragon 730 (`SM7150`). The target system is iOS 26.6.2 (`23G90`) for
 iPhone 11 (`iPhone12,1`), using XNU `12377.121.6`.
 
 XNU 12377 reached a diagnostic PID 1 from a small HFSX RAM disk on the A71.
-The full iOS 26 filesystem and UI are pending. See [NOTES.md](NOTES.md) for
+The full iOS 26.6.2 boot reached the lock screen with CPU rendering. The
+owner confirmed swipe-to-unlock and opened Settings using the Samsung touch
+driver. See [NOTES.md](NOTES.md) for
 builds and observed results. The [iOS 16 port](docs/ios16-README.md) documents
 the existing shim, A71 hardware, and working system.
 
