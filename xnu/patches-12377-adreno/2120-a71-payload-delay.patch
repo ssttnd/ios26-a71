@@ -1,0 +1,14 @@
+diff --git a/bsd/dev/sweet_files.c b/bsd/dev/sweet_files.c
+--- a/bsd/dev/sweet_files.c
++++ b/bsd/dev/sweet_files.c
+@@ -431,7 +431,9 @@
+ 	while (rootvnode == NULL) {
+ 		sf_sleep_ms(1000);
+ 	}
+-	sf_sleep_ms(10000);
++	uint32_t delay_ms = 10000;
++	PE_parse_boot_argn("sweetpayloaddelay", &delay_ms, sizeof(delay_ms));
++	sf_sleep_ms(MAX(10000u, MIN(delay_ms, 600000u)));
+ 	err = sweet_ufs_payload_read(0, 1, buf);
+ 	if (err) {
+ 		printf("SWEET PAYLOAD: header read errno=%d\n", err);

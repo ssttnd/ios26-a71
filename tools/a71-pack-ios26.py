@@ -52,6 +52,7 @@ def main():
     parser.add_argument('--adreno-firmware', type=Path, help='enable A618 stage 9 using firmware from this A71')
     parser.add_argument('--metal', action='store_true', help='select the installed SweetMetal2 bundle')
     parser.add_argument('--payload', action='store_true', help='apply a verified raw package on this boot')
+    parser.add_argument('--payload-delay-ms', type=int, help='delay installing the package after root mount (10000–600000 ms)')
     parser.add_argument('--cpufreq', action='store_true', help='SM7150 cpufreq-hw: highest non-boost row (donor 2000; Adreno build)')
     parser.add_argument('--rtcoff', type=int, help='seconds to add to the PM6150 RTC (now - /sys/class/rtc/rtc0/since_epoch in TWRP)')
     parser.add_argument('--dtlog', help='sweetdtlog=NAME[,NAME]: their os_log on the console (donor 0205)')
@@ -77,6 +78,9 @@ def main():
         parser.error('expected a kernel built with the Adreno option')
     if args.payload and b'SWEET PAYLOAD: finished' not in kernel:
         parser.error('expected an A71 kernel with the raw installer')
+    if args.payload_delay_ms is not None and (
+            not args.payload or not 10000 <= args.payload_delay_ms <= 600000 or b'sweetpayloaddelay' not in kernel):
+        parser.error('--payload-delay-ms requires --payload, XNU patch 2120 and a delay of 10000–600000 ms')
     if args.usb and b'Sweet iOS (USB log)' not in kernel:
         parser.error('--usb requires a kernel with xnu 2101')
     if args.cpufreq and b'SWEET CPUFREQ: domain %u hardware not enabled' not in kernel:
@@ -102,6 +106,8 @@ def main():
         cmdline += ' sweetmtl=2 sweetgles=0'
     if args.payload:
         cmdline += ' sweetpayload=1'
+    if args.payload_delay_ms is not None:
+        cmdline += f' sweetpayloaddelay={args.payload_delay_ms}'
     if args.cpufreq:  # the first copy of a boot-arg wins: replace, do not append
         cmdline = cmdline.replace('sweetcpufreq=0', 'sweetcpufreq=1')
     if args.usb:
