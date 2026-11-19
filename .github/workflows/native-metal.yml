@@ -76,10 +76,12 @@ jobs:
               generated = sys.argv[1]
               subprocess.run(['git', 'init', '-q', generated], check=True)
               subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_METAL_PATCH']], check=True)
+              subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_BLUR_PATCH']], check=True)
           PY
       - name: Build the SweetMetal2 compatibility bundle
         env:
           A71_METAL_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-mip-views.patch
+          A71_BLUR_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-blur-attachments.patch
         run: |
           brew install bison flex ninja
           export PATH="$(brew --prefix bison)/bin:$(brew --prefix flex)/bin:$PATH"

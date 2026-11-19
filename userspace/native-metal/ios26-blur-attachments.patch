@@ -1,0 +1,199 @@
+diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -834,6 +834,7 @@
+     unsigned nativeScissor[4], nativeFlags;
+     BOOL nativeClearOnly, nativeBarrier;
+     unsigned nativeClearMask;
++    unsigned nativeColorLevels[8];
+     float nativeClearColors[8][4];
+ 	unsigned primitive, vertexStart, vertexCount;
+ 	/* the index buffer of an indexed draw and the three numbers that come with it in
+@@ -3659,6 +3660,7 @@
+             struct rwa_texture *targets[8]={0};
+             for(unsigned i=0;i<work->colorCount;i++)targets[i]=[work->color[i] mesaTexture];
+             if(rwa_clear([[_queue device] mesaDevice],targets,work->colorCount,work->nativeClearMask,
++                         work->nativeColorLevels,
+                          work->nativeClearColors,[work->depth mesaTexture],
+                          work->clearsDepth?&work->clearDepth:NULL,work->clearsStencil?&work->clearStencil:NULL,
+                          why,sizeof why)){[self failWith:why];goto done;}
+@@ -3894,6 +3896,7 @@
+ 		.fragment_buffer_table = fragment_table,
+ 		.fragment_buffer_table_count = work->count,
+         .native_flags=work->nativeFlags,
++        .native_color_levels=work->nativeColorLevels,
+         .native_viewport={work->nativeViewport[0],work->nativeViewport[1],work->nativeViewport[2],work->nativeViewport[3]},
+         .native_scissor={work->nativeScissor[0],work->nativeScissor[1],work->nativeScissor[2],work->nativeScissor[3]},
+         .native_blend={work->nativeBlend[0],work->nativeBlend[1],work->nativeBlend[2],work->nativeBlend[3]},
+@@ -4130,6 +4133,7 @@
+     float _nativeViewport[4], _nativeBlend[4];
+     unsigned _nativeScissor[4], _nativeFlags;
+     unsigned _nativeClearMask;
++    unsigned _nativeColorLevels[8];
+     float _nativeClearColors[8][4];
+ 	id _vertexBuffers[RW_MAX_BUFFERS];
+ 	NSUInteger _vertexBufferOffsets[RW_MAX_BUFFERS];
+@@ -4162,6 +4166,7 @@
+ 			continue;
+ 		}
+ 		_color[i] = texture;
++		_nativeColorLevels[i] = (unsigned)[attachment level];
+ 		_colorCount = i + 1;
+ 		/*
+ 		 * A resolve is the one thing a multisample pass asks for that this driver
+@@ -4448,6 +4453,7 @@
+     memcpy(work->nativeScissor,_nativeScissor,sizeof _nativeScissor);
+     memcpy(work->nativeBlend,_nativeBlend,sizeof _nativeBlend);
+     work->nativeFlags=_nativeFlags;
++    memcpy(work->nativeColorLevels, _nativeColorLevels, sizeof _nativeColorLevels);
+     work->nativeClearMask=_nativeClearMask;
+     memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
+     _nativeClearMask=0;_clears=NO;_clearsDepth=NO;_clearsStencil=NO;
+@@ -5451,6 +5457,7 @@
+     if(_nativeClearMask || _clearsDepth || _clearsStencil) {
+         SweetNativeMetalWork *work=[SweetNativeMetalWork new];work->nativeClearOnly=YES;
+         work->colorCount=_colorCount;for(unsigned i=0;i<8;i++)work->color[i]=_color[i];
++        memcpy(work->nativeColorLevels, _nativeColorLevels, sizeof _nativeColorLevels);
+         work->nativeClearMask=_nativeClearMask;memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
+         work->depth=_depth;work->clearDepth=_clearDepth;work->clearStencil=_clearStencil;
+         work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
+diff --git a/tools/mesa/air/air_metal.h b/tools/mesa/air/air_metal.h
+--- a/tools/mesa/air/air_metal.h
++++ b/tools/mesa/air/air_metal.h
+@@ -1310,6 +1310,7 @@
+     float native_blend[4];
+     unsigned native_flags; /* bit0 viewport, bit1 scissor, bit2 blend */
+     unsigned native_cull, native_winding, native_fill;
++    const unsigned *native_color_levels;
+ };
+ 
+ int rwa_render_draw(struct rwa_render *render, const struct rwa_draw *draw,
+diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
+--- a/tools/mesa/air/air_metal.c
++++ b/tools/mesa/air/air_metal.c
+@@ -6702,8 +6702,17 @@
+ }
+ 
+ static struct pipe_surface *
+-native_render_surface(struct rwa_texture *texture)
+-{
++native_render_surface(struct rwa_texture *texture, unsigned level)
++{
++   if (level >= texture->level_count)
++      return NULL;
++   if (level != 0) {
++      const struct pipe_surface tmpl = {
++         .format = texture->res->format,
++         .u.tex.level = texture->first_level + level,
++      };
++      return texture->device->pipe->create_surface(texture->device->pipe, texture->res, &tmpl);
++   }
+    if (!texture->native_surface) {
+       const struct pipe_surface tmpl = {
+          .format = texture->res->format,
+@@ -6958,8 +6967,13 @@
+              render->shape.color_format[i]);
+          return -1;
+       }
+-      unsigned tw = t->shape.width;
+-      unsigned th = t->shape.height ? t->shape.height : 1;
++      unsigned level = draw->native_color_levels ? draw->native_color_levels[i] : 0;
++      if (level >= t->level_count) {
++         say(why, why_size, "colour attachment %u selects mip level %u of %u", i, level, t->level_count);
++         return -1;
++      }
++      unsigned tw = u_minify(t->shape.width, level);
++      unsigned th = u_minify(t->shape.height ? t->shape.height : 1, level);
+       if (i == 0) {
+          w = tw;
+          h = th;
+@@ -7038,7 +7052,7 @@
+                                         .nr_cbufs = draw->color_count,
+                                         .samples = samples };
+    for (unsigned i = 0; i < draw->color_count; i++) {
+-      surf[i] = native_render_surface(draw->color[i]);
++      surf[i] = native_render_surface(draw->color[i], draw->native_color_levels ? draw->native_color_levels[i] : 0);
+       if (!surf[i]) {
+          say(why, why_size, "%s would not make a render surface of colour attachment %u",
+              rwa_device_name(device), i);
+@@ -7049,7 +7063,7 @@
+       fb.cbufs[i] = surf[i];
+    }
+    if (draw->depth) {
+-      zsurf = native_render_surface(draw->depth);
++      zsurf = native_render_surface(draw->depth, 0);
+       if (!zsurf) {
+          say(why, why_size, "%s would not make a render surface of the depth attachment",
+              rwa_device_name(device));
+@@ -7064,7 +7078,8 @@
+       device->batch_fb.nr_cbufs == fb.nr_cbufs;
+    for (unsigned i=0; same && i<fb.nr_cbufs; i++)
+       same = device->batch_fb.cbufs[i] &&
+-             device->batch_fb.cbufs[i]->texture == fb.cbufs[i]->texture;
++             device->batch_fb.cbufs[i]->texture == fb.cbufs[i]->texture &&
++             device->batch_fb.cbufs[i]->u.tex.level == fb.cbufs[i]->u.tex.level;
+    if (same) same = (!fb.zsbuf && !device->batch_fb.zsbuf) ||
+       (fb.zsbuf && device->batch_fb.zsbuf && fb.zsbuf->texture == device->batch_fb.zsbuf->texture);
+    if (!same) {
+diff --git a/tools/mesa/air/sweet_native_ext.c b/tools/mesa/air/sweet_native_ext.c
+--- a/tools/mesa/air/sweet_native_ext.c
++++ b/tools/mesa/air/sweet_native_ext.c
+@@ -245,7 +245,7 @@
+    return -1;
+ }
+ int rwa_clear(struct rwa_device *d,struct rwa_texture *const *color,unsigned count,unsigned mask,
+-               const float values[8][4],struct rwa_texture *depth,const float *z,const unsigned *s,
++               const unsigned *levels,const float values[8][4],struct rwa_texture *depth,const float *z,const unsigned *s,
+                char *why,size_t n)
+ {
+    if(!d || d->lost || count>8 || (mask>>count)){say(why,n,"invalid clear attachments");return -1;}
+@@ -255,7 +255,7 @@
+       if(!(res->bind&PIPE_BIND_RENDER_TARGET) || util_format_is_pure_integer(res->format)) {
+          say(why,n,"interface: clear requires a floating-point or normalized render target");return -1;
+       }
+-      struct pipe_surface *surface=native_render_surface(color[i]);
++      struct pipe_surface *surface=native_render_surface(color[i], levels ? levels[i] : 0);
+       if(!surface){say(why,n,"failed to create clear surface");return -1;}
+       union pipe_color_union value;
+       memcpy(value.f,values[i],sizeof(value.f));
+@@ -269,7 +269,7 @@
+       if((z&&!format_has_depth(res->format)) || (s&&!format_has_stencil(res->format))) {
+          say(why,n,"depth/stencil clear aspect absent from format");return -1;
+       }
+-      struct pipe_surface *surface=native_render_surface(depth);
++      struct pipe_surface *surface=native_render_surface(depth, 0);
+       if(!surface){say(why,n,"failed to create depth clear surface");return -1;}
+       d->pipe->clear_depth_stencil(d->pipe,surface,flags,z?*z:0,s?*s:0,0,0,surface->width,surface->height,false);
+       pipe_surface_reference(&surface,NULL);
+diff --git a/tools/mesa/air/sweet_native_ext.h b/tools/mesa/air/sweet_native_ext.h
+--- a/tools/mesa/air/sweet_native_ext.h
++++ b/tools/mesa/air/sweet_native_ext.h
+@@ -35,7 +35,7 @@
+ int rwa_command_submit(struct rwa_device *, uint64_t *, char *, size_t);
+ int rwa_command_poll(struct rwa_device *, uint64_t, bool, char *, size_t);
+ int rwa_clear(struct rwa_device *, struct rwa_texture *const *, unsigned, unsigned,
+-              const float [8][4], struct rwa_texture *, const float *, const unsigned *, char *, size_t);
++              const unsigned *, const float [8][4], struct rwa_texture *, const float *, const unsigned *, char *, size_t);
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
+--- a/tools/mesa/air/air_intrinsics.c
++++ b/tools/mesa/air/air_intrinsics.c
+@@ -1170,6 +1170,16 @@
+       air_set(c, &in->base, air_val_ssa(c, nir_fabs(&c->b, a)));
+       return true;
+    }
++   if (!strncmp(name, "llvm.umax.", 10)) {
++      if (in->num_operands != 3)
++         return air_error(c, "intrinsic: %s requires two operands", name);
++      nir_def *a = air_get_ssa(c, in->operands[1]);
++      nir_def *b = air_get_ssa(c, in->operands[2]);
++      if (!a || !b)
++         return false;
++      air_set(c, &in->base, air_val_ssa(c, nir_umax(&c->b, a, b)));
++      return true;
++   }
+    if (!strcmp(name, "llvm.trap"))
+       return air_error(c, "intrinsic: llvm.trap");
+    return air_error(c, "intrinsic: %s", name);
