@@ -8,6 +8,7 @@
 ITEM is one of:
   tree:LOCAL_DIR=/dest       every file below LOCAL_DIR; Mach-O files get mode 755
   text:/dest=CONTENT         a small file with this content and a newline, mode 644
+  file:LOCAL=/dest[@MODE]    one local file, mode octal (default 644)
   rm:/dest                   unlink /dest
   mv:/src=/dest              rename within the root
   link:/dest=TARGET          make /dest a symbolic link to TARGET
@@ -72,6 +73,10 @@ def build(dst, items):
                     data = open(p, "rb").read()
                     macho = data[:4] in (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
                     add_file(dest + "/" + rel, 0o755 if macho else 0o644, data, made, out)
+        elif kind == "file":
+            local, dest = arg.rsplit("=", 1)
+            dest, _, mode = dest.partition("@")
+            add_file(dest, int(mode or "644", 8), open(local, "rb").read(), made, out)
         elif kind == "text":
             dest, content = arg.split("=", 1)
             add_file(dest, 0o644, content.encode() + b"\n", made, out)
