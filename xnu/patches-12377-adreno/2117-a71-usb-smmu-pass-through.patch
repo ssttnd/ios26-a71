@@ -1,0 +1,78 @@
+A71 (2117): the USB stream SMR the bootloader/TWRP left (SMR3 0x80000540 S2CR 0x1) translates through a
+bank with that kernel's page tables; sweet_usb DMA uses physical addresses. Turn the bank's translation off
+(SCTLR.M = 0) when only this stream uses it, else give the stream its own pass-through bank.
+Boots with sweetusb=3 after a TWRP flash showed memory corruption (shim panic, eventhandler assert,
+UEFI text in the kernel log).
+
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+index 42a30d3..799bad2 100644
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -1495,7 +1495,7 @@ up_smmu_stream(void)
+ 		return;
+ 	}
+ 	uint64_t used[2] = { 0, 0 };
+-	int slot = -1;
++	int slot = -1, match = -1;
+ 	for (uint32_t i = 0; i < nsmr; i++) {
+ 		const uint32_t smr = gr0[(0x800 + 4 * i) / 4], s2cr = gr0[(0xc00 + 4 * i) / 4];
+ 		if (!(smr >> 31)) {
+@@ -1508,12 +1508,54 @@ up_smmu_stream(void)
+ 			used[(s2cr & 0xff) / 64] |= 1ull << ((s2cr & 0xff) % 64);
+ 		}
+ 		const uint32_t id = smr & 0x7fff, mask = (smr >> 16) & 0x7fff;
+-		if (((id ^ USB_SID) & ~mask & 0x7fff) == 0) {
+-			printf("SWEET USB: SMMU SMR%u 0x%08x S2CR 0x%08x already matches the stream\n", i, smr, s2cr);
+-			return;
++		if (match < 0 && ((id ^ USB_SID) & ~mask & 0x7fff) == 0) {
++			match = (int)i;
+ 		}
+ 	}
+-	if (!(scr0 & (1u << 10))) {
++	if (match >= 0) {
++		/*
++		 * A71 (2117): the matching entry is the one the bootloader or TWRP's Linux left, e.g. SMR3 0x80000540
++		 * S2CR 0x1 = translate through bank 1 with that kernel's page tables. Our DMA addresses are physical,
++		 * so a translating bank sends the controller's writes somewhere else: boots after a TWRP flash showed
++		 * memory corruption (shim blue screen, eventhandler assert, UEFI text in the log). Translation is
++		 * turned off (SCTLR.M = 0, as the bank this function makes itself), or the stream gets its own bank.
++		 */
++		const uint32_t smr = gr0[(0x800 + 4 * match) / 4], s2cr = gr0[(0xc00 + 4 * match) / 4];
++		const uint32_t type = (s2cr >> 16) & 3, mcb = s2cr & 0xff;
++		printf("SWEET USB: SMMU SMR%d 0x%08x S2CR 0x%08x matches the stream (type %u bank %u)\n", match, smr, s2cr, type, mcb);
++		if (type != 0 || mcb >= ncb) {
++			return;         /* bypass or fault: no page tables involved */
++		}
++		volatile uint32_t *mpage = (volatile uint32_t *)ml_io_map(SMMU_PA + (npage + mcb) * psize, psize);
++		if (mpage == NULL) {
++			printf("SWEET USB: SMMU bank %u map failed\n", mcb);
++			return;
++		}
++		const uint32_t sctlr = mpage[0];
++		if (!(sctlr & 1)) {
++			printf("SWEET USB: SMMU bank %u SCTLR 0x%08x: translation already off\n", mcb, sctlr);
++			return;
++		}
++		unsigned others = 0;
++		for (uint32_t i = 0; i < nsmr; i++) {
++			const uint32_t s = gr0[(0x800 + 4 * i) / 4], c = gr0[(0xc00 + 4 * i) / 4];
++			if ((int)i != match && (s >> 31) && ((c >> 16) & 3) == 0 && (c & 0xff) == mcb) {
++				others++;
++			}
++		}
++		if (others == 0) {
++			mpage[0x58 / 4] = 0xffffffff;   /* FSR clear */
++			mpage[0] = sctlr & ~1u;         /* M = 0: addresses pass through */
++			gr0[0x70 / 4] = 0;              /* sTLBGSYNC */
++			for (int i = 0; i < 1000 && (gr0[0x74 / 4] & 1); i++) {
++				delay(1000);
++			}
++			printf("SWEET USB: SMMU bank %u SCTLR 0x%08x -> 0x%08x: translation off for the stream\n", mcb, sctlr, mpage[0]);
++			return;
++		}
++		printf("SWEET USB: SMMU bank %u SCTLR 0x%08x translates and serves %u other streams: new bank\n", mcb, sctlr, others);
++		slot = match;   /* reuse the entry, point it at a bank of our own below */
++	} else if (!(scr0 & (1u << 10))) {
+ 		printf("SWEET USB: SMMU unmatched streams bypass; no entry needed\n");
+ 		return;
+ 	}
