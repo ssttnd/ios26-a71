@@ -55,6 +55,9 @@ def main():
     parser.add_argument('--cpufreq', action='store_true', help='SM7150 cpufreq-hw: highest non-boost row (donor 2000; Adreno build)')
     parser.add_argument('--rtcoff', type=int, help='seconds to add to the PM6150 RTC (now - /sys/class/rtc/rtc0/since_epoch in TWRP)')
     parser.add_argument('--dtlog', help='sweetdtlog=NAME[,NAME]: their os_log on the console (donor 0205)')
+    parser.add_argument('--sample', help='sample the user stacks of NAME[,NAME]')
+    parser.add_argument('--sample-interval-ms', type=int, help='time between user stack samples (minimum 50 ms)')
+    parser.add_argument('--fb-hz', type=int, choices=(10, 15, 20, 30, 60), help='limit copies to the panel to this rate')
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
@@ -76,6 +79,10 @@ def main():
         parser.error('--usb requires a kernel with xnu 2101')
     if args.cpufreq and b'SWEET CPUFREQ: domain %u hardware not enabled' not in kernel:
         parser.error('--cpufreq requires a kernel with the SM7150 cpufreq patch')
+    if args.sample_interval_ms is not None and (not args.sample or args.sample_interval_ms < 50):
+        parser.error('--sample-interval-ms requires --sample and a value of at least 50')
+    if args.sample and b'SMP: sampling %s' not in kernel:
+        parser.error('--sample requires a kernel with the SWEET process sampler')
     cmdline = ROOT_ARGS
     if args.ramdisk:
         ramdisk = HFS(args.ramdisk)
@@ -108,6 +115,12 @@ def main():
         cmdline += f' sweetrtcoff={args.rtcoff}'
     if args.dtlog:
         cmdline += f' sweetdtlog={args.dtlog}'
+    if args.sample:
+        cmdline += f' sweetsample={args.sample}'
+    if args.sample_interval_ms is not None:
+        cmdline += f' sweetsamplems={args.sample_interval_ms}'
+    if args.fb_hz is not None:
+        cmdline += f' sweetfb_hz={args.fb_hz}'
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=args.output.parent) as temp:

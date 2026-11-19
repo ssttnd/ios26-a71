@@ -1,0 +1,116 @@
+Publish the existing IONetworkStack before configd starts. Settings waits
+for InterfaceNamer even when USB is serial-only and no network interface
+has been created.
+
+diff --git a/bsd/dev/flame_sta.c b/bsd/dev/flame_sta.c
+--- a/bsd/dev/flame_sta.c
++++ b/bsd/dev/flame_sta.c
+@@ -232,17 +232,9 @@
+ 	}
+ }
+ 
+-/* xnu-12377 merge: Bergamota's SweetNetwork.cpp owns IONetworkStack/IONetworkInterface/IO80211Controller, so
+- * MiniIONetworkStack.cpp is not built; unifying the two Wi-Fi IOKit faces is a later step. */
+-static void
+-MiniIONetworkStackStart(void)
+-{
+-	printf("SWEET WLAN: MiniIONetworkStack not built on xnu-12377 (SweetNetwork.cpp has the classes)\n");
+-}
+ void flame_sta_init(void);
+ void
+ flame_sta_init(void)
+ {
+-	MiniIONetworkStackStart();              /* configd waits for it before it calls the registry quiet */
+ 	flame_wlan_ready_hook = sta_ready;
+ }
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -75,6 +75,7 @@
+ extern void sweet80211_init(void);
+ extern void sweet_pmem_init(void);
+ extern void sweet_motion_init(void);
++extern void sweet_net_stack_init(void);
+ extern void flame_wlan_init(void);
+ extern void sweet_charger_init(void);
+ extern void sweet_gpu_probe(void);
+@@ -1172,6 +1173,7 @@
+ 	sweet_amp_init();        /* sweetamp=1: AW882xx speaker amp ID probe on QUP0 SE4 (bsd/dev/sweet_amp.c, 0197) */
+ 	sweet_audiohal_init();   /* sweetvaudio=0|1: VirtualAudio HAL plug-in (bsd/dev/sweet_audiohal.c, 0196) */
+ 	sweet_bt_init();         /* sweetbt=1: WCN3990 Bluetooth over QUP0 SE3, com.apple.uart.bluetooth (bsd/dev/sweet_bt.c) */
++	sweet_net_stack_init();
+ 	flame_wlan_init();       /* /dev/wlan, en0 + Apple80211 for wifid: bsd/dev/flame_wlan.c, from ios-flame 0123 */
+ 	sweet_bb_dev_init();     /* sweetbb=1: /dev/sweet-bb + AppleBaseband for CommCenter (UniXNU QcomBaseband port) */
+ 	/* Input drivers (HID services in iokit/Kernel/arm/hid/SweetHID.cpp). */
+diff --git a/iokit/Kernel/arm/SweetNetwork.cpp b/iokit/Kernel/arm/SweetNetwork.cpp
+--- a/iokit/Kernel/arm/SweetNetwork.cpp
++++ b/iokit/Kernel/arm/SweetNetwork.cpp
+@@ -195,9 +195,30 @@
+ 	OSSafeReleaseNULL(gw);
+ }
+ 
+-/*
+- * Publish bus -> controller -> interface for one BSD ifnet, plus the
+- * IONetworkStack (once). Called by sweet_usb.c after creating its ifnet.
++/* configd's InterfaceNamer needs the stack even before an interface exists. */
++extern "C" void
++sweet_net_stack_init(void)
++{
++	IOService *platform = IOService::getPlatform();
++	if (platform == NULL) {
++		IOLog("SWEET NET: no platform expert; IONetworkStack not published\n");
++		return;
++	}
++
++	IONetworkStack *stack = OSTypeAlloc(IONetworkStack);
++	if (stack == NULL || !stack->init()) {
++		OSSafeReleaseNULL(stack);
++		IOLog("SWEET NET: could not initialize IONetworkStack\n");
++		return;
++	}
++	stack->setProperty(kIOUserClientClassKey, "SweetNetworkStackUserClient");
++	IOLog("SWEET NET: IONetworkStack %s\n",
++	    sweet_net_attach(stack, platform) ? "published" : "attach failed");
++}
++
++/*
++ * Publish bus -> controller -> interface for one BSD ifnet.
++ * Called by sweet_usb.c after creating its ifnet.
+  * Returns 1 when the interface object was published, else 0.
+  */
+ extern "C" int
+@@ -205,22 +226,11 @@
+     const uint8_t *mac, const char *ip, const char *mask, const char *router,
+     const char *dns1, const char *dns2)
+ {
+-	static bool stack_published;
+ 	IOService *platform = IOService::getPlatform();
+ 
+ 	if (platform == NULL) {
+ 		IOLog("SWEET NET: no platform expert; IOKit interface not published\n");
+ 		return 0;
+-	}
+-
+-	if (!stack_published) {
+-		IONetworkStack *stack = OSTypeAlloc(IONetworkStack);
+-		if (stack != NULL && stack->init()) {
+-			stack->setProperty(kIOUserClientClassKey, "SweetNetworkStackUserClient");
+-			stack_published = sweet_net_attach(stack, platform);
+-		} else {
+-			OSSafeReleaseNULL(stack);
+-		}
+ 	}
+ 
+ 	SweetNetworkBus *bus = OSTypeAlloc(SweetNetworkBus);
+@@ -268,9 +278,8 @@
+ 	bool intf_ok = sweet_net_attach(intf, ctrl);
+ 	ctrl->release();
+ 
+-	IOLog("SWEET NET: IOKit interface %s %s (built-in, pre-configured %s via %s, DNS %s %s, stack %s)\n",
+-	    bsd_name, intf_ok ? "published" : "NOT published", ip, router, dns1, dns2,
+-	    stack_published ? "up" : "missing");
++	IOLog("SWEET NET: IOKit interface %s %s (built-in, pre-configured %s via %s, DNS %s %s)\n",
++	    bsd_name, intf_ok ? "published" : "NOT published", ip, router, dns1, dns2);
+ 	return intf_ok ? 1 : 0;
+ }
+ /*

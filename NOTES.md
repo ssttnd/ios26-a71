@@ -352,3 +352,24 @@
   map (ADT memory map vs the A71 reserved-memory nodes), USB ACM log thread reading the ring while it wraps,
   DMA of other devices TWRP left running.
 - Pending on all-d: second boot runs org.a71.poster-probe (poster list, dynamic descriptors, gradient select).
+
+## 2026-11-19 — Settings hang traced to InterfaceNamer
+
+- Owner reports broken Liquid Glass and frozen Settings. Donor 26bF reports similar glass artifacts. In all-d,
+  build 36 returns `nil` for same-format BGRA8 2D views of mip level 1. The log also shows `flushticks=6` on
+  the 59–60 Hz display, effectively a 10 Hz limit on framebuffer copies. These are separate observations.
+- Built `build/a71-ios26-settings-glass.img` with the unchanged CI `44575804195` kernel
+  (`db13e924739d982a67e83c86a0e2b448307f32538a6d51b96ac200e59235c138`), `sweetfb_hz=30`,
+  `sweetdtlog=Preferences`, `sweetsample=Preferences sweetsamplems=8000`, and no payload replay. TWRP verified
+  the 22,478,848-byte boot readback against `bc7f38621d9bac2bcfa6fe0a3ce417e07454b796cbef772511bb4ae409f20b7e`.
+  USB capture `logs/usb-ios26-all-d-boot2.txt` is this diagnostic boot (it acquired COM7 before the new logger).
+  Metal started. `flushticks=2`, one measured copy window reached 22.89/s. Visual comparison is pending.
+- Repeated `Preferences[400]` t0 stack on 23G90: `__SCNetworkInterfaceCopyAllWithPreferences` →
+  `SCDynamicStoreNotifyWait` → `mach_msg2_trap` (symbolicated against the local root's shared cache).
+  `configd` starts and configures loopback. The SWEET tree already skips the IOKit daemon hold, but the donor
+  Wi-Fi path's `MiniIONetworkStackStart` is a stub and the actual `IONetworkStack` only publishes with USB
+  Ethernet, not serial-only USB. Patch 2118 moves publication of that existing service to UFS boot init.
+  Patch applies to the staged source. Hardware verification pending. Owner reported an exit during testing;
+  the captured segment kept sampling the same PID with no Preferences crash line. The exit remains unexplained.
+- The new boot also repeats `hfs_getnewvnode` sanity-check failures (`hfs_cnode.c:946`, reason 0), seen in
+  all-d. Cause and impact are unverified. No filesystem repair was attempted.
