@@ -317,3 +317,25 @@
 - `build/a71-ios26-all-c.img` = all-b without --usb (sweetusb=0), VERIFY OK `12f7bb58...`. The wall package was
   applied in the all-b boot (25/25), so the wallpaper job, MobileGestalt 0644 override and the Control Center
   reset are on the root. Settings os_log (sweetdtlog=Preferences) goes to the UFS ring only (TWRP).
+
+## 2026-11-19 22:45 — all-c result, Settings os_log, dynamic posters; all-d flashed (USB SMMU fix)
+
+- all-c (owner): Control Center works and stays (MobileGestalt override root 0644 holds); Settings hang; no
+  wallpaper; home screen icons vanish and come back. Owner: no static wallpaper, dynamic posters only.
+- TWRP ring `logs/ios26-all-c.txt`: wall.log only "wall: start" (the job was still in its sleep). PosterBoard,
+  PhotosPosterProvider, CollectionsPoster exec, no crashes. Settings os_log (sweetdtlog=Preferences): last calls
+  before the hang open com.apple.AudioAccessoryServices, managedconfiguration.profiled, com.apple.HearingModeService
+  and com.apple.DeviceAccess.xpc (deviceaccessd), plus many "bootstrap_look_up of WiFiManager server failed" (no
+  wifid). Which one blocks: not known (needs a stack).
+- Userland time is wrong: Preferences' os_log stamps read `1969-12-31 16:02:40-0800` although the kernel logs
+  `calendar set from the PM6150 RTC: 1795107806 s`. Not explained yet.
+- Poster providers on the root: CollectionsPoster, GradientPosterExtension, KaleidoscopePoster, AegirPoster, Unity
+  posters, WeatherPoster, EmojiPoster, LegacyPoster, PhotosPosterProvider, ... (com.apple.posterkit.provider).
+- Package `build/a71-ios26-poster.payload` (`6f18488e...`): /var/local/poster.sh (userspace/wallpaper26/poster.sh)
+  run by launchd job org.a71.poster-probe as mobile: after 120 s lists configurations and the descriptors of the
+  dynamic providers, then selects GradientPoster darkBlue.preset1 (or /var/local/poster.want); log
+  /var/local/poster.log (pre-created 0666). The wallpaper-once job is removed. Job runs from the second boot.
+- Kernel CI `44575804195` (8cf9a40, 2100-2117) succeeded; GitHub artifact downloads from here were reset, the owner
+  downloaded it in the browser; kernel hash matches SHA256SUMS.
+- `build/a71-ios26-all-d.img` = that kernel + all-b options with --usb and sweetdtlog=PosterBoard,GradientPosterExtension
+  (cmdline 580 bytes), VERIFY OK `7ce69769...`. Expect `SWEET USB: SMMU bank ...` lines. USB log `logs/usb-ios26-all-d.txt`.
