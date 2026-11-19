@@ -194,3 +194,17 @@
 - Plan: (1) Adreno kernel CI 44560785792 (2000-2011 + 2100) + touch + keys + A71 GPU firmware +
   `--metal --payload` with `build/a71-ios26-metal36.payload`; (2) USB console (0187 port); (3) Wi-Fi;
   (4) audio; (5) battery, brightness, torch, RTC; (6) sweetdbg and the launchd/lockdownd fixes.
+
+## 2026-11-19 21:25 — first Metal image flashed (metal-a)
+
+- Kernel: Actions `44560785792` (2f36327) succeeded in 19 min; kernel SHA-256
+  `96a56929a53fca541266534439c70da324025bad237bf0ff77c85327e2cd4a3d` (matches its SHA256SUMS), in
+  `research/ci-44560785792/` (ignored). Has SEC_TS, keys, GPUCC audit v2, Metal plugin, payload, donor 2000 cpufreq.
+- `logs/ios26-keys-boot.txt` (keys image boot, 859,728 bytes): `SWEET KEYS` key events, no panic; daemons
+  gamepolicyd, liveactivitiesd, nehelper killed with sig 9. Why that boot was slow was not measured.
+- `build/a71-ios26-metal-a.img` = that kernel + `--touch --keys --adreno-firmware <ios-a71 research/a71-firmware>
+  --metal --payload --cpufreq`, `serial=1`; cmdline 503 bytes. TWRP: package `build/a71-ios26-metal36.payload`
+  VERIFY OK `51c0a91d...`, then boot VERIFY OK `4f6bf224cf650e047cfc6c2e7e7ada3a5f4421964f870fff5f0032e3c4b5cea4`,
+  reboot requested. Fallback: `build/a71-ios26-keys.img` (1ae8e60b...). Result pending.
+- Not in this image: sweetm2restart (iOS 16 0200; SpringBoard restart when the GPU comes up) and A71 battery,
+  brightness, USB, Wi-Fi, audio.
