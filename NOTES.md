@@ -227,3 +227,18 @@
   staged tree (scratch copy of research/xnu-12377); not compiled before this run.
 - Resolution: iOS draws 828x1792 (iPhone 11 @2x) scaled to 1080x2400 (`presented as 828x1792, scale 1`). Plan
   after Metal works: canvas 1242x2688 + MobileGestalt scale 3 (same 414x896 points), ADT and MG only.
+
+## 2026-11-19 21:45 — metal-b: Metal runs; USB log works; package mv missing
+
+- USB ACM works on iOS 26: Windows `USB Serial Device (COM7)`, `logs/usb-ios26-metal-b.txt` (tools/a71-usblog.py).
+- Observed in it: `CP firmware properties errno=0 SQE=32304 MDT=6860 ZAP=1968` (2102 works), `NativeAdreno ABI + Metal
+  discovery published on live A618 context`, `restarted backboardd for Metal discovery`; then backboardd renders through
+  SweetNativeMetal (5 s window: 58 commands, 3287 draws, transport submits 90, failures 0). SpringBoard exec once after
+  the restart; no SpringBoard/backboardd CRASH after it. Owner saw SpringBoard go down once ("crashed at once") and
+  "no Metal": guess = the planned backboardd restart at GPU publish (sweetm2restart default 1; 2 is in 2109).
+- FB stats right after: copy mode, swaps 10.9/s, copy_us ~10.6 ms per frame (CPU copy to the panel).
+- Package: `op 5 ... KonaSynthesizer.appex -> 22`, `finished 3/7`: no SP_MOVE in 2100 -> xnu 2116 (0196 installer part).
+  Combined run 44568269777 cancelled; rerun `44568994432` (978c888 = 2101-2116).
+- Owner photo before this boot (first boot after the TWRP flash): shim blue screen `PANIC SYNC`, STAGE loader,
+  ESR 0x96000000, ELR 0x801EA5A0, FAR 0x6C207369C1952320, X30 0x3030454646464646 (ASCII "00EFFFFF"); reset, next boot
+  fine. Cause unknown (guess: a pointer read from stale RAM in the first stage; ELR is outside the 180 KiB shim image).
