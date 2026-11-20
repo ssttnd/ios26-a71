@@ -683,3 +683,4 @@
   handled without a crash. Usual `hfs_cnode.c:946` warnings (old). blit-glass package still pending in the
   payload area (this image has no sweetpayload). Next: install it with a NON-delayed image (mercuryonly).
   Root cause to fix later: the in-kernel installer (2100/2120) inserting catalog records into a full node.
+- Before install: node 28370 now 67 records, table valid (kernel rewrote it during the repaired boot). Flashed mercuryonly (23eebb59, install at mount) to apply pending blit-glass (36aaf7b7). Rebooted.
