@@ -726,3 +726,18 @@ Open:
 3. Root cause of the catalog corruption is unknown (B-tree code would panic before writing a bad node, UFS
    strategy is locked): candidates are a device-level bad write (2121 checks) or memory corruption.
 4. Wi-Fi: phone resets right after `mission mode on` / CE rings at 0xf0000000.
+
+## 2026-11-20 night — texture-phi Metal installed; 2121 image packed
+
+- Both CIs from the handoff succeeded: Metal `44706701933` (6dce3a5) artifact `14616085754`, 6/6 files match
+  build.json; kernel `44707209045` (ad4cbb2, xnu 2121) artifact `14617185412`, kernel SHA-256 `7392a6b7...b443`
+  matches SHA256SUMS (both in ignored `research/ci-*`). `gh` is not installed here: use `tools/flow/ghauth.py`
+  with `ghauth.API = ".../repos/ssttnd/ios26-a71"`. adb is `misc\misc\71stuff\Minimal ADB and Fastboot\adb.exe`.
+- Phone was in TWRP with mercuryonly on boot (readback 23eebb59 OK). Wrote `build/a71-ios26-metal-texphi.payload`
+  (9 entries) VERIFY OK `2b15803f9dbae98722abf4800ccbcf598354eb950ae48277866e9be23ff1277b`, `twrp reboot system`.
+  USB log `logs/usb-ios26-texphi.txt`: payload `finished 9/9 errno=0`, Metal published.
+- Packer recipe for mercuryonly (repack differs only in the ADT random-seed, by design): `a71-pack-ios26.py
+  --shim research/a71-boot-before/kernel --dtb research/a71-boot-before/dtb --product-adt build/a71-ios26-n104.adt
+  --touch --keys --adreno-firmware ../ios-a71/research/a71-firmware --metal --payload --cpufreq --usb
+  --rtcoff 1778420636 --dtlog MercuryPosterExtension --fb-hz 30 --fb-scale 2`.
+  `build/a71-ios26-mercuryonly-2121.img` = that with the 2121 kernel, SHA-256 `3a3f0342...77be5`. Not flashed.
