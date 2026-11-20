@@ -556,3 +556,10 @@
   `b335b8316546f9de3b9be641f67336264720db51c305a5667fe4138f1a825d53`. Boot unchanged (nowifi-b). Pitfall: in Git
   Bash run a71-payload.py with MSYS_NO_PATHCONV=1, or `/System/...` becomes `C:/Program Files/Git/System/...`.
   To undo the race test: rm `/var/local/sweet-native-sync-commit` (payload `rm:`).
+- First boot after writing levels-sync: owner saw a panic; nothing on USB (log stops at the 11:58 power-off), TWRP
+  ring (`logs/ios26-levels-sync-panic.txt`) is the previous boot. The payload area still holds the whole
+  levels-sync package (magic + sha b335b831), so the panic came before root mount / payload install: not the new
+  Metal. Matches the known random early panics on a first boot after TWRP. Rebooted unchanged.
+- Second boot: payload `finished 12/12 errno=0`; backboardd `command buffers wait for the GPU at commit` (race test
+  active); Metal published; MercuryPosterExtension opened the GPU; `the draw failed` 0. Mercury's own shader errors
+  are not on the console (no sweetdtlog). Visual result (wallpaper, Settings/CC glass) pending from owner.
