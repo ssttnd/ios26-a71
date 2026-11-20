@@ -809,5 +809,19 @@ Open:
   IOSurface 0x42475241 (207x448 pitch 832) is not a supported linear import` (redwooddrawable.m). 9869ff6 lets
   R32Uint/Sint/Float view a 4-byte BGRA/RGBA IOSurface, and logs textures created with mipmapLevelCount 0 (first 16,
   with descriptor class). Metal CI `44798290743`.
+- Drawable fix CI `44798290743` installed (`build/a71-ios26-metal-drawable.payload` `8fc24515...577f`, includes the
+  trace file "10 800 backboardd"), log `logs/usb-ios26-drawable.txt`: payload 11/11, drawable error gone. Next
+  Mercury stop: `the dispatch failed: VTMTSComputeFunction1x1 writes texture 0 and that texture was made without
+  MTLTextureUsageShaderWrite` (VideoToolbox writes a CVMetalTextureCache IOSurface texture). cde0f53: an imported
+  IOSurface is writable when the GPU can bind its format as an image. Metal CI `44800087775`.
+- In the resolve boot, marker presses were all `SWEET KEYS: key=1` (= volup per tools/a71-dbg.py KEYS); key=2
+  (voldown) never appeared. GLASSSTAT between/after the presses: 130-470 glass draws/s, so CoreAnimation keeps
+  drawing glass while it is invisible.
+- **xnu 2122** (97d2aeb): USB ACM bulk OUT bytes are scanned for "a71:recovery" / "a71:reboot" / "a71:bootloader";
+  a kernel thread calls sweet_reboot_set_mode + reboot_kernel(RB_AUTOBOOT). sweet_reboot_init now also runs on
+  samsung,a71 (before it returned early: only xiaomi,sweet), so restarts on the A71 now go through
+  sweet_reboot_restart (UFS flush, PON spare 0x88f, IMEM 0x146aa65c = 0x77665502 for recovery, PSCI reset).
+  Untested. Kernel CI `44799888353`. PC side: tools/a71-usblog.py opens COM read+write and sends the content of
+  `logs/usb-command.txt` once (e.g. `a71:recovery`). Restart the logger to get the new code.
 - Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
   key=` lines land in the same USB log as the 30 s draw-trace windows).
