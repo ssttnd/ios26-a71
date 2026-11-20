@@ -741,3 +741,16 @@ Open:
   --touch --keys --adreno-firmware ../ios-a71/research/a71-firmware --metal --payload --cpufreq --usb
   --rtcoff 1778420636 --dtlog MercuryPosterExtension --fb-hz 30 --fb-scale 2`.
   `build/a71-ios26-mercuryonly-2121.img` = that with the 2121 kernel, SHA-256 `3a3f0342...77be5`. Not flashed.
+- texphi boot: the texture-phi refusal is gone. Next Mercury refusal: `a call passing a pointer chosen at run time
+  as argument 14` (translate_callee). Fix 9e38959 (in ios26-image-write-levels.patch, generator
+  `research/ios26/make-image-level-patch.py`, now tracked with -f): the call is split by nir_goto_if on the choice,
+  one specialised call per side, join block after (unstructured CFG, like the switch lowering). Metal CI
+  `44788805733` succeeded, 6/6 match; package `build/a71-ios26-metal-callsplit.payload`
+  `11d46130ae547cf008c4e3bfecd6aec6ad78318bd6852d2bb4b000bb8f63ea8b`. Not written.
+- Owner asked for fewer one-error-per-flash rounds. Plan: donor's offline `air2nir --report` (host build) over every
+  metallib, giving all refusals at once. All 210 AIR metallibs of the reference root extracted to ignored
+  `research/metallibs/` (index.txt maps numbers to paths; 31 more are GPU binary archives, skipped). Building
+  host Mesa + air2nir in the local VM (`research/root-vm/start.py`, new overlay disk, ssh port 2227, use a fresh
+  known_hosts: the host key changed). Donor sources under research/ios26 are CRLF: convert to LF before git apply
+  on Linux. QuartzCore's glass shaders are not on disk as .metallib (embedded in the dyld cache): carve MTLB
+  containers from the cache next, then audit them for approximations (glass vanishing has no refusals).
