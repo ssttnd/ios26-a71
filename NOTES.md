@@ -606,3 +606,9 @@
   Cancelled 44695495470 (lacked these). Caveat: this checks names only; an argument shape the frontend does not
   take can still be refused.
   Commit 1ff2038, Metal CI `44695754790`.
+- Metal CI `44695754790` (1ff2038) succeeded, 6/6 match. Prepared for the next TWRP visit (not written yet):
+  `build/a71-ios26-metal-all-drawlog.payload` (bundle + /var/local/sweet-native-drawlog=1500)
+  `0c3e6d4c3716b681651fbaf29fd5a217ec73a503746d22e5524c1a2478665ee3`; boot `build/a71-ios26-2120-drawlog.img`
+  (2120 kernel, payload delay 150 s, dtlog MercuryPosterExtension) `3e439df5ada2195ae74c5d3d11ada9c43fd1ff25b929bd51a4462da6c36168c2`.
+  Boot 1: package lands at ~150 s, the drawlog file appears after backboardd started -> trace (old bundle loaded).
+  Boot 2: new bundle for Mercury. Afterwards remove the drawlog file (it re-arms only on change, harmless).
