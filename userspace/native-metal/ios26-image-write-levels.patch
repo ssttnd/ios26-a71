@@ -1186,6 +1186,14 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          if(work->nativeBarrier) {
              if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
              continue;
+@@ -3906,6 +4138,7 @@
+ 		return NO;
+ 	}
+ 
++	native_glassstat([work->render render]);
+ 	const unsigned dl = native_drawlog_next();
+ 	{
+ 		if (dl)
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
@@ -1204,7 +1212,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,8 +158,11 @@
+@@ -155,13 +158,67 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);
@@ -1218,3 +1226,59 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	fprintf(stderr, "SweetNativeMetal: DRAW %u %s %s|%s prim %u start %u n %u idx %s@%zu inst %u rt %s ds %s tex %s\n",
  	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,
+ 	        indexed ? (index_type ? "u32" : "u16") : "-", index_offset, instances, rt, ds,
+ 	        tx[0] ? tx : "-");
++}
++
++static void
++native_glassstat(const void *render)
++{
++	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
++	static uint64_t window_ms;
++	static unsigned draws, glass_bg, glass_fg, blur;
++	static const void *last_render;
++	static int last_cat;
++	struct timespec now;
++	clock_gettime(CLOCK_MONOTONIC, &now);
++	const uint64_t ms = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
++	int cat = 0;
++	bool known = false;
++	pthread_mutex_lock(&lock);
++	if (render == last_render) {
++		cat = last_cat;
++		known = true;
++	}
++	pthread_mutex_unlock(&lock);
++	if (!known) {
++		char f[48] = "";
++		pthread_mutex_lock(&native_drawlog_lock);
++		struct native_drawlog_name *e = native_drawlog_slot(render, false);
++		if (e)
++			memcpy(f, e->ffn, sizeof(f));
++		pthread_mutex_unlock(&native_drawlog_lock);
++		f[sizeof(f) - 1] = 0;
++		cat = !strncmp(f, "glass_background", 16) ? 1 :
++		      !strncmp(f, "glass_foreground", 16) ? 2 :
++		      (strstr(f, "blur") || strstr(f, "downsample") || strstr(f, "upsample")) ? 3 : 0;
++	}
++	pthread_mutex_lock(&lock);
++	last_render = render;
++	last_cat = cat;
++	if (!window_ms)
++		window_ms = ms;
++	if (ms - window_ms >= 1000) {
++		if (draws)
++			fprintf(stderr, "SweetNativeMetal: GLASSSTAT %llu ms: draws %u glass_bg %u "
++			        "glass_fg %u blur %u\n", (unsigned long long)(ms - window_ms), draws,
++			        glass_bg, glass_fg, blur);
++		window_ms = ms;
++		draws = glass_bg = glass_fg = blur = 0;
++	}
++	draws++;
++	glass_bg += cat == 1;
++	glass_fg += cat == 2;
++	blur += cat == 3;
++	pthread_mutex_unlock(&lock);
+ }
+ 
+ /* One attribute of one vertex, decoded by MTLVertexFormat. */

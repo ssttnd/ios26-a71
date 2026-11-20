@@ -1058,7 +1058,10 @@ static char sweet_nocopy_key;
      ('    for(unsigned i=0;i<8;i++)[color[i] release];\n',
       '    for(unsigned i=0;i<8;i++)[color[i] release];\n    [nativeBlit release];\n'),
      ('        if(work->nativeBarrier) {\n',
-      '        if(work->nativeBlit) {\n            ((void (^)(void))work->nativeBlit)();\n            continue;\n        }\n        if(work->nativeBarrier) {\n'))
+      '        if(work->nativeBlit) {\n            ((void (^)(void))work->nativeBlit)();\n            continue;\n        }\n        if(work->nativeBarrier) {\n'),
+     # GLASSSTAT: every draw is counted by kind (SweetNativeDrawLog.inc)
+     ('\tconst unsigned dl = native_drawlog_next();\n',
+      '\tnative_glassstat([work->render render]);\n\tconst unsigned dl = native_drawlog_next();\n'))
 
 # Draw log: which texture object (a view names its parent) and which level, so a pass that
 # samples the texture it renders into can be told from one that ping-pongs.
@@ -1078,7 +1081,67 @@ edit('userland/src/SweetNativeDrawLog.inc',
       '\t\tsnprintf(tx + at, sizeof(tx) - at, "%s%u:%u:%ux%u#%04x/L%u+%u", at ? "," : "", i,\n'
       '\t\t         (unsigned)[t pixelFormat], (unsigned)[t width], (unsigned)[t height],\n'
       '\t\t         (unsigned)(((uintptr_t)(p ? p : t) >> 4) & 0xffff),\n'
-      '\t\t         p ? (unsigned)[t parentRelativeLevel] : 0, (unsigned)[t mipmapLevelCount]);'))
+      '\t\t         p ? (unsigned)[t parentRelativeLevel] : 0, (unsigned)[t mipmapLevelCount]);'),
+     # GLASSSTAT (Liquid Glass vanishing on the A71, no draw ever fails): once a second, the
+     # draws this process executed and how many were CoreAnimation's glass and blur passes.
+     # Always on, no file to touch (a delayed package corrupted the catalog once), one line
+     # per second only while something draws. It tells the two causes apart: CoreAnimation
+     # stops sending glass draws (its own decision, e.g. late frames) or keeps sending them
+     # (then the picture is wrong here).
+     ('/* One attribute of one vertex, decoded by MTLVertexFormat. */\n',
+      '''static void
+native_glassstat(const void *render)
+{
+\tstatic pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+\tstatic uint64_t window_ms;
+\tstatic unsigned draws, glass_bg, glass_fg, blur;
+\tstatic const void *last_render;
+\tstatic int last_cat;
+\tstruct timespec now;
+\tclock_gettime(CLOCK_MONOTONIC, &now);
+\tconst uint64_t ms = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+\tint cat = 0;
+\tbool known = false;
+\tpthread_mutex_lock(&lock);
+\tif (render == last_render) {
+\t\tcat = last_cat;
+\t\tknown = true;
+\t}
+\tpthread_mutex_unlock(&lock);
+\tif (!known) {
+\t\tchar f[48] = "";
+\t\tpthread_mutex_lock(&native_drawlog_lock);
+\t\tstruct native_drawlog_name *e = native_drawlog_slot(render, false);
+\t\tif (e)
+\t\t\tmemcpy(f, e->ffn, sizeof(f));
+\t\tpthread_mutex_unlock(&native_drawlog_lock);
+\t\tf[sizeof(f) - 1] = 0;
+\t\tcat = !strncmp(f, "glass_background", 16) ? 1 :
+\t\t      !strncmp(f, "glass_foreground", 16) ? 2 :
+\t\t      (strstr(f, "blur") || strstr(f, "downsample") || strstr(f, "upsample")) ? 3 : 0;
+\t}
+\tpthread_mutex_lock(&lock);
+\tlast_render = render;
+\tlast_cat = cat;
+\tif (!window_ms)
+\t\twindow_ms = ms;
+\tif (ms - window_ms >= 1000) {
+\t\tif (draws)
+\t\t\tfprintf(stderr, "SweetNativeMetal: GLASSSTAT %llu ms: draws %u glass_bg %u "
+\t\t\t        "glass_fg %u blur %u\\n", (unsigned long long)(ms - window_ms), draws,
+\t\t\t        glass_bg, glass_fg, blur);
+\t\twindow_ms = ms;
+\t\tdraws = glass_bg = glass_fg = blur = 0;
+\t}
+\tdraws++;
+\tglass_bg += cat == 1;
+\tglass_fg += cat == 2;
+\tblur += cat == 3;
+\tpthread_mutex_unlock(&lock);
+}
+
+/* One attribute of one vertex, decoded by MTLVertexFormat. */
+'''))
 
 Path('userspace/native-metal/ios26-image-write-levels.patch').write_text(''.join(changes), encoding='utf-8',
                                                                          newline='\n')
