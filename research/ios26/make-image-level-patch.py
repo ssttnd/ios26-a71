@@ -1250,6 +1250,63 @@ edit('userland/src/SweetNativeDrawLog.inc',
      # per second only while something draws. It tells the two causes apart: CoreAnimation
      # stops sending glass draws (its own decision, e.g. late frames) or keeps sending them
      # (then the picture is wrong here).
+     ('static void\nnative_drawlog_draw(unsigned seq,',
+      'static void native_drawlog_texstat(unsigned seq, id t);\n\nstatic void\nnative_drawlog_draw(unsigned seq,'),
+     # TEXSTAT: for a logged glass_background draw, the blur texture it samples (slot 3,
+     # source_texture), read back level by level: mean BGRA and the share of fully transparent
+     # texels. Tells a broken blur chain (black/clear source) from a broken glass output.
+     ('''/* One attribute of one vertex, decoded by MTLVertexFormat. */
+''',
+      '''static void
+native_drawlog_texstat(unsigned seq, id t)
+{
+	if (t == nil)
+		return;
+	const unsigned fmt = (unsigned)[t pixelFormat];
+	if (fmt != 80 && fmt != 81 && fmt != 70 && fmt != 71) {
+		fprintf(stderr, "SweetNativeMetal: TEXSTAT %u format %u not read\\n", seq, fmt);
+		return;
+	}
+	unsigned levels = (unsigned)[t mipmapLevelCount];
+	levels = levels == 0 ? 1 : levels > 4 ? 4 : levels;
+	for (unsigned l = 0; l < levels; l++) {
+		unsigned w = (unsigned)[t width] >> l, h = (unsigned)[t height] >> l;
+		w = w ? w : 1;
+		h = h ? h : 1;
+		const size_t n = (size_t)w * h;
+		uint8_t *px = malloc(n * 4);
+		if (px == NULL)
+			return;
+		memset(px, 0xee, n * 4);
+		[t getBytes:px bytesPerRow:w * 4 fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:l];
+		uint64_t s[4] = { 0 };
+		size_t clear = 0;
+		for (size_t i = 0; i < n; i++) {
+			for (unsigned k = 0; k < 4; k++)
+				s[k] += px[i * 4 + k];
+			clear += px[i * 4 + 3] == 0;
+		}
+		fprintf(stderr, "SweetNativeMetal: TEXSTAT %u L%u %ux%u mean %u,%u,%u,%u clear %u%%\\n", seq, l, w, h,
+		        (unsigned)(s[0] / n), (unsigned)(s[1] / n), (unsigned)(s[2] / n), (unsigned)(s[3] / n),
+		        (unsigned)(clear * 100 / n));
+		free(px);
+	}
+}
+
+/* One attribute of one vertex, decoded by MTLVertexFormat. */
+'''),
+     ('''	fprintf(stderr, "SweetNativeMetal: DRAW %u %s %s|%s prim %u start %u n %u idx %s@%zu inst %u rt %s ds %s tex %s\\n",
+	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,
+	        indexed ? (index_type ? "u32" : "u16") : "-", index_offset, instances, rt, ds,
+	        tx[0] ? tx : "-");
+}''',
+      '''	fprintf(stderr, "SweetNativeMetal: DRAW %u %s %s|%s prim %u start %u n %u idx %s@%zu inst %u rt %s ds %s tex %s\\n",
+	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,
+	        indexed ? (index_type ? "u32" : "u16") : "-", index_offset, instances, rt, ds,
+	        tx[0] ? tx : "-");
+	if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
+		native_drawlog_texstat(seq, textures[3]);
+}'''),
      # Periodic arming: the touch-a-file trigger needs a file to change AFTER the process
      # started, which only a delayed package could do, and a delayed package corrupted the
      # catalog once. /var/local/sweet-native-drawlog-every ("SECONDS DRAWS PROCESS", read once,

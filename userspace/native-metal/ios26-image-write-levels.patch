@@ -1359,7 +1359,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,6 +121,36 @@
+@@ -121,11 +121,43 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -1396,7 +1396,14 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	if (!remaining)
  		return 0;
  	remaining--;
-@@ -143,9 +173,12 @@
+ 	return (unsigned)++seq;
+ }
++
++static void native_drawlog_texstat(unsigned seq, id t);
+ 
+ static void
+ native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
+@@ -143,9 +175,12 @@
  	for (unsigned i = 0; i < ncolors && i < 4; i++) {
  		id t = colors[i];
  		size_t at = strlen(rt);
@@ -1411,7 +1418,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +188,67 @@
+@@ -155,13 +190,105 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);
@@ -1427,6 +1434,44 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,
  	        indexed ? (index_type ? "u32" : "u16") : "-", index_offset, instances, rt, ds,
  	        tx[0] ? tx : "-");
++	if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
++		native_drawlog_texstat(seq, textures[3]);
++}
++
++static void
++native_drawlog_texstat(unsigned seq, id t)
++{
++	if (t == nil)
++		return;
++	const unsigned fmt = (unsigned)[t pixelFormat];
++	if (fmt != 80 && fmt != 81 && fmt != 70 && fmt != 71) {
++		fprintf(stderr, "SweetNativeMetal: TEXSTAT %u format %u not read\n", seq, fmt);
++		return;
++	}
++	unsigned levels = (unsigned)[t mipmapLevelCount];
++	levels = levels == 0 ? 1 : levels > 4 ? 4 : levels;
++	for (unsigned l = 0; l < levels; l++) {
++		unsigned w = (unsigned)[t width] >> l, h = (unsigned)[t height] >> l;
++		w = w ? w : 1;
++		h = h ? h : 1;
++		const size_t n = (size_t)w * h;
++		uint8_t *px = malloc(n * 4);
++		if (px == NULL)
++			return;
++		memset(px, 0xee, n * 4);
++		[t getBytes:px bytesPerRow:w * 4 fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:l];
++		uint64_t s[4] = { 0 };
++		size_t clear = 0;
++		for (size_t i = 0; i < n; i++) {
++			for (unsigned k = 0; k < 4; k++)
++				s[k] += px[i * 4 + k];
++			clear += px[i * 4 + 3] == 0;
++		}
++		fprintf(stderr, "SweetNativeMetal: TEXSTAT %u L%u %ux%u mean %u,%u,%u,%u clear %u%%\n", seq, l, w, h,
++		        (unsigned)(s[0] / n), (unsigned)(s[1] / n), (unsigned)(s[2] / n), (unsigned)(s[3] / n),
++		        (unsigned)(clear * 100 / n));
++		free(px);
++	}
 +}
 +
 +static void
