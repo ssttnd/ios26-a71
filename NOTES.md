@@ -823,5 +823,13 @@ Open:
   sweet_reboot_restart (UFS flush, PON spare 0x88f, IMEM 0x146aa65c = 0x77665502 for recovery, PSCI reset).
   Untested. Kernel CI `44799888353`. PC side: tools/a71-usblog.py opens COM read+write and sends the content of
   `logs/usb-command.txt` once (e.g. `a71:recovery`). Restart the logger to get the new code.
+- Glass marker test on the drawable boot (`logs/usb-ios26-drawable.txt`): one volup at line 19995 = "glass gone".
+  For ~10 s after it CA sent 130-330 glass draws/s, then the screen went static (~130 draws/s, glass 0): the
+  vanished picture is the result of those glass draws (trace window at line 20159). Window contents look like the
+  windows where glass was visible: variable_blur_downsample -> glass_background(_sdf)_no_bleed, every pass has two
+  colour attachments (80 BGRA8 + 115 RGBA16F, same size). No visible-state marker yet.
+- 8c577e4 TEXSTAT: for each logged glass_background draw, the slot-3 blur texture is read back per level (mean
+  BGRA, % alpha 0). Superseded Metal CI 44800087775 cancelled; new Metal CI `44800819116` (IOSurface write +
+  TEXSTAT).
 - Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
   key=` lines land in the same USB log as the 30 s draw-trace windows).
