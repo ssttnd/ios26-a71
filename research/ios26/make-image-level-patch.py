@@ -688,6 +688,18 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
 edit('tools/mesa/air/air_metal.c',
      ('#include "nir_builder.h"\n',
       '#include "nir_builder.h"\n#include "nir_serialize.h"\n#include "util/blob.h"\n'),
+     (' * What is deliberately absent is everything packed into a 32-bit word -- RGB10A2Unorm,\n',
+      ' * BGR10A2Unorm uses the documented low-to-high B, G, R, A layout. Other packed\n'
+      ' * 32-bit formats are deliberately absent here -- RGB10A2Unorm,\n'),
+     ('   {  81, "MTLPixelFormatBGRA8Unorm_sRGB", PIPE_FORMAT_B8G8R8A8_SRGB },\n',
+      '   {  81, "MTLPixelFormatBGRA8Unorm_sRGB", PIPE_FORMAT_B8G8R8A8_SRGB },\n'
+      '   {  94, "MTLPixelFormatBGR10A2Unorm",   PIPE_FORMAT_B10G10R10A2_UNORM },\n'),
+     ('   if (f >= 90 && f <= 94)\n'
+      '      return "one of Metal\'s formats packed into a 32-bit word (RGB10A2, RG11B10, RGB9E5, "\n'
+      '             "BGR10A2), whose field order and bias this library will not guess: an error of "\n',
+      '   if (f >= 90 && f <= 93)\n'
+      '      return "one of Metal\'s formats packed into a 32-bit word (RGB10A2, RG11B10, RGB9E5), "\n'
+      '             "whose field order and bias this library will not guess: an error of "\n'),
      ('struct rwa_device {\n',
       '''/* Keep recent compiled variants across pipeline lifetimes on the same context. */
 #define RWA_COMPUTE_CACHE_SIZE 8
@@ -1593,6 +1605,7 @@ native_glassstat(const void *render)
 # format over a 4-byte-per-pixel surface is the same memory read another way.
 edit('userland/src/redwooddrawable.m',
      ("    case 115:fourcc='RGhA';bpp=8;break;\n",
+      "    case 94:fourcc='l10r';bpp=4;break;   /* little-endian ARGB2101010 */\n"
       "    case 115:fourcc='RGhA';bpp=8;break;\n"
       "    case 53:case 54:case 55:   /* R32Uint/Sint/Float over a 4-byte surface */\n"
       "        fourcc=(surface_format=='RGBA'||surface_format=='BGRA')?surface_format:'BGRA';bpp=4;break;\n"))

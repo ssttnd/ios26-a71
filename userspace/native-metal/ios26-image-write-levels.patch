@@ -776,7 +776,17 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     device->pipe->destroy(device->pipe);
     device->screen->destroy(device->screen);
     free(device);
-@@ -868,6 +890,34 @@
+@@ -782,7 +804,8 @@
+  * so the translation is the identity on memory and there is nothing in it to get subtly
+  * wrong.
+  *
+- * What is deliberately absent is everything packed into a 32-bit word -- RGB10A2Unorm,
++ * BGR10A2Unorm uses the documented low-to-high B, G, R, A layout. Other packed
++ * 32-bit formats are deliberately absent here -- RGB10A2Unorm,
+  * RG11B10Float, RGB9E5, the XR formats. Those names order their channels by one
+  * convention and Gallium's by another, and a mistake there does not fail: it shifts a
+  * channel by two bits in a texture that still looks like a texture. docs/air.md has
+@@ -868,6 +891,34 @@
     {  55, "MTLPixelFormatR32Float",        PIPE_FORMAT_R32_FLOAT },
     {  60, "MTLPixelFormatRG16Unorm",       PIPE_FORMAT_R16G16_UNORM },
     {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },
@@ -811,7 +821,28 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
     {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
     {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
-@@ -1333,6 +1383,10 @@
+@@ -878,6 +929,7 @@
+    {  74, "MTLPixelFormatRGBA8Sint",       PIPE_FORMAT_R8G8B8A8_SINT },
+    {  80, "MTLPixelFormatBGRA8Unorm",      PIPE_FORMAT_B8G8R8A8_UNORM },
+    {  81, "MTLPixelFormatBGRA8Unorm_sRGB", PIPE_FORMAT_B8G8R8A8_SRGB },
++   {  94, "MTLPixelFormatBGR10A2Unorm",   PIPE_FORMAT_B10G10R10A2_UNORM },
+    { 103, "MTLPixelFormatRG32Uint",        PIPE_FORMAT_R32G32_UINT },
+    { 104, "MTLPixelFormatRG32Sint",        PIPE_FORMAT_R32G32_SINT },
+    { 105, "MTLPixelFormatRG32Float",       PIPE_FORMAT_R32G32_FLOAT },
+@@ -1012,9 +1064,9 @@
+       return "MTLPixelFormatBGRA4Unorm, which Metal.framework's own enumeration carries at "
+              "44 and this device's MTLPixelFormat.h does not declare at all: a format no "
+              "public header names is one whose layout nothing here can read";
+-   if (f >= 90 && f <= 94)
+-      return "one of Metal's formats packed into a 32-bit word (RGB10A2, RG11B10, RGB9E5, "
+-             "BGR10A2), whose field order and bias this library will not guess: an error of "
++   if (f >= 90 && f <= 93)
++      return "one of Metal's formats packed into a 32-bit word (RGB10A2, RG11B10, RGB9E5), "
++             "whose field order and bias this library will not guess: an error of "
+              "two bits in a channel is a picture, not a failure";
+    if (f >= 130 && f <= 153)
+       return "one of the BC compressed formats, whose texels come in blocks this library "
+@@ -1333,6 +1385,10 @@
     }
     if (depth_stencil)
        write = false;
@@ -822,7 +853,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     unsigned bind = (read ? PIPE_BIND_SAMPLER_VIEW : 0) |
                     (write ? PIPE_BIND_SHADER_IMAGE : 0) |
-@@ -1579,6 +1633,8 @@
+@@ -1579,6 +1635,8 @@
      * below is about.
      */
     pipe_sampler_view_reference(&texture->view, NULL);
@@ -831,7 +862,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe_surface_reference(&texture->native_surface, NULL);
     pipe_resource_reference(&texture->res, NULL);
     free(texture);
-@@ -1658,7 +1714,7 @@
+@@ -1658,7 +1716,7 @@
                size_t *out, char *why, size_t why_size)
  {
     unsigned texel = util_format_get_blocksize(texture->res->format);
@@ -840,7 +871,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1670,6 +1726,54 @@
+@@ -1670,6 +1728,54 @@
     }
     *out = stride;
     return true;
@@ -895,7 +926,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  }
  
  int
-@@ -1775,7 +1879,8 @@
+@@ -1775,7 +1881,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -905,7 +936,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3081,13 +3186,22 @@
+@@ -3081,13 +3188,22 @@
     device->pipe->delete_compute_state(device->pipe, cso);
  }
  
@@ -930,7 +961,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* and the states built for the samplers the shader declared itself. Nothing is
      * unbound first, for the reason rwa_sampler_destroy gives: a dispatch leaves
      * nothing of its own bound.
-@@ -3121,14 +3235,9 @@
+@@ -3121,14 +3237,9 @@
  {
     struct rwa_device *device = compute->device;
  
@@ -947,7 +978,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     nir_shader *cs = nir_shader_clone(NULL, compute->nir);
     if (!cs) {
-@@ -3140,7 +3249,41 @@
+@@ -3140,7 +3251,41 @@
     cs->info.workgroup_size[2] = block[2];
     cs->info.workgroup_size_variable = false;
  
@@ -990,7 +1021,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     void *cso = device->pipe->create_compute_state(device->pipe,
        &(struct pipe_compute_state){
-@@ -3151,6 +3294,7 @@
+@@ -3151,6 +3296,7 @@
         * it already, and neither of the two drivers in this build can reach this at all
         * (both return a state object and report a bad shader later, at launch).
         */
@@ -998,7 +1029,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        say(why, why_size, "%s would not make a compute pipeline of %s",
            device->screen->get_name(device->screen),
            compute->info.entry_point ? compute->info.entry_point : "the shader");
-@@ -3172,14 +3316,34 @@
+@@ -3172,14 +3318,34 @@
                              "compiled shader takes at most %u: it uses too many "
                              "registers for a group that large", threads, si.max_threads);
           delete_compute_state(device, cso);
@@ -1037,7 +1068,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return cso;
  }
  
-@@ -3715,6 +3879,62 @@
+@@ -3715,6 +3881,62 @@
     d->pipe->set_constant_buffer(d->pipe,stage,slot,false,cb);
     d->native_cb_ns+=native_now_ns()-began;
     d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
@@ -1100,7 +1131,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  }
  
  static int
-@@ -3903,12 +4123,27 @@
+@@ -3903,12 +4125,27 @@
                 return -1;
              }
           }
@@ -1130,7 +1161,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4153,14 @@
+@@ -3918,12 +4155,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -1147,7 +1178,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -7201,6 +7438,10 @@
+@@ -7201,6 +7440,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -1158,7 +1189,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7294,6 +7535,7 @@
+@@ -7294,6 +7537,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -1744,9 +1775,11 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 diff --git a/userland/src/redwooddrawable.m b/userland/src/redwooddrawable.m
 --- a/userland/src/redwooddrawable.m
 +++ b/userland/src/redwooddrawable.m
-@@ -137,6 +137,8 @@
+@@ -136,7 +136,10 @@
+     case 30:fourcc='LA08';bpp=2;break;
      case 70:case 71:fourcc='RGBA';bpp=4;break;
      case 80:case 81:fourcc='BGRA';bpp=4;break;
++    case 94:fourcc='l10r';bpp=4;break;   /* little-endian ARGB2101010 */
      case 115:fourcc='RGhA';bpp=8;break;
 +    case 53:case 54:case 55:   /* R32Uint/Sint/Float over a 4-byte surface */
 +        fourcc=(surface_format=='RGBA'||surface_format=='BGRA')?surface_format:'BGRA';bpp=4;break;
