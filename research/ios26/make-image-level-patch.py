@@ -48,6 +48,106 @@ edit('tools/mesa/air/nir_air.h',
 };'''))
 
 edit('tools/mesa/air/air_to_nir.c',
+     ('static bool\nmd_key_int(const struct air_md *node, const char *key, uint64_t *out)\n',
+      '''static bool md_interface_int(struct air_ctx *, const struct air_md *, unsigned, uint64_t *);
+
+static bool
+md_key_int(const struct air_md *node, const char *key, uint64_t *out)
+'''),
+     ('      if (!md_int(node, rt_in + 1, &n))\n',
+      '      if (!md_interface_int(c, node, rt_in + 1, &n))\n'),
+     ('''      md_int(node, rt + 1, &n);
+      md_int(node, rt + 2, &dual);
+''',
+      '''      if (rt + 1 < node->num_ops && node->ops[rt + 1] &&
+          node->ops[rt + 1]->kind == AIR_MD_VALUE &&
+          !md_interface_int(c, node, rt + 1, &n))
+         return air_error(c, "interface: an air.render_target output without a target");
+      if (n >= MAX_DRAW_BUFFERS)
+         return air_error(c, "interface: air.render_target output %llu", (unsigned long long)n);
+      md_int(node, rt + 2, &dual);
+'''),
+     ('''plan_globals(struct air_ctx *c)
+{
+   c->global_plan = rzalloc_array(c->mem_ctx, struct air_global_plan,
+                                  MAX2(c->m->num_globals, 1));
+''',
+      '''plan_globals(struct air_ctx *c, bool samplers)
+{
+   if (!samplers) {
+      if (c->global_plan)
+         return;
+      c->global_plan = rzalloc_array(c->mem_ctx, struct air_global_plan,
+                                     MAX2(c->m->num_globals, 1));
+   }
+'''),
+     ('''      const char *name = g->base.name ? g->base.name : "";
+
+      /* llvm.compiler.used and llvm.global_ctors''',
+      '''      const char *name = g->base.name ? g->base.name : "";
+      const bool inline_sampler = !g->externally_initialized && !strncmp(name, "__air_sampler_state", 19);
+      if (samplers != inline_sampler)
+         continue;
+
+      /* llvm.compiler.used and llvm.global_ctors'''),
+     ('      } else if (!strncmp(name, "__air_sampler_state", 19)) {\n',
+      '      } else if (inline_sampler) {\n'),
+     ('''   if (!c->error[0])
+      plan_static_constants(c);
+}
+''',
+      '''   if (!samplers && !c->error[0])
+      plan_static_constants(c);
+}
+
+/* Newer AIR can put a global reference in place of a literal target index.
+ * Resolve it from specialized initializer bytes before assigning shader I/O.
+ * Inline sampler indices are still assigned after the explicit arguments.
+ */
+static bool
+md_interface_int(struct air_ctx *c, const struct air_md *node, unsigned i, uint64_t *out)
+{
+   if (md_int(node, i, out))
+      return true;
+   if (!node || i >= node->num_ops || !node->ops[i] || node->ops[i]->kind != AIR_MD_VALUE)
+      return false;
+   const struct air_value *v = node->ops[i]->value;
+   if (!v || v->kind != AIR_VALUE_GLOBAL)
+      return false;
+   for (unsigned gi = 0; gi < c->m->num_globals; gi++) {
+      const struct air_global *g = c->m->globals[gi];
+      if (&g->base != v)
+         continue;
+      if (!g->value_type || g->value_type->kind != AIR_TYPE_INT ||
+          !g->value_type->bits || g->value_type->bits > 64)
+         return false;
+      if (g->is_const && air_const_uint(g->init, out))
+         return true;
+      plan_globals(c, false);
+      const struct air_global_plan *pl = &c->global_plan[gi];
+      unsigned bytes = (g->value_type->bits + 7) / 8;
+      if (!c->static_init_folded || !pl->shadow || pl->shadow_size < bytes)
+         return false;
+      uint64_t word = 0;
+      for (unsigned b = 0; b < bytes; b++) {
+         if (!pl->shadow_known[b])
+            return false;
+         word |= (uint64_t)pl->shadow[b] << (8 * b);
+      }
+      *out = word;
+      return true;
+   }
+   return false;
+}
+'''),
+     ('''   if (!c.error[0])
+      plan_globals(&c);
+''',
+      '''   if (!c.error[0])
+      plan_globals(&c, false);
+   if (!c.error[0])
+      plan_globals(&c, true);
+'''),
      ('''   if (_mesa_hash_table_num_entries(c.fns)) {
       NIR_PASS(_, c.nir, nir_inline_functions);
 ''',
@@ -1723,6 +1823,26 @@ native_glassstat(const void *render)
 '''))
 
 edit('tools/mesa/air/air_pointer_cells.inc',
+     ('         case AIR_OP_SELECT: {\n',
+      '''         case AIR_OP_EXTRACTELT: {
+            if (in->num_operands != 2)
+               return false;
+            const struct air_type *vector = in->operands[0]->type;
+            struct sev value = sev_get(st, in->operands[0]);
+            struct sev index = sev_get(st, in->operands[1]);
+            if (!vector || vector->kind != AIR_TYPE_VECTOR || !value.ok ||
+                !index.ok || index.n > 8 || !n)
+               return false;
+            uint64_t lane = sev_u(&index);
+            if (lane >= vector->count || lane >= value.n / n)
+               return false;
+            struct sev element = { .ok = true, .n = n };
+            memcpy(element.b, value.b + lane * n, n);
+            sev_set(st, &in->base, element);
+            break;
+         }
+         case AIR_OP_SELECT: {
+'''),
      ('''static bool
 sev_fc_value(const struct air_ctx *c, unsigned index, uint64_t *bits)
 {

@@ -69,7 +69,16 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
        res = nir_vec(&c->b, fields, comps);
        break;
-@@ -965,6 +956,7 @@
+@@ -687,6 +678,8 @@
+    return -1;
+ }
+ 
++static bool md_interface_int(struct air_ctx *, const struct air_md *, unsigned, uint64_t *);
++
+ static bool
+ md_key_int(const struct air_md *node, const char *key, uint64_t *out)
+ {
+@@ -965,6 +958,7 @@
        .raster_order_group = has_group ? (int)group : -1,
        /* a direct argument: Metal names it by .index and there is no set */
        .argbuf_set = ~0u, .argbuf_id = ~0u,
@@ -77,7 +86,30 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     };
     return &info->resources[info->num_resources++];
  }
-@@ -2345,6 +2337,8 @@
+@@ -1864,7 +1858,7 @@
+          return true;
+       }
+       uint64_t n = 0;
+-      if (!md_int(node, rt_in + 1, &n))
++      if (!md_interface_int(c, node, rt_in + 1, &n))
+          return air_error(c, "interface: an air.render_target input without a target");
+       if (n >= MAX_DRAW_BUFFERS)
+          return air_error(c, "interface: air.render_target input %u", (unsigned)n);
+@@ -1989,7 +1983,12 @@
+    int rt = md_key(node, "air.render_target");
+    if (rt >= 0) {
+       uint64_t n = 0, dual = 0;
+-      md_int(node, rt + 1, &n);
++      if (rt + 1 < node->num_ops && node->ops[rt + 1] &&
++          node->ops[rt + 1]->kind == AIR_MD_VALUE &&
++          !md_interface_int(c, node, rt + 1, &n))
++         return air_error(c, "interface: an air.render_target output without a target");
++      if (n >= MAX_DRAW_BUFFERS)
++         return air_error(c, "interface: air.render_target output %llu", (unsigned long long)n);
+       md_int(node, rt + 2, &dual);
+       location = FRAG_RESULT_DATA0 + n;
+       index = dual;
+@@ -2345,6 +2344,8 @@
           res = nir_unpack_32_2x16(&c->b, x);
        else if (sn == 2 && sb == 16 && dn == 1 && db == 32)
           res = nir_pack_32_2x16(&c->b, x);
@@ -86,7 +118,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        else
           return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
                               "which is a repacking this frontend does not do",
-@@ -3277,6 +3271,108 @@
+@@ -3277,6 +3278,108 @@
     return ok ? fn : NULL;
  }
  
@@ -195,7 +227,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  /* A call of a function this module defines. The callee is translated as a
   * nir_function (above) and the call becomes a nir_call, which
   * nir_inline_functions folds in after the whole shader is translated.
-@@ -3309,16 +3405,14 @@
+@@ -3309,16 +3412,14 @@
     /* resolved in the CALLER's value map, which is the live one here */
     struct air_val **argv = rzalloc_array(c->mem_ctx, struct air_val *,
                                           MAX2(f->num_args, 1));
@@ -216,7 +248,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
     bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
-@@ -3332,36 +3426,17 @@
+@@ -3332,36 +3433,17 @@
      */
     nir_variable **fields = ret_struct ?
        rzalloc_array(c->mem_ctx, nir_variable *, MAX2(rt->num_members, 1)) : NULL;
@@ -261,7 +293,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     if (ret_struct) {
        struct air_val *agg = air_val_agg(c, rt->num_members);
-@@ -3565,56 +3640,146 @@
+@@ -3565,56 +3647,146 @@
     return true;
  }
  
@@ -443,7 +475,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3800,14 @@
+@@ -3635,8 +3807,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -459,7 +491,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3842,9 +4013,31 @@
+@@ -3842,9 +4020,31 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -492,7 +524,103 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -4305,8 +4498,8 @@
+@@ -3922,14 +4122,21 @@
+ }
+ 
+ static void
+-plan_globals(struct air_ctx *c)
+-{
+-   c->global_plan = rzalloc_array(c->mem_ctx, struct air_global_plan,
+-                                  MAX2(c->m->num_globals, 1));
++plan_globals(struct air_ctx *c, bool samplers)
++{
++   if (!samplers) {
++      if (c->global_plan)
++         return;
++      c->global_plan = rzalloc_array(c->mem_ctx, struct air_global_plan,
++                                     MAX2(c->m->num_globals, 1));
++   }
+    for (unsigned i = 0; i < c->m->num_globals; i++) {
+       struct air_global_plan *pl = &c->global_plan[i];
+       const struct air_global *g = c->m->globals[i];
+       const char *name = g->base.name ? g->base.name : "";
++      const bool inline_sampler = !g->externally_initialized && !strncmp(name, "__air_sampler_state", 19);
++      if (samplers != inline_sampler)
++         continue;
+ 
+       /* llvm.compiler.used and llvm.global_ctors are lists for the linker,
+        * not memory the shader reads
+@@ -3948,7 +4155,7 @@
+          }
+          pl->class = AIR_PTR_FUNCTION_CONSTANT;
+          pl->binding = idx;
+-      } else if (!strncmp(name, "__air_sampler_state", 19)) {
++      } else if (inline_sampler) {
+          /* A sampler the shader declares itself. It needs a real index, not a
+           * sentinel: the Adreno's texture instruction holds the sampler in a
+           * four-bit field, and ~0u there asserts in ir3's encoder. The index
+@@ -4025,8 +4232,48 @@
+          c->scratch_size += air_type_alloc_size(c->m, g->value_type);
+       }
+    }
+-   if (!c->error[0])
++   if (!samplers && !c->error[0])
+       plan_static_constants(c);
++}
++
++/* Newer AIR can put a global reference in place of a literal target index.
++ * Resolve it from specialized initializer bytes before assigning shader I/O.
++ * Inline sampler indices are still assigned after the explicit arguments.
++ */
++static bool
++md_interface_int(struct air_ctx *c, const struct air_md *node, unsigned i, uint64_t *out)
++{
++   if (md_int(node, i, out))
++      return true;
++   if (!node || i >= node->num_ops || !node->ops[i] || node->ops[i]->kind != AIR_MD_VALUE)
++      return false;
++   const struct air_value *v = node->ops[i]->value;
++   if (!v || v->kind != AIR_VALUE_GLOBAL)
++      return false;
++   for (unsigned gi = 0; gi < c->m->num_globals; gi++) {
++      const struct air_global *g = c->m->globals[gi];
++      if (&g->base != v)
++         continue;
++      if (!g->value_type || g->value_type->kind != AIR_TYPE_INT ||
++          !g->value_type->bits || g->value_type->bits > 64)
++         return false;
++      if (g->is_const && air_const_uint(g->init, out))
++         return true;
++      plan_globals(c, false);
++      const struct air_global_plan *pl = &c->global_plan[gi];
++      unsigned bytes = (g->value_type->bits + 7) / 8;
++      if (!c->static_init_folded || !pl->shadow || pl->shadow_size < bytes)
++         return false;
++      uint64_t word = 0;
++      for (unsigned b = 0; b < bytes; b++) {
++         if (!pl->shadow_known[b])
++            return false;
++         word |= (uint64_t)pl->shadow[b] << (8 * b);
++      }
++      *out = word;
++      return true;
++   }
++   return false;
+ }
+ 
+ /* Build the globals as values of the function being translated now. Called for
+@@ -4257,7 +4504,9 @@
+    }
+ 
+    if (!c.error[0])
+-      plan_globals(&c);
++      plan_globals(&c, false);
++   if (!c.error[0])
++      plan_globals(&c, true);
+    if (!c.error[0])
+       materialise_globals(&c);
+    if (!c.error[0]) {
+@@ -4305,8 +4554,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -503,7 +631,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4526,8 @@
+@@ -4333,6 +4582,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {
@@ -1954,7 +2082,31 @@ diff --git a/tools/mesa/air/air_pointer_cells.inc b/tools/mesa/air/air_pointer_c
  
  static bool
  sev_run(struct sev_state *st, const struct air_function *f)
-@@ -970,13 +972,21 @@
+@@ -897,6 +899,23 @@
+                                     (void *)(uintptr_t)(((uint64_t)(g + 1) << 32) | off));
+             break;
+          }
++         case AIR_OP_EXTRACTELT: {
++            if (in->num_operands != 2)
++               return false;
++            const struct air_type *vector = in->operands[0]->type;
++            struct sev value = sev_get(st, in->operands[0]);
++            struct sev index = sev_get(st, in->operands[1]);
++            if (!vector || vector->kind != AIR_TYPE_VECTOR || !value.ok ||
++                !index.ok || index.n > 8 || !n)
++               return false;
++            uint64_t lane = sev_u(&index);
++            if (lane >= vector->count || lane >= value.n / n)
++               return false;
++            struct sev element = { .ok = true, .n = n };
++            memcpy(element.b, value.b + lane * n, n);
++            sev_set(st, &in->base, element);
++            break;
++         }
+          case AIR_OP_SELECT: {
+             struct sev cond = sev_get(st, in->operands[0]);
+             if (!cond.ok || cond.n != 1)
+@@ -970,13 +989,21 @@
              const char *name = callee && callee->name ? callee->name : "";
              if (!strncmp(name, "llvm.lifetime.", 14))
                 break;
@@ -1978,7 +2130,7 @@ diff --git a/tools/mesa/air/air_pointer_cells.inc b/tools/mesa/air/air_pointer_c
                 break;
              }
              if (!strncmp(name, "air.normalize_function_constant_predicate.", 42)) {
-@@ -1000,6 +1010,19 @@
+@@ -1000,6 +1027,19 @@
                 return false;
              }
              break;
