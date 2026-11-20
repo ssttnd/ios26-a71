@@ -1,5 +1,13 @@
 # iOS 26 on Galaxy A71 (SM-A715F)
 
+## 2026-11-20 — repo made public (Actions minutes)
+
+- Observed on github.com/settings/billing: GitHub Free, included Actions compute $12.00 / $12.00 used in November,
+  all of it by private `ios26-a71`; `ios-a71` (public) $58.91 fully discounted. Reset in 11 days (2026-12-01).
+- User request: `ssttnd/ios26-a71` made **public** (API confirms `visibility=public`) so CI is free again.
+- Known in history: `a618_gmu.bin` (Qualcomm firmware, 32 KB), added `9b05f9c`, removed in `55c5ede`. User chose
+  to publish without rewriting history. Actions logs are now public too: keep secrets and serials out of them.
+
 ## 2026-11-19 — donor located
 
 - The iOS 16 checkout for this port starts at `ff6e898`. Its handoff is in
@@ -463,3 +471,61 @@
 - Native Metal CI 44594040990 at 3c6a578, queued.
 - Wi-Fi: current USB log has `/dev/wlan ready` but no `exec wland` or `exec wifid`. Local launchd plist gates wifid on a WLAN ADT node. Added packer `--wifi` (same ADT helper, pmem, WLAN SMMU and wland log). `build/a71-ios26-wifi-2119.img` SHA-256 307338d043e76f511053c5a5886cebc7634d4effd46759771331a01bf324b02e. Verified wifi30 wland/netsvc manifests. Prepared 85-entry `build/a71-ios26-wifi-2119.payload` SHA-256 0580d264b45d1cc7ddccecdd558e9383106789f5be5bd7832115b7c518d3dfc5 with local A71 firmware and rmtfs FILE copies only (no modem partition writes), merged launchd and original backup. Before flashing compare live launchd.plist to research/wall/launchd.plist.poster, rebase if different, and preserve existing WLAN files. TWRP requested. No package installed.
 - Wi-Fi TWRP: live launchd hash matched base dcc5a39dc892a75dbfee3e102852fefb3cae411d2e03b161fdb82b5f132ac1f8, no existing wland/netsvc/rmtfs/modem files. Verified Wi-Fi payload and boot readbacks against exact hashes above, requested system reboot. wland launch job is expected on second boot.
+- First Wi-Fi boot: USB confirmed `exec wifid` and verified installer 85/85 errno=0; wland job will be read on next normal reboot. Owner asked to reboot after reaching the screen. No en0 or association yet.
+- Metal CI 44594040990 succeeded; verified the bundle hashes against the manifest. TWRP staged 9-entry Metal package d2f709472dd5077184ccc7ffb051da5f75e3001b1acd9265408d9e9f254e5469 and verified Wi-Fi 2119 boot readback. Reboot requested. Pre-reboot TWRP inspection: wland executable exists, no /var/local/wland.log and no wland.off.
+- Latest captured Wi-Fi boot reaches WLFW FW READY, WMI mission mode and 12 CE rings, then `bridge: /dev/wlan open: en0 and wifid` with no subsequent kernel `flame wlan: the radio is up` / FW_HELLO or en0 publication. Early TFTP misses are recoverable (wlanmdsp requested from /readonly/firmware/image and FW READY followed). USB not present after Metal reboot yet, cannot verify Metal installer from USB.
+- Subsequent USB log confirms revised Metal payload installed 9/9 errno=0 on Wi-Fi 2119. Visual verification pending.
+
+## 2026-11-20 — Wi-Fi resets the phone; first Liquid Glass in Control Center; no-Wi-Fi Metal image flashed
+
+- Owner on Wi-Fi 2119 + Metal 3c6a578 (blur attachments): lock screen almost invisible and flickering; **Control
+  Center shows glass for the first time**; then everything went down and the phone restarted.
+- Observed: in `logs/usb-ios26-settings-glass.txt`, three Wi-Fi boots (lines 728560, 733698, 738848) end right after
+  `wlfw: wlan config sent, mission mode on` / `radio: ce: host memory f0000000..f00a5000` / `12 rings programmed, rx
+  buffers posted` / `bridge: /dev/wlan open`. The next lines are a fresh `Darwin Kernel Version` or UEFI ABL text: an
+  instant reset with no panic text, twice confirmed, the third capture just stops. TWRP ring of the last boot
+  (`logs/ios26-metal-blur-crash.txt`, seq #7) also stops without panic. Guess: WLAN firmware DMA into the CE host
+  memory at 0xf0000000 (or an XPU/SMMU violation) makes TZ reset the SoC. Not proven.
+- Also in every recent boot: `hfs: BlockMarkFreeInternal() trying to free unallocated blocks on volume iOSRoot` and
+  `Runtime corruption detected on iOSRoot` (hfs_cnode.c:946, VolumeAllocation.c:3362). No fsck attempted.
+- No Metal userspace errors in the last boots because sweetdtlog was not set. Earlier 2119 boot: Mercury refused
+  `llvm.umax.i32` (lowered in 3c6a578) and `VariableBlurrer::downsample` "intrinsic: argument 3 is not a constant"
+  (block 0, instr 26, opcode 17), not addressed yet; donor source in `research/ios26/native-glass-src/donor/tools/mesa/air/`.
+- `build/a71-ios26-metal-nowifi-2119.img` = same CI 44586441232 kernel (9af42db3...) and options as wifi-2119
+  without `--wifi` and without `--payload`, plus `--dtlog MercuryPosterExtension`. TWRP boot readback SHA-256
+  `86fa6155b16a26d622e38eafb99d014923029ac20c58bd083f08b440bf146568`. `adb reboot` from TWRP came back to TWRP (ring unchanged, seq #7: iOS never ran), so reboot from the TWRP menu (Reboot -> System). USB log to
+  `logs/usb-ios26-metal-nowifi.txt`. The wland launchd job and Wi-Fi files from the wifi payload stay on the root.
+- no-Wi-Fi boot (owner rebooted from TWRP; `logs/usb-ios26-metal-nowifi.txt`): Metal published, but backboardd
+  traps (sig 5) three times, heap strings `IOHIDEventSystem creation failed` and a dlopen of
+  `/System/Library/HIDPlugins/SessionFilters/TactSwitchHIDSessionFilter.plugin/TactSwitchHIDSessionFilter`
+  (message cut). Never seen in earlier boots. Also crashing: cryptexd, CommCenter, audiomxd, liveactivitiesd,
+  UserEventAgent, chronod ("Too many corpses"). launchd then logged `Rebooting to device recovery environment`.
+  Owner: the next boot restarted before the Apple logo, then a panic. Panic text not captured yet.
+- Guess (not proven): the root filesystem was damaged by the repeated hard resets during the Wi-Fi boots; the
+  HFS `Runtime corruption detected on iOSRoot` / `freeing unallocated blocks` lines support it. Next: in TWRP,
+  read the TactSwitch plugin with `tools/a71-hfs-get.py` and compare with the reference root; a read-only fsck
+  if TWRP has one. Any repair needs the owner's OK.
+- Correction (log survey, all logs/ files): HFS `Runtime corruption detected on iOSRoot` is NOT new. The first iOS 26
+  boot (`ios26-full-cpu-first.txt`) has none; every later boot has it, from the second boot
+  (`ios26-touch-springboard.txt`, 2026-11-19 20:51) on, long before Wi-Fi. So the Wi-Fi resets did not start it.
+  Read-only compare in TWRP: TactSwitchHIDSessionFilter (binary + Info.plist), backboardd, audiomxd and
+  UserEventAgent are byte-identical to `build/ios26-root-a71-23G90.img`. Damaged files are not shown. The
+  backboardd loop is so far only seen on the no-Wi-Fi image, so the image difference (no sweetpmem /
+  sweetsmmuwlan / sweetnull=wland / sweetpayload, no WLAN ADT node, sweetdtlog=MercuryPosterExtension) is an
+  equal suspect. dyld shared cache compare in progress.
+- dyld shared cache: all 75 files on the phone byte-identical to the reference root. No damaged system file found.
+- `build/a71-ios26-nowifi-b-2119.img` = wifi-2119 options minus `--wifi` only (keeps `--payload`, no dtlog), to
+  split the backboardd loop between the Wi-Fi args and payload/dtlog. TWRP boot readback SHA-256
+  `7158452737401877f97a9a9510e8fae0e3293281dd9a77c943d48bcf1d8dc726`. USB logger still appending to
+  `logs/usb-ios26-metal-nowifi.txt`. Result pending.
+- nowifi-b booted (rebooted by `adb shell twrp reboot system`, which works; plain `adb reboot` returns to TWRP).
+  No backboardd crash, no IOHIDEventSystem failure, Metal up: the loop on the first no-Wi-Fi image came from
+  `sweetdtlog=MercuryPosterExtension` or the missing `sweetpayload=1`, not from the root. Owner: everything
+  flickers, lock screen not visible, Control Center appears briefly and vanishes. No reset so far without Wi-Fi.
+- Cause found in the USB log: backboardd `the draw failed` 389 times, always `colour attachment 1 is 2W x 2H and
+  attachment 0 is W x H` (256/128, 128/64, 448x960/224x480 ...): CoreAnimation's blur writes level 1 of one
+  target and level 0 of another in one pass. Metal draws such a pass into the smallest common area; our check
+  (air_metal.c) refused it, so those passes vanished (3c6a578 made the levels real, which exposed it).
+  Fix: render size = MIN over colour (and depth) attachments, regenerated
+  `userspace/native-metal/ios26-blur-attachments.patch` with `research/ios26/make-attachment-patch.py`;
+  air_metal.c part applies to the local donor tree. Metal CI pending.

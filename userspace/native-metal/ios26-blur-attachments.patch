@@ -91,7 +91,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!texture->native_surface) {
        const struct pipe_surface tmpl = {
           .format = texture->res->format,
-@@ -6958,8 +6967,13 @@
+@@ -6958,15 +6967,19 @@
               render->shape.color_format[i]);
           return -1;
        }
@@ -107,7 +107,31 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        if (i == 0) {
           w = tw;
           h = th;
-@@ -7038,7 +7052,7 @@
+-      } else if (tw != w || th != h) {
+-         say(why, why_size, "colour attachment %u is %ux%u and attachment 0 is %ux%u", i,
+-             tw, th, w, h);
+-         return -1;
++      } else {
++         w = MIN2(w, tw);
++         h = MIN2(h, th);
+       }
+    }
+ 
+@@ -7000,10 +7013,9 @@
+       if (draw->color_count == 0) {
+          w = tw;        /* a depth-only pass: the depth attachment is the pass's size */
+          h = th;
+-      } else if (tw != w || th != h) {
+-         say(why, why_size, "the depth attachment is %ux%u and colour attachment 0 is %ux%u",
+-             tw, th, w, h);
+-         return -1;
++      } else if (tw < w || th < h) {
++         w = MIN2(w, tw);
++         h = MIN2(h, th);
+       }
+    }
+ 
+@@ -7038,7 +7050,7 @@
                                          .nr_cbufs = draw->color_count,
                                          .samples = samples };
     for (unsigned i = 0; i < draw->color_count; i++) {
@@ -116,7 +140,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        if (!surf[i]) {
           say(why, why_size, "%s would not make a render surface of colour attachment %u",
               rwa_device_name(device), i);
-@@ -7049,7 +7063,7 @@
+@@ -7049,7 +7061,7 @@
        fb.cbufs[i] = surf[i];
     }
     if (draw->depth) {
@@ -125,7 +149,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        if (!zsurf) {
           say(why, why_size, "%s would not make a render surface of the depth attachment",
               rwa_device_name(device));
-@@ -7064,7 +7078,8 @@
+@@ -7064,7 +7076,8 @@
        device->batch_fb.nr_cbufs == fb.nr_cbufs;
     for (unsigned i=0; same && i<fb.nr_cbufs; i++)
        same = device->batch_fb.cbufs[i] &&
