@@ -841,5 +841,17 @@ Open:
   of 32x32x1 ... partial-group support` (dispatchThreads, VariableBlurrer/VTMTS/space). freedreno ignores
   pipe_grid_info.last_block. 38c5652 rounds groups up (extra edge threads; Adreno drops OOB image/IBO stores).
   Metal CI `44802843341`.
+- Partial-group Metal (CI `44802843341`, `build/a71-ios26-metal-groups.payload` `35e340b1...30f9`) installed: no more
+  dispatch refusals. Mercury still draws nothing: RunningBoard refuses its rendering assertions ~2500x, "Assertion's
+  invalidation time is in the past". Cause: userland clock is 1969-12-31 (epoch + uptime). 2108 sets the calendar
+  from the PM6150 RTC early, then IOKitInitializeTime() waits up to 30 s for IORTC (none here) and
+  clock_initialize_calendar() overwrites it from PEGetUTCTimeOfDay. **xnu 2123** (fc2dff8): re-read the RTC right after
+  clock_initialize_calendar, IORTC wait 30 -> 2 s on sweet boards. Kernel CI `44805072035`.
+- **xnu 2122 verified on the phone.** `build/a71-ios26-2122.img` (CI 44802195088 kernel `2222d86c...b51d`, mercuryonly
+  options) readback `d7ab4015...e410`. First boot hung after `SWEET EARLY 9` (red shim screen, no USB; the known random
+  first-boot fault), second boot fine: `SWEET REBOOT: ... IMEM mapped, PON spare write ready`. Writing `a71:recovery` to
+  `logs/usb-command.txt` (new a71-usblog.py running) -> `SWEET USB: host asked for a reboot into recovery` and TWRP came
+  up by itself. The PC can now go iOS -> TWRP without the owner.
+- Pitfall: in bash heredocs `\\n` reaches Python as `\n` (a real newline in C strings). Use raw strings or chr(92).
 - Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
   key=` lines land in the same USB log as the 30 s draw-trace windows).
