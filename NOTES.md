@@ -563,3 +563,7 @@
 - Second boot: payload `finished 12/12 errno=0`; backboardd `command buffers wait for the GPU at commit` (race test
   active); Metal published; MercuryPosterExtension opened the GPU; `the draw failed` 0. Mercury's own shader errors
   are not on the console (no sweetdtlog). Visual result (wallpaper, Settings/CC glass) pending from owner.
+- Owner: wallpaper still black with the image-level Metal. Mercury's shader result is not on the console.
+  Built `build/a71-ios26-nowifi-mercurylog.img` = nowifi-b + `--dtlog MercuryPosterExtension` (keeps --payload),
+  SHA-256 `b6a6ef45be2d2cc213a879e41337628bb5aaa3691243218af96211ccb8085aa3`. Not flashed yet (needs TWRP). Also
+  tells whether dtlog or the missing sweetpayload caused the earlier backboardd loop.
