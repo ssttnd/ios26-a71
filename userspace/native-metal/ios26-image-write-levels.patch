@@ -257,7 +257,61 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 --- a/tools/mesa/air/air_metal.c
 +++ b/tools/mesa/air/air_metal.c
-@@ -3908,7 +3908,7 @@
+@@ -868,6 +868,34 @@
+    {  55, "MTLPixelFormatR32Float",        PIPE_FORMAT_R32_FLOAT },
+    {  60, "MTLPixelFormatRG16Unorm",       PIPE_FORMAT_R16G16_UNORM },
+    {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },
++   { 186, "MTLPixelFormatASTC_4x4_sRGB", PIPE_FORMAT_ASTC_4x4_SRGB },
++   { 187, "MTLPixelFormatASTC_5x4_sRGB", PIPE_FORMAT_ASTC_5x4_SRGB },
++   { 188, "MTLPixelFormatASTC_5x5_sRGB", PIPE_FORMAT_ASTC_5x5_SRGB },
++   { 189, "MTLPixelFormatASTC_6x5_sRGB", PIPE_FORMAT_ASTC_6x5_SRGB },
++   { 190, "MTLPixelFormatASTC_6x6_sRGB", PIPE_FORMAT_ASTC_6x6_SRGB },
++   { 192, "MTLPixelFormatASTC_8x5_sRGB", PIPE_FORMAT_ASTC_8x5_SRGB },
++   { 193, "MTLPixelFormatASTC_8x6_sRGB", PIPE_FORMAT_ASTC_8x6_SRGB },
++   { 194, "MTLPixelFormatASTC_8x8_sRGB", PIPE_FORMAT_ASTC_8x8_SRGB },
++   { 195, "MTLPixelFormatASTC_10x5_sRGB", PIPE_FORMAT_ASTC_10x5_SRGB },
++   { 196, "MTLPixelFormatASTC_10x6_sRGB", PIPE_FORMAT_ASTC_10x6_SRGB },
++   { 197, "MTLPixelFormatASTC_10x8_sRGB", PIPE_FORMAT_ASTC_10x8_SRGB },
++   { 198, "MTLPixelFormatASTC_10x10_sRGB", PIPE_FORMAT_ASTC_10x10_SRGB },
++   { 199, "MTLPixelFormatASTC_12x10_sRGB", PIPE_FORMAT_ASTC_12x10_SRGB },
++   { 200, "MTLPixelFormatASTC_12x12_sRGB", PIPE_FORMAT_ASTC_12x12_SRGB },
++   { 204, "MTLPixelFormatASTC_4x4_LDR", PIPE_FORMAT_ASTC_4x4 },
++   { 205, "MTLPixelFormatASTC_5x4_LDR", PIPE_FORMAT_ASTC_5x4 },
++   { 206, "MTLPixelFormatASTC_5x5_LDR", PIPE_FORMAT_ASTC_5x5 },
++   { 207, "MTLPixelFormatASTC_6x5_LDR", PIPE_FORMAT_ASTC_6x5 },
++   { 208, "MTLPixelFormatASTC_6x6_LDR", PIPE_FORMAT_ASTC_6x6 },
++   { 210, "MTLPixelFormatASTC_8x5_LDR", PIPE_FORMAT_ASTC_8x5 },
++   { 211, "MTLPixelFormatASTC_8x6_LDR", PIPE_FORMAT_ASTC_8x6 },
++   { 212, "MTLPixelFormatASTC_8x8_LDR", PIPE_FORMAT_ASTC_8x8 },
++   { 213, "MTLPixelFormatASTC_10x5_LDR", PIPE_FORMAT_ASTC_10x5 },
++   { 214, "MTLPixelFormatASTC_10x6_LDR", PIPE_FORMAT_ASTC_10x6 },
++   { 215, "MTLPixelFormatASTC_10x8_LDR", PIPE_FORMAT_ASTC_10x8 },
++   { 216, "MTLPixelFormatASTC_10x10_LDR", PIPE_FORMAT_ASTC_10x10 },
++   { 217, "MTLPixelFormatASTC_12x10_LDR", PIPE_FORMAT_ASTC_12x10 },
++   { 218, "MTLPixelFormatASTC_12x12_LDR", PIPE_FORMAT_ASTC_12x12 },
+    {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
+    {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
+    {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
+@@ -1658,7 +1686,7 @@
+               size_t *out, char *why, size_t why_size)
+ {
+    unsigned texel = util_format_get_blocksize(texture->res->format);
+-   size_t least = (size_t)box->width * texel;
++   size_t least = (size_t)util_format_get_nblocksx(texture->res->format, box->width) * texel;
+    if (stride == 0) {
+       *out = least;
+       return true;
+@@ -1775,7 +1803,8 @@
+    }
+    texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
+                                           PIPE_MAP_WRITE, &box, bytes, row,
+-                                          row * box.height);
++                                          row * util_format_get_nblocksy(texture->res->format,
++                                                                         box.height));
+    return 0;
+ }
+ 
+@@ -3908,7 +3937,7 @@
           break;
  
        case AIR_RESOURCE_IMAGE:
@@ -266,7 +320,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +3918,14 @@
+@@ -3918,12 +3947,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -283,3 +337,35 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
+diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
+--- a/userland/src/SweetNativeDrawLog.inc
++++ b/userland/src/SweetNativeDrawLog.inc
+@@ -143,9 +143,12 @@
+ 	for (unsigned i = 0; i < ncolors && i < 4; i++) {
+ 		id t = colors[i];
+ 		size_t at = strlen(rt);
+-		snprintf(rt + at, sizeof(rt) - at, "%s%u:%ux%u", i ? "," : "",
++		id p = t && [t respondsToSelector:@selector(parentTexture)] ? [t parentTexture] : nil;
++		snprintf(rt + at, sizeof(rt) - at, "%s%u:%ux%u#%04x/L%u", i ? "," : "",
+ 		         t ? (unsigned)[t pixelFormat] : 0, t ? (unsigned)[t width] : 0,
+-		         t ? (unsigned)[t height] : 0);
++		         t ? (unsigned)[t height] : 0,
++		         (unsigned)(((uintptr_t)(p ? p : t) >> 4) & 0xffff),
++		         p ? (unsigned)[t parentRelativeLevel] : 0);
+ 	}
+ 	if (depth != nil)
+ 		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
+@@ -155,8 +158,11 @@
+ 		if (t == nil)
+ 			continue;
+ 		size_t at = strlen(tx);
+-		snprintf(tx + at, sizeof(tx) - at, "%s%u:%u:%ux%u", at ? "," : "", i,
+-		         (unsigned)[t pixelFormat], (unsigned)[t width], (unsigned)[t height]);
++		id p = [t respondsToSelector:@selector(parentTexture)] ? [t parentTexture] : nil;
++		snprintf(tx + at, sizeof(tx) - at, "%s%u:%u:%ux%u#%04x/L%u+%u", at ? "," : "", i,
++		         (unsigned)[t pixelFormat], (unsigned)[t width], (unsigned)[t height],
++		         (unsigned)(((uintptr_t)(p ? p : t) >> 4) & 0xffff),
++		         p ? (unsigned)[t parentRelativeLevel] : 0, (unsigned)[t mipmapLevelCount]);
+ 	}
+ 	fprintf(stderr, "SweetNativeMetal: DRAW %u %s %s|%s prim %u start %u n %u idx %s@%zu inst %u rt %s ds %s tex %s\n",
+ 	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,

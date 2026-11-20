@@ -612,3 +612,13 @@
   (2120 kernel, payload delay 150 s, dtlog MercuryPosterExtension) `3e439df5ada2195ae74c5d3d11ada9c43fd1ff25b929bd51a4462da6c36168c2`.
   Boot 1: package lands at ~150 s, the drawlog file appears after backboardd started -> trace (old bundle loaded).
   Boot 2: new bundle for Mercury. Afterwards remove the drawlog file (it re-arms only on change, harmless).
+- Written in TWRP: metal-all-drawlog payload VERIFY OK, boot 2120-drawlog readback 3e439df5 OK. Rebooted.
+- **All Mercury shaders compile now** (1ff2038 boot 2: compute pipelines for VTMTSComputeFunction1x1,
+  VariableBlurrer::downsample/fallbackCopy, no `pipeline refused`). New blocker: `couldn't set up coordinator:
+  ... makeTexture failed for format astc_6x6_srgb` (albedo-a.ktx). The format table had no ASTC. Added ASTC LDR
+  (Metal 186-200 sRGB, 204-218 LDR -> PIPE_FORMAT_ASTC_*), caller row stride and slice size counted in blocks.
+- Draw trace (`logs/drawlog-glass-20261120.txt`, 1501 draws, ~8 frames, owner pressed CC buttons): every frame
+  has 2 `glass_background_no_bleed` draws and a downsample/narrow_blur chain; no failed draws. Early frames blur
+  through separate 192x384 / 320x704 textures; later frames blur 640x1408 -> 640x1408 (rt and sampled texture the
+  same size: probably the same texture, different mip levels). The log shows neither texture identity nor level,
+  so this is a guess. Added `#id/L<level>+<levels>` to rt and tex entries of the draw log for the next trace.
