@@ -648,3 +648,4 @@
   texture->texture (via a 16 B/texel temp), buffer->buffer, fillBuffer, no-op fences/sync, generateMipmaps
   not done (logged), unknown selectors swallowed (logged once). Copies run at encode time through the
   replaceRegion path. Also blitCommandEncoderWithDescriptor:. Cancelled 44700658186 (glass only).
+  Commit 6a0e11f, Metal CI `44701198795` (glass copy + blit encoder).
