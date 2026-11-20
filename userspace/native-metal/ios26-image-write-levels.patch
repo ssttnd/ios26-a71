@@ -51,7 +51,36 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 --- a/tools/mesa/air/air_intrinsics.c
 +++ b/tools/mesa/air/air_intrinsics.c
-@@ -1400,6 +1400,53 @@
+@@ -554,6 +554,28 @@
+        */
+       r = nir_b2iN(&c->b, nir_ine_imm(&c->b, a[0], 0),
+                    air_nir_bit_size(c, in->base.type));
++   } else if ((!strcmp(op, "pack") || !strcmp(op, "unpack")) && n->num >= 3 &&
++              !strcmp(n->part[1], "unorm") && !strcmp(n->part[2], "rgb10a2")) {
++      if (!strcmp(op, "pack")) {
++         nir_def *v = nir_fsat(&c->b, nir_f2f32(&c->b, a[0]));
++         nir_def *q = nir_f2u32(&c->b, nir_fround_even(&c->b,
++                          nir_fmul(&c->b, v, nir_imm_vec4(&c->b, 1023.0, 1023.0, 1023.0, 3.0))));
++         r = nir_ior(&c->b,
++                     nir_ior(&c->b, nir_channel(&c->b, q, 0),
++                             nir_ishl_imm(&c->b, nir_channel(&c->b, q, 1), 10)),
++                     nir_ior(&c->b, nir_ishl_imm(&c->b, nir_channel(&c->b, q, 2), 20),
++                             nir_ishl_imm(&c->b, nir_channel(&c->b, q, 3), 30)));
++      } else {
++         nir_def *w = nir_u2u32(&c->b, a[0]);
++         nir_def *ch[4];
++         for (unsigned i = 0; i < 4; i++)
++            ch[i] = nir_u2f32(&c->b, nir_ubitfield_extract(&c->b, w, nir_imm_int(&c->b, 10 * i),
++                                                           nir_imm_int(&c->b, i < 3 ? 10 : 2)));
++         r = nir_fmul(&c->b, nir_vec(&c->b, ch, 4),
++                      nir_imm_vec4(&c->b, 1.0 / 1023.0, 1.0 / 1023.0, 1.0 / 1023.0, 1.0 / 3.0));
++         if (air_nir_bit_size(c, in->base.type) == 16)
++            r = nir_f2f16(&c->b, r);
++      }
+    } else if (!strcmp(op, "unpack") && n->num >= 2 &&
+               !strcmp(n->part[1], "unorm4x8")) {
+       /* four unsigned bytes of a word, each divided by 255. Component 0 is the
+@@ -1400,6 +1422,53 @@
     return true;
  }
  
@@ -105,7 +134,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1693,16 +1740,24 @@
+@@ -1693,16 +1762,24 @@
        nir_def *value = air_get_ssa(c, in->operands[arg++]);
        if (!value)
           return false;

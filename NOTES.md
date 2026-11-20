@@ -581,3 +581,6 @@
   (bundle + rm of /var/local/sweet-native-sync-commit) VERIFY OK `689e9eab...d38b`. Boot
   `build/a71-ios26-nowifi-mercuryonly.img` (nowifi-b + dtlog MercuryPosterExtension only) readback
   `23eebb59439172f6fc88e1e703a69ad3a0f194c75836beba35d6a64eacd9aeb6`. Rebooted.
+- bitcast boot: payload 10/10; bitcast refusal gone. Next Mercury refusal: `intrinsic: air.pack.unorm.rgb10a2.v4f32`
+  (4x). Added pack/unpack unorm rgb10a2 (saturate, x1023/x3, round-even; R low bits, A top two) to
+  ios26-image-write-levels.patch.
