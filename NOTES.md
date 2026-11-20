@@ -544,3 +544,6 @@
   `research/ios26/make-image-level-patch.py`), applied in CI after the blur patch. Checked: applies alone and
   stacked on the blur patch to the donor air files. Commit da20e9a, Metal CI `44690970901` building. Not compiled
   before this run.
+- **Attachment-size Metal works (owner: flicker gone).** USB: payload 9/9 errno=0, Metal published, `the draw failed`
+  0 times this boot (389 before), swaps up to ~24/s, no backboardd crash. Lock screen / CC glass visual detail
+  not yet reported.
