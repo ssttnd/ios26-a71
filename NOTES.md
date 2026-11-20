@@ -879,3 +879,30 @@ Next:
 - Pitfall: in bash heredocs `\\n` reaches Python as `\n` (a real newline in C strings). Use raw strings or chr(92).
 - Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
   key=` lines land in the same USB log as the 30 s draw-trace windows).
+
+## 2026-11-21 — Mercury stack sampler corrected
+
+- Local `codex/a71-settings` and GitHub were both at `45fdca4` at the start. Restarted the USB logger in a
+  hidden process, writing `logs/usb-ios26-2123-resume.txt`. On the old diagnostic boot the `SMP --- sample`
+  ticks appeared without Mercury stacks. `proc_name()` returns `p_comm` (`MercuryPosterExt`), and the sampler
+  compares exact names. The USB log shows the short name in `SWEET VMPROT` messages for Mercury.
+- Built `build/a71-ios26-2123-mercury-stack.img` using the SHA256SUMS-verified kernel from CI `44805072035`,
+  `--sample MercuryPosterExt --sample-interval-ms 5000` and package replay disabled. The PC sent `a71:recovery`.
+  TWRP verified the previous 22,478,848-byte image at `a57440635b7e664d1b259aef1bbe6c85580fe5fb392388bf03c09473ec85361d`,
+  then wrote and verified only `boot` at `b9ff188c62db00977038765316d36a646b1aee4250bce70529a8c5c429a8e222`.
+  Requested system reboot. This test still uses the installed Metal from CI `44802843341`.
+- Boot succeeded on the first attempt. USB confirmed the requested sampler and captured 40 snapshots for each
+  of two Mercury processes. No kernel panic, `hfs_swap_BTNode` error or package replay in the captured boot.
+  The known `hfs_cnode.c:946` warnings still appear.
+- Symbolicated the shared-cache PCs and matched the bundled Mach-O call sites. The active Mercury's main
+  thread waited in `__psynch_mutexwait` for samples 8–13 (at least 25 s), first in
+  `-[SweetNativeMetalCommandQueue device]`, then in `-[SweetNativeMetalTexture width]` called from
+  `copyFromTexture:...sliceCount:levelCount:`. These methods take the global `nativeObjectLock`. During part
+  of that interval a VideoToolbox thread was in `-[SweetNativeMetalCommandBuffer commit]` through
+  `rwa_dispatch_buffers`, with the backend waiting in `pthread_cond_wait`. By sample 14 the main thread had
+  returned to the normal UIKit run loop. This shows transient Metal contention, with no evidence yet that it
+  accounts for the persistent black wallpaper. The other Mercury process's main thread stayed in UIKit's run loop.
+- Phone remains on the verified `2123-mercury-stack` boot. The logger is still appending to the ignored USB log.
+  The 40-sample window is exhausted. For the next wake-to-wallpaper test, capture Mercury's `sweetdtlog` alongside
+  stack samples and correlate the first render session with backend dispatch latency and completion. Glass has
+  not been retested. No new kernel or Metal CI was dispatched.

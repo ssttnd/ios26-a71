@@ -3,6 +3,16 @@
 Practical reference for driving the phone, the builds and the logs from this Windows folder. Facts here were
 checked on the phone; the dated history is in `NOTES.md`. Keep this file current when a procedure changes.
 
+## Commits and continuing work
+
+- Push every project commit to the current GitHub branch after committing. Verify that the remote branch contains
+  the commit. If a push fails, diagnose and retry it without overwriting remote history.
+- Continue authorized work through the next build, test, diagnosis and fix without waiting for another command.
+  Treat CI and device progress as part of the task. Keep working on independent steps while a build runs or a
+  specific action is blocked. Ask the owner only for a required authorization or input, or when an external
+  blocker prevents further progress.
+- Update `NOTES.md` after each milestone so the next session can pick up from the last verified result.
+
 ## Tools on this PC
 
 - adb: `C:\Users\qqstee\Desktop\misc\misc\71stuff\Minimal ADB and Fastboot\adb.exe` (not in PATH). Python scripts
@@ -11,7 +21,8 @@ checked on the phone; the dated history is in `NOTES.md`. Keep this file current
 - `gh` is not installed. GitHub API calls go through `tools/flow/ghauth.py` (token from `git credential fill`, never
   printed). Its `API` points at `ssttnd/ios-a71`; set `ghauth.API = "https://api.github.com/repos/ssttnd/ios26-a71"`
   for this repo. The repo is public: no secrets, serials or Apple files in commits or Actions logs.
-- Python: run project tools with `python -I -X utf8`. In Git Bash, run `tools/a71-payload.py` with
+- Python: run standalone tools with `python -I -X utf8`. Use `python -X utf8` for the boot packer so it can import
+  sibling modules from `tools/`. In Git Bash, run `tools/a71-payload.py` with
   `MSYS_NO_PATHCONV=1`, or `/System/...` turns into `C:/Program Files/Git/System/...`.
 - Bash heredocs: `\\n` reaches Python as `\n`, i.e. a real newline inside generated C strings (this broke xnu 2122
   once). Use raw strings (`r'''...'''`) or `chr(92)` in generator scripts.
@@ -39,6 +50,9 @@ Reboot once before concluding a build is broken; it has always booted the second
   leaves the previous boot there.
 - Userland os_log pieces arrive split as `|process| text`; rejoin the `|backboardd|` (or other) pieces before parsing
   multi-part lines (draw traces).
+- Kernel stack sampling (`--sample` in the packer) matches the exact short process name from `proc_name()`,
+  limited to 16 characters. Use `--sample MercuryPosterExt` for MercuryPosterExtension. Look for `SMP: sampling`
+  to confirm the filter and `SMP <name>[<pid>]` for a captured stack. The first sample comes about 90 s after boot.
 
 ## Writing to the phone (from TWRP)
 
