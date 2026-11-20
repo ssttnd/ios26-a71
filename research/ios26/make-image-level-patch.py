@@ -48,6 +48,14 @@ edit('tools/mesa/air/nir_air.h',
 };'''))
 
 edit('tools/mesa/air/air_to_nir.c',
+     ('''   if (_mesa_hash_table_num_entries(c.fns)) {
+      NIR_PASS(_, c.nir, nir_inline_functions);
+''',
+      '''   if (_mesa_hash_table_num_entries(c.fns)) {
+      /* The inliner expects helper returns to have been lowered. */
+      NIR_PASS(_, c.nir, nir_lower_returns);
+      NIR_PASS(_, c.nir, nir_inline_functions);
+'''),
      ('''      /* A VECTOR function constant. Metal allows one and the GL-on-Metal
        * fragment shaders use two: `uchar3` opcode triples for the texture
        * combiners (`fc_color_opcodes0/1`, declared `<3 x i8>`).

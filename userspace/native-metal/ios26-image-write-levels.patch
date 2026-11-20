@@ -503,6 +503,15 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
+@@ -4333,6 +4526,8 @@
+     * point, which every consumer of this NIR assumes.
+     */
+    if (_mesa_hash_table_num_entries(c.fns)) {
++      /* The inliner expects helper returns to have been lowered. */
++      NIR_PASS(_, c.nir, nir_lower_returns);
+       NIR_PASS(_, c.nir, nir_inline_functions);
+       NIR_PASS(_, c.nir, nir_opt_deref);
+       nir_remove_non_entrypoints(c.nir);
 diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 --- a/tools/mesa/air/air_intrinsics.c
 +++ b/tools/mesa/air/air_intrinsics.c
