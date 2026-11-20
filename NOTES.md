@@ -598,3 +598,4 @@
 - rgb10a2 boot: payload 9/9; rgb10a2 refusal gone. Next: `intrinsic: air.pack.unorm4x8.v4f32`. Added pack
   unorm/snorm 4x8 and 2x16 and unpack snorm4x8, unorm/snorm2x16 (NIR opcodes) to the levels patch.
   Owner: same problems (black wallpaper, glass vanishing).
+  Commit 61fddec, Metal CI `44695495470`. Next TWRP: this bundle + drawlog flag in one package with the 2120 delayed image; boot 1 traces the glass (old bundle loaded), boot 2 runs the new bundle for Mercury.
