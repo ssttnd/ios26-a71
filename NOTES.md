@@ -528,4 +528,4 @@
   (air_metal.c) refused it, so those passes vanished (3c6a578 made the levels real, which exposed it).
   Fix: render size = MIN over colour (and depth) attachments, regenerated
   `userspace/native-metal/ios26-blur-attachments.patch` with `research/ios26/make-attachment-patch.py`;
-  air_metal.c part applies to the local donor tree. Metal CI pending.
+  air_metal.c part applies to the local donor tree. Commit 34846e7, Metal CI `44690309011` (public repo, free minutes) building.
