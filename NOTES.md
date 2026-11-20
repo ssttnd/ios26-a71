@@ -576,4 +576,4 @@
   working (kernel touch init identical to good boots; guess: console flood). Mercury: "argument 3 is not a
   constant" is gone (level slots work); new refusal `a bitcast from 1 x 32 bits to 4 x 8 bits` (4x, block 1434)
   -> coordinator not set up ("trying to update environment for a coordinator that isn't there" x398).
-  Fix: any same-size bitcast via nir_bitcast_vector, added to ios26-image-write-levels.patch.
+  Fix: any same-size bitcast via nir_bitcast_vector, added to ios26-image-write-levels.patch (0f18b42, Metal CI `44693533395`).
