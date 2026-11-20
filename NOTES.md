@@ -775,3 +775,15 @@ Open:
   N glass_fg N blur N`. With the owner opening CC and pressing buttons, this tells whether CA stops sending glass
   draws when it vanishes (CA's own choice, e.g. late frames: swap_wait_timeouts 674 in a boot) or keeps sending
   them (our rendering). Combined Metal CI `44791373178` (call-split + GLASSSTAT) building.
+- CI `44791373178` OK, 6/6. Phone was in TWRP, boot mercuryonly (23eebb59) verified; wrote
+  `build/a71-ios26-metal-glassstat.payload` VERIFY OK `9ae80ea0...b32eb`, rebooted. Pitfall: the logger from the
+  previous boot (a71-usblog.py, appending to `logs/usb-ios26-texphi.txt`) still held COM7, so this boot is in that
+  file from line 13338 (copy `logs/usb-ios26-glassstat-part.txt`). Stop old loggers before starting a new one.
+  Payload 9/9, Metal published. Mercury: the argument-14 refusal is gone; next refusal (render pipeline)
+  `a phi of pointers one of whose operands is itself a pointer chosen at run time`. Not seen offline even with all
+  function constants = 1 (VM air2nir has a local `AIR2NIR_FC_ONES=1` sweep), so it comes from a specialisation or
+  another library. Fixed generally in a871a6b (phi operands flattened to leaf places; the edge stores a bcsel
+  index); offline corpus: that refusal 32 -> 0, +6 modules translate, no regressions; Metal CI `44794161842`.
+- GLASSSTAT in that boot (backboardd, per second): CoreAnimation sends glass all the time while the UI is used:
+  glass_bg 150-730 and blur 30-290 per second, total draws 3000-6700 per second. Whether glass vanished during
+  these windows is not yet reported by the owner.
