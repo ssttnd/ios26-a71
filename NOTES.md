@@ -623,3 +623,6 @@
   same size: probably the same texture, different mip levels). The log shows neither texture identity nor level,
   so this is a guess. Added `#id/L<level>+<levels>` to rt and tex entries of the draw log for the next trace.
   Commit c146e30, Metal CI `44698113596`.
+- Metal CI `44698113596` (c146e30, ASTC + draw log ids) succeeded, 6/6 match. TWRP: `build/a71-ios26-metal-astc.payload`
+  VERIFY OK `917bb91b...3f2e`, boot back to mercuryonly (23eebb59, no payload delay) so the new bundle runs on
+  the first boot. Draw trace with ids is the next TWRP visit (2120 image + a payload that rewrites the drawlog file).
