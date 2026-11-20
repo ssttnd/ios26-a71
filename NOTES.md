@@ -693,3 +693,4 @@
   util_gen_mipmap (rwa_texture_generate_mipmap); (3) pointer phis between different BUFFERS: a 32-bit selector
   register stored on each edge + the existing AIR_VAL_PTR_SELECT chain (textures/samplers/argbuf still refused).
   Commit 55996bf, Metal CI `44705378496`.
+- Metal CI `44705378496` 6/6 match. TWRP: `build/a71-ios26-metal-mips-phi.payload` VERIFY OK `c61457c9...c355`, boot mercuryonly (23eebb59, install at mount). Rebooted.
