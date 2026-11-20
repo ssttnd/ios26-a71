@@ -770,7 +770,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1670,6 +1706,22 @@
+@@ -1670,6 +1706,54 @@
     }
     *out = stride;
     return true;
@@ -790,10 +790,42 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +   return util_gen_mipmap(texture->device->pipe, res, res->format, texture->first_level,
 +                          texture->first_level + texture->level_count - 1, 0, last_layer,
 +                          PIPE_TEX_FILTER_LINEAR) ? 0 : -1;
++}
++
++/* A colour attachment's resolveTexture (MTLStoreActionMultisampleResolve): the attachment
++ * blitted into level `level`, slice `slice` of the other texture, by the GPU in order with
++ * the pass. A Gallium blit from a multisample resource is the resolve; from a one-sample one
++ * it is a copy, which is what Metal's resolve of a one-sample attachment amounts to. Mercury
++ * draws its wallpaper this way and the resolve texture stayed black. */
++int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
++                        unsigned slice);
++int
++rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
++                    unsigned slice)
++{
++   if (!src || !dst)
++      return -1;
++   unsigned sl = src->first_level, dl = dst->first_level + level;
++   int w = (int)MIN2(u_minify(src->res->width0, sl), u_minify(dst->res->width0, dl));
++   int h = (int)MIN2(u_minify(src->res->height0, sl), u_minify(dst->res->height0, dl));
++   struct pipe_blit_info b = { 0 };
++   b.src.resource = src->res;
++   b.src.level = sl;
++   b.src.format = src->res->format;
++   b.src.box = (struct pipe_box){ .x = 0, .y = 0, .z = 0, .width = w, .height = h, .depth = 1 };
++   b.dst.resource = dst->res;
++   b.dst.level = dl;
++   b.dst.format = dst->res->format;
++   b.dst.box = (struct pipe_box){ .x = 0, .y = 0, .z = (int)slice, .width = w, .height = h,
++                                  .depth = 1 };
++   b.mask = PIPE_MASK_RGBA;
++   b.filter = PIPE_TEX_FILTER_NEAREST;
++   dst->device->pipe->blit(dst->device->pipe, &b);
++   return 0;
  }
  
  int
-@@ -1775,7 +1827,8 @@
+@@ -1775,7 +1859,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -803,7 +835,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3717,6 +3770,62 @@
+@@ -3717,6 +3802,62 @@
     d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
  }
  
@@ -866,7 +898,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  static int
  bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
             const struct air_shader_info *info, void **own_sampler,
-@@ -3903,12 +4012,27 @@
+@@ -3903,12 +4044,27 @@
                 return -1;
              }
           }
@@ -896,7 +928,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4042,14 @@
+@@ -3918,12 +4074,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -913,7 +945,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -7201,6 +7327,10 @@
+@@ -7201,6 +7359,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -924,7 +956,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7294,6 +7424,7 @@
+@@ -7294,6 +7456,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -1015,11 +1047,13 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[vertexBuffers[i] release];[buffers[i] release];[textures[i] release];[samplers[i] release];}
      [super dealloc];
  }
-@@ -3472,6 +3520,182 @@
+@@ -3472,6 +3520,200 @@
  	RW_CB_ERROR        = 5,
  };
  
 +int rwa_texture_generate_mipmap(struct rwa_texture *texture);
++int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
++                        unsigned slice);
 +
 +@interface SweetNativeMetalBlitEncoder : NSObject {
 +	id _device;
@@ -1152,6 +1186,22 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +		     destinationLevel:l destinationOrigin:MTLOriginMake(0, 0, 0)];
 +	}
 +}
++/* whole levels and slices (iOS 26 form; Mercury uses it) */
++- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
++              toTexture:(id)dst destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl
++             sliceCount:(NSUInteger)sc levelCount:(NSUInteger)lc
++{
++	if (src == nil || dst == nil)
++		return;
++	for (NSUInteger l = 0; l < lc; l++) {
++		NSUInteger w = MAX([src width] >> (sl + l), 1), h = MAX([src height] >> (sl + l), 1);
++		for (NSUInteger s = 0; s < sc; s++)
++			[self copyFromTexture:src sourceSlice:ss + s sourceLevel:sl + l
++				 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(w, h, 1)
++				    toTexture:dst destinationSlice:ds + s destinationLevel:dl + l
++			    destinationOrigin:MTLOriginMake(0, 0, 0)];
++	}
++}
 +- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)so toBuffer:(id)dst
 +     destinationOffset:(NSUInteger)doff size:(NSUInteger)n
 +{
@@ -1198,7 +1248,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  @implementation SweetNativeMetalCommandBuffer {
  	SweetNativeMetalCommandQueue *_queue;
  	NSMutableArray *_work;
-@@ -3613,7 +3837,11 @@
+@@ -3613,7 +3855,11 @@
  /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
   * absent, for the reason the device's own 44 were answered: a missing selector aborts the
   * caller, and these are the four that were still missing. */
@@ -1211,7 +1261,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  - (id)resourceStateCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (id)accelerationStructureCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (void)encodeSignalEvent:(id)event value:(uint64_t)value { NATIVE_OBJECT_LOCK;  (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }
-@@ -3651,6 +3879,10 @@
+@@ -3651,6 +3897,10 @@
          [self failWith:why];[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;
      }
  	for (SweetNativeMetalWork *work in _work) {
@@ -1222,7 +1272,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          if(work->nativeBarrier) {
              if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
              continue;
-@@ -3906,6 +4138,7 @@
+@@ -3906,6 +4156,7 @@
  		return NO;
  	}
  
@@ -1230,6 +1280,56 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	const unsigned dl = native_drawlog_next();
  	{
  		if (dl)
+@@ -4140,6 +4391,8 @@
+ 	unsigned _vertexBufferCount, _fragmentBufferCount;
+ 	unsigned _fragmentTextureCount, _fragmentSamplerCount;
+ 	BOOL _complained;
++	id _resolve[8];
++	NSUInteger _resolveLevel[8], _resolveSlice[8];
+ }
+ 
+ - (instancetype)initWithRedwoodCommandBuffer:(SweetNativeMetalCommandBuffer *)commandBuffer
+@@ -4176,7 +4429,15 @@
+ 		 */
+ 		NSUInteger store = [attachment storeAction];
+ 
+-		if (store == MTLStoreActionMultisampleResolve ||
++		if ([attachment resolveTexture] != nil &&
++		    [[attachment resolveTexture] respondsToSelector:@selector(mesaTexture)] &&
++		    [texture respondsToSelector:@selector(mesaTexture)] &&
++		    (store == MTLStoreActionMultisampleResolve ||
++		     store == MTLStoreActionStoreAndMultisampleResolve)) {
++			_resolve[i] = [[attachment resolveTexture] retain];
++			_resolveLevel[i] = [attachment resolveLevel];
++			_resolveSlice[i] = [attachment resolveSlice];
++		} else if (store == MTLStoreActionMultisampleResolve ||
+ 		    store == MTLStoreActionStoreAndMultisampleResolve ||
+ 		    [attachment resolveTexture] != nil) {
+ 			rw_print("colour attachment %u asks for a multisample "
+@@ -5456,6 +5717,23 @@
+         work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
+         [_commandBuffer recordWork:work];[work release];
+         _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
++    }
++    for (unsigned i = 0; i < 8; i++) {
++        if (_resolve[i] == nil)
++            continue;
++        id src = _color[i], dst = _resolve[i];
++        unsigned lvl = (unsigned)_resolveLevel[i], sl = (unsigned)_resolveSlice[i];
++        if (src != nil) {
++            SweetNativeMetalWork *work = [SweetNativeMetalWork new];
++            work->nativeBlit = [^{
++                if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl) != 0)
++                    RW_ONCE("a multisample resolve failed\n");
++            } copy];
++            [_commandBuffer recordWork:work];
++            [work release];
++        }
++        [_resolve[i] release];
++        _resolve[i] = nil;
+     }
+     [super endEncoding];
+ }
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc

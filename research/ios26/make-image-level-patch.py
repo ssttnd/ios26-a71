@@ -715,6 +715,38 @@ rwa_texture_generate_mipmap(struct rwa_texture *texture)
                           PIPE_TEX_FILTER_LINEAR) ? 0 : -1;
 }
 
+/* A colour attachment's resolveTexture (MTLStoreActionMultisampleResolve): the attachment
+ * blitted into level `level`, slice `slice` of the other texture, by the GPU in order with
+ * the pass. A Gallium blit from a multisample resource is the resolve; from a one-sample one
+ * it is a copy, which is what Metal's resolve of a one-sample attachment amounts to. Mercury
+ * draws its wallpaper this way and the resolve texture stayed black. */
+int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
+                        unsigned slice);
+int
+rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
+                    unsigned slice)
+{
+   if (!src || !dst)
+      return -1;
+   unsigned sl = src->first_level, dl = dst->first_level + level;
+   int w = (int)MIN2(u_minify(src->res->width0, sl), u_minify(dst->res->width0, dl));
+   int h = (int)MIN2(u_minify(src->res->height0, sl), u_minify(dst->res->height0, dl));
+   struct pipe_blit_info b = { 0 };
+   b.src.resource = src->res;
+   b.src.level = sl;
+   b.src.format = src->res->format;
+   b.src.box = (struct pipe_box){ .x = 0, .y = 0, .z = 0, .width = w, .height = h, .depth = 1 };
+   b.dst.resource = dst->res;
+   b.dst.level = dl;
+   b.dst.format = dst->res->format;
+   b.dst.box = (struct pipe_box){ .x = 0, .y = 0, .z = (int)slice, .width = w, .height = h,
+                                  .depth = 1 };
+   b.mask = PIPE_MASK_RGBA;
+   b.filter = PIPE_TEX_FILTER_NEAREST;
+   dst->device->pipe->blit(dst->device->pipe, &b);
+   return 0;
+}
+
 int
 rwa_texture_write(struct rwa_texture *texture, unsigned level, unsigned layer,'''),
      ('   {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },\n',
@@ -901,6 +933,8 @@ static char sweet_nocopy_key;
      # same command buffer would see it undone, which an upload before a commit does not.
      ('@implementation SweetNativeMetalCommandBuffer {\n',
       '''int rwa_texture_generate_mipmap(struct rwa_texture *texture);
+int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
+                        unsigned slice);
 
 @interface SweetNativeMetalBlitEncoder : NSObject {
 	id _device;
@@ -1033,6 +1067,22 @@ static char sweet_nocopy_key;
 		     destinationLevel:l destinationOrigin:MTLOriginMake(0, 0, 0)];
 	}
 }
+/* whole levels and slices (iOS 26 form; Mercury uses it) */
+- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
+              toTexture:(id)dst destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl
+             sliceCount:(NSUInteger)sc levelCount:(NSUInteger)lc
+{
+	if (src == nil || dst == nil)
+		return;
+	for (NSUInteger l = 0; l < lc; l++) {
+		NSUInteger w = MAX([src width] >> (sl + l), 1), h = MAX([src height] >> (sl + l), 1);
+		for (NSUInteger s = 0; s < sc; s++)
+			[self copyFromTexture:src sourceSlice:ss + s sourceLevel:sl + l
+				 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(w, h, 1)
+				    toTexture:dst destinationSlice:ds + s destinationLevel:dl + l
+			    destinationOrigin:MTLOriginMake(0, 0, 0)];
+	}
+}
 - (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)so toBuffer:(id)dst
      destinationOffset:(NSUInteger)doff size:(NSUInteger)n
 {
@@ -1089,6 +1139,54 @@ static char sweet_nocopy_key;
       '    for(unsigned i=0;i<8;i++)[color[i] release];\n    [nativeBlit release];\n'),
      ('        if(work->nativeBarrier) {\n',
       '        if(work->nativeBlit) {\n            ((void (^)(void))work->nativeBlit)();\n            continue;\n        }\n        if(work->nativeBarrier) {\n'),
+     # Multisample resolve: recorded per colour attachment, queued at -endEncoding as a GPU
+     # blit run in order after the pass's draws (rwa_texture_resolve).
+     ('\tunsigned _fragmentTextureCount, _fragmentSamplerCount;\n\tBOOL _complained;\n}',
+      '\tunsigned _fragmentTextureCount, _fragmentSamplerCount;\n\tBOOL _complained;\n'
+      '\tid _resolve[8];\n\tNSUInteger _resolveLevel[8], _resolveSlice[8];\n}'),
+     ('''\t\tif (store == MTLStoreActionMultisampleResolve ||
+\t\t    store == MTLStoreActionStoreAndMultisampleResolve ||
+\t\t    [attachment resolveTexture] != nil) {''',
+      '''\t\tif ([attachment resolveTexture] != nil &&
+\t\t    [[attachment resolveTexture] respondsToSelector:@selector(mesaTexture)] &&
+\t\t    [texture respondsToSelector:@selector(mesaTexture)] &&
+\t\t    (store == MTLStoreActionMultisampleResolve ||
+\t\t     store == MTLStoreActionStoreAndMultisampleResolve)) {
+\t\t\t_resolve[i] = [[attachment resolveTexture] retain];
+\t\t\t_resolveLevel[i] = [attachment resolveLevel];
+\t\t\t_resolveSlice[i] = [attachment resolveSlice];
+\t\t} else if (store == MTLStoreActionMultisampleResolve ||
+\t\t    store == MTLStoreActionStoreAndMultisampleResolve ||
+\t\t    [attachment resolveTexture] != nil) {'''),
+     ('''    [super endEncoding];
+}
+
+@end
+
+@implementation SweetNativeMetalComputeEncoder''',
+      '''    for (unsigned i = 0; i < 8; i++) {
+        if (_resolve[i] == nil)
+            continue;
+        id src = _color[i], dst = _resolve[i];
+        unsigned lvl = (unsigned)_resolveLevel[i], sl = (unsigned)_resolveSlice[i];
+        if (src != nil) {
+            SweetNativeMetalWork *work = [SweetNativeMetalWork new];
+            work->nativeBlit = [^{
+                if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl) != 0)
+                    RW_ONCE("a multisample resolve failed\\n");
+            } copy];
+            [_commandBuffer recordWork:work];
+            [work release];
+        }
+        [_resolve[i] release];
+        _resolve[i] = nil;
+    }
+    [super endEncoding];
+}
+
+@end
+
+@implementation SweetNativeMetalComputeEncoder'''),
      # GLASSSTAT: every draw is counted by kind (SweetNativeDrawLog.inc)
      ('\tconst unsigned dl = native_drawlog_next();\n',
       '\tnative_glassstat([work->render render]);\n\tconst unsigned dl = native_drawlog_next();\n'))
