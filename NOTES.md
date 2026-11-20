@@ -529,3 +529,10 @@
   Fix: render size = MIN over colour (and depth) attachments, regenerated
   `userspace/native-metal/ios26-blur-attachments.patch` with `research/ios26/make-attachment-patch.py`;
   air_metal.c part applies to the local donor tree. Commit 34846e7, Metal CI `44690309011` (public repo, free minutes) building.
+- Wallpaper (Mercury `fluidity.dynamic`, black): `research/mercury/default.metallib` (ignored; read from the
+  reference root) has `VariableBlurrer::downsample` = `air.write_texture_2d.i16.v4f16` + `air.sample_texture_2d`.
+  "argument 3 is not a constant" is the write's mip level (tex, coord, value, lod): the kernel writes a
+  computed level. air_intrinsics.c only takes a constant 0, and an image binding is a single level
+  (`pipe_image_view.u.tex.level = first_level`, air_metal.c ~3911). Planned fix: for a non-constant lod emit an
+  if-ladder of image stores, branch k storing to an extra image slot bound by the host to level k of the same
+  texture (new air_resource fields: level slot base and count). Not written yet.
