@@ -852,6 +852,30 @@ Open:
   first-boot fault), second boot fine: `SWEET REBOOT: ... IMEM mapped, PON spare write ready`. Writing `a71:recovery` to
   `logs/usb-command.txt` (new a71-usblog.py running) -> `SWEET USB: host asked for a reboot into recovery` and TWRP came
   up by itself. The PC can now go iOS -> TWRP without the owner.
+- **2123 verified**: CI `44805072035` kernel `e80ab708...a754`, `build/a71-ios26-2123.img` readback `f6679f41...c8b0`,
+  booted first time. Userland time now correct (os_log 2026-11-20), RunningBoard "invalidation time in the past" 0
+  (was ~2500). Owner: time correct, lock-screen clock smaller, still no wallpaper. Mercury now runs its compute
+  (dispatchThreads rounded up) with no Metal errors, but issues no render draws: only 2 command buffers completed
+  in 25 s, render session active ("Extending render session ... ScreenWake"). It waits on something (guess: display
+  link / CAMetalLayer drawable delivery). Not identified.
+
+## 2026-11-21 ~01:10 — HANDOFF (owner out of tokens)
+
+Phone state: boot = `build/a71-ios26-2123-sample.img` (2123 kernel, mercuryonly options minus dtlog, plus
+`sweetsample=MercuryPosterExtension` every 20 s), readback `a5744063...361d`, rebooted into iOS; USB logger was
+appending to `logs/usb-ios26-2123.txt` (stopped at handoff; no `SMP MercuryPoster` lines had arrived yet, the
+sampler starts ~90 s after process start). Installed Metal: CI 44802843341 (38c5652: partial groups + everything
+before; payload `35e340b1...30f9`). Root has `/var/local/sweet-native-drawlog-every` = "10 800 backboardd".
+Plain image without sampling: `build/a71-ios26-2123.img`.
+
+Next:
+1. Wallpaper: restart the logger, read `SMP MercuryPosterExtension[...]` lines, symbolicate with
+   `tools/sweet-crash.py research/ios26/dsc/dyld_shared_cache_arm64e ROOT` (ipsw at research/ipsw-cli/ipsw.exe) to see
+   which thread waits where (display link? nextDrawable? MTLSharedEvent?). Then implement what it waits for.
+2. Glass: TEXSTAT shows the blur source is fine; recheck once the wallpaper draws (glass over black looks empty).
+   If it still vanishes, compare glass_background output (read back the drawable region) between marker states.
+3. Commit pending: none. All work is pushed on `codex/a71-settings`.
+4. First boot after a TWRP write still sometimes hangs early (red shim, after SWEET EARLY 9): reboot once.
 - Pitfall: in bash heredocs `\\n` reaches Python as `\n` (a real newline in C strings). Use raw strings or chr(92).
 - Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
   key=` lines land in the same USB log as the 30 s draw-trace windows).
