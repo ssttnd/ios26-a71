@@ -31,6 +31,9 @@ def edit(name, *pairs):
 
 
 edit('tools/mesa/air/nir_air.h',
+     ('   const char *name;    /* declared Metal function-constant name */\n',
+      '   const char *name;    /* declared Metal function-constant name */\n'
+      '   uint64_t bits_hi;   /* upper half of a packed vector, zero for scalars */\n'),
      ('   unsigned native_read_bytes; /* proved constant-offset UBO extent, zero = unknown */\n};',
       '''   unsigned native_read_bytes; /* proved constant-offset UBO extent, zero = unknown */
 
@@ -45,6 +48,47 @@ edit('tools/mesa/air/nir_air.h',
 };'''))
 
 edit('tools/mesa/air/air_to_nir.c',
+     ('''      /* A VECTOR function constant. Metal allows one and the GL-on-Metal
+       * fragment shaders use two: `uchar3` opcode triples for the texture
+       * combiners (`fc_color_opcodes0/1`, declared `<3 x i8>`).
+       *
+       * air_constant_value carries one 64-bit word per constant, so the
+       * components have to be fields of it, and the packing is this frontend's
+       * own interface with the runtime rather than something read out of
+       * Apple's: component i sits at bit i*width, which is the word a memcpy
+       * of the value would produce on this little-endian target. NOTHING HERE
+       * MEASURES THAT -- every harness in tools/air supplies zero for every
+       * constant, so all components are zero whatever the packing, and the
+       * first thing that would tell a wrong packing from a right one is a
+       * pipeline that sets one of these two constants.
+       */
+      if (comps * bits > 64)
+         return air_error(c, "interface: a function constant of %u components of %u bits, "
+                             "which does not fit the one word air_constant_value carries",
+                          comps, bits), NULL;
+      nir_def *fields[NIR_MAX_VEC_COMPONENTS];
+      for (unsigned i = 0; i < comps; i++) {
+         uint64_t mask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
+         fields[i] = nir_imm_intN_t(&c->b, (v->bits >> (i * bits)) & mask,
+                                    as_bool ? 8 : bits);
+      }
+''',
+      '''      /* Vector components are stored consecutively in two little-endian words.
+       * The runtime supplies byte-sized storage for boolean components.
+       */
+      const unsigned width = as_bool ? 8 : bits;
+      if (!width || width > 64 || 64 % width || comps > 128 / width)
+         return air_error(c, "interface: function constant with %u components of %u bits exceeds packed storage",
+                          comps, width), NULL;
+      const uint64_t words[2] = { v->bits, v->bits_hi };
+      const uint64_t mask = width == 64 ? ~0ull : (1ull << width) - 1;
+      nir_def *fields[NIR_MAX_VEC_COMPONENTS];
+      for (unsigned i = 0; i < comps; i++) {
+         const unsigned bit = i * width;
+         const uint64_t lane = (words[bit / 64] >> (bit % 64)) & mask;
+         fields[i] = nir_imm_intN_t(&c->b, lane, width);
+      }
+'''),
      ('      .argbuf_set = ~0u, .argbuf_id = ~0u,\n   };\n   return &info->resources[info->num_resources++];',
       '      .argbuf_set = ~0u, .argbuf_id = ~0u,\n      .image_slot = index,\n   };\n   return &info->resources[info->num_resources++];'),
      ('''         c.nir->info.num_images = MAX2(c.nir->info.num_images, r->index + 1);
@@ -1600,6 +1644,48 @@ native_glassstat(const void *render)
 '''))
 
 edit('tools/mesa/air/air_pointer_cells.inc',
+     ('''static bool
+sev_fc_value(const struct air_ctx *c, unsigned index, uint64_t *bits)
+{
+   for (unsigned i = 0; c->options && i < c->options->num_constants; i++)
+      if (c->options->constants[i].index == index) {
+         *bits = c->options->constants[i].bits;
+         return true;
+      }
+   return false;
+}
+''',
+      '''static const struct air_constant_value *
+sev_fc_value(const struct air_ctx *c, unsigned index)
+{
+   for (unsigned i = 0; c->options && i < c->options->num_constants; i++)
+      if (c->options->constants[i].index == index)
+         return &c->options->constants[i];
+   return NULL;
+}
+'''),
+     ('''      uint64_t bits = 0;
+      (void)sev_fc_value(c, pl->binding, &bits);   /* undefined: 0 refines undef */
+      if (off + n > 8)
+         return false;
+      for (unsigned b = 0; b < n; b++)
+         out->b[b] = bits >> (8 * (off + b));
+''',
+      '''      const struct air_constant_value *v = sev_fc_value(c, pl->binding);
+      const uint64_t words[2] = { v ? v->bits : 0, v ? v->bits_hi : 0 };
+      if (off > sizeof(words) || n > sizeof(words) - off)
+         return false;
+      for (unsigned b = 0; b < n; b++) {
+         const unsigned byte = off + b;
+         out->b[b] = words[byte / 8] >> (8 * (byte % 8));
+      }
+'''),
+     ('''               uint64_t off, bits;
+''', '               uint64_t off;\n'),
+     ('''               sev_set(st, &in->base, sev_of_u(sev_fc_value(c, c->global_plan[g].binding, &bits), 1));
+''',
+      '''               sev_set(st, &in->base, sev_of_u(sev_fc_value(c, c->global_plan[g].binding) != NULL, 1));
+'''),
      ('static bool\nsev_run(struct sev_state *st, const struct air_function *f)\n',
       '''static const struct air_block *switch_known_target(const struct air_inst *, uint64_t, unsigned);
 
@@ -1633,6 +1719,86 @@ sev_run(struct sev_state *st, const struct air_function *f)
          }
          case AIR_OP_RET:
             return true;
+'''))
+
+edit('tools/mesa/air/sweet_native_ext.h',
+     ('struct rwa_constant { unsigned index; const char *name; uint64_t bits; unsigned bytes; };\n',
+      'struct rwa_constant { unsigned index; const char *name; uint64_t bits; unsigned bytes; uint64_t bits_hi; };\n'))
+
+edit('tools/mesa/air/sweet_native_ext.c',
+     ('''   for(unsigned i=0;i<count;i++) if(!values[i].bytes || values[i].bytes>8) {
+      say(why,n,"interface: function constant exceeds AIR's 64-bit value representation");return -1;
+''',
+      '''   for(unsigned i=0;i<count;i++) if(!values[i].bytes || values[i].bytes>16) {
+      say(why,n,"interface: function constant exceeds AIR's 128-bit value representation");return -1;
+'''),
+     ('''            (*out)[count]=declared[i];(*out)[count++].bits=v->bits;break;
+''',
+      '''            (*out)[count] = declared[i];
+            (*out)[count].bits = v->bits;
+            (*out)[count++].bits_hi = v->bits_hi;
+            break;
+'''))
+
+edit('userland/src/SweetNativeLibrary.inc',
+     ('    case 4:case 30:case 34:return 8;\n',
+      '    case 4:case 30:case 34:return 8;\n'
+      '    case 5:case 31:case 35:return 12;   /* float3, int3, uint3 */\n'
+      '    case 6:case 32:case 36:return 16;   /* float4, int4, uint4 */\n'),
+     ('''        BOOL valid=YES;
+        for(unsigned group=0;group<2;group++)for(id value in (group?named:indexed)) {
+            if(!native_method_abi(value,@selector(dataType),"Q16@0:8") ||
+               !native_method_abi(value,@selector(data),"^v16@0:8") ||
+               !native_method_abi(value,group?@selector(name):@selector(index),group?"@16@0:8":"Q16@0:8")) {valid=NO;break;}
+            unsigned n=native_constant_bytes([value dataType]);
+            if(!n || ![value data]){valid=NO;break;}
+            NSData *packed=[NSData dataWithBytes:[value data] length:n];
+            id key=group?[value name]:@([value index]);
+            if(!key){valid=NO;break;}
+            [constants addObject:@{@"key":key,@"bytes":packed}];
+        }
+        [indexed release];[named release];[snapshot release];
+        if(!valid){if(error)*error=native_error("unsupported constant type or value ABI (AIR limit: 64 bits)");return nil;}
+''',
+      '''        char failure[160] = {0};
+        for (unsigned group = 0; group < 2 && !failure[0]; group++) {
+            for (id value in (group ? named : indexed)) {
+                BOOL type_ok = native_method_abi(value, @selector(dataType), "Q16@0:8");
+                BOOL data_ok = native_method_abi(value, @selector(data), "^v16@0:8");
+                BOOL key_ok = native_method_abi(value, group ? @selector(name) : @selector(index),
+                                                group ? "@16@0:8" : "Q16@0:8");
+                if (!type_ok || !data_ok || !key_ok) {
+                    snprintf(failure, sizeof(failure), "constant method ABI mismatch (type=%d data=%d key=%d)",
+                             type_ok, data_ok, key_ok);
+                    break;
+                }
+                NSUInteger type = [value dataType];
+                unsigned n = native_constant_bytes(type);
+                if (!n) {
+                    snprintf(failure, sizeof(failure), "unsupported function constant Metal type %lu",
+                             (unsigned long)type);
+                    break;
+                }
+                const void *data = [value data];
+                id key = group ? [value name] : @([value index]);
+                if (!data || !key) {
+                    snprintf(failure, sizeof(failure), "function constant is missing its key or data");
+                    break;
+                }
+                [constants addObject:@{@"key":key, @"bytes":[NSData dataWithBytes:data length:n]}];
+            }
+        }
+        [indexed release];[named release];[snapshot release];
+        if (failure[0]) { if (error) *error = native_error(failure); return nil; }
+'''),
+     ('''        packed[i].bytes=(unsigned)[bytes length];memcpy(&packed[i].bits,[bytes bytes],[bytes length]);
+''',
+      '''        const uint8_t *data = [bytes bytes];
+        packed[i].bytes = (unsigned)[bytes length];
+        size_t low = MIN((size_t)packed[i].bytes, sizeof(packed[i].bits));
+        memcpy(&packed[i].bits, data, low);
+        if (packed[i].bytes > low)
+            memcpy(&packed[i].bits_hi, data + low, packed[i].bytes - low);
 '''))
 
 # Mercury's wallpaper drawable: a BGRA IOSurface (207x448, pitch 832) viewed as
