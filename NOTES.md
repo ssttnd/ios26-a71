@@ -918,3 +918,8 @@ Next:
   `build/a71-ios26-2123-mercury-correlate.img` (22,478,848 bytes), SHA-256
   `004c6ceaf427149a51b135f02b87eb5621ce10a797cb48d7d37f44f4cc42c874`. Requested system reboot.
   New USB log is `logs/usb-ios26-2123-correlate.txt`.
+- The owner reported a panic on the first boot. Windows saw neither A71 USB serial nor TWRP ADB, and the
+  new USB log was empty. The older first-boot fault is a possibility; the panic details are unconfirmed.
+  Compared the packed command lines: the only differences are removal of `sweetfb_flip=0` and addition of
+  `sweetdtlog=MercuryPosterExtension` (599 bytes total). Asked the owner for one physical restart. If the
+  second boot panics, collect the displayed panic or TWRP log before changing the image.
