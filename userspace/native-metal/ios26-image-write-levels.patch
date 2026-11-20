@@ -257,7 +257,26 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 --- a/tools/mesa/air/air_metal.c
 +++ b/tools/mesa/air/air_metal.c
-@@ -868,6 +868,34 @@
+@@ -85,6 +85,9 @@
+ struct rwa_device {
+    struct pipe_screen *screen;
+    struct pipe_context *pipe;
++   /* the colour targets of the draw being bound, for hazard_view */
++   struct pipe_resource *hazard_targets[8];
++   unsigned hazard_count;
+ 
+    /* NIR's options for this screen, asked once: the translator needs them to know what
+     * the consumer can be handed (what it may leave for the backend to lower).
+@@ -219,6 +222,8 @@
+    struct rwa_device *device;
+    struct pipe_resource *res;
+    struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */
++   struct pipe_resource *hazard_res;       /* a copy for draws that render into this */
++   struct pipe_sampler_view *hazard_view;
+    struct pipe_surface *native_surface;
+    struct rwa_texture_shape shape;
+    const char *format_name;         /* the MTLPixelFormat, spelled out */
+@@ -868,6 +873,34 @@
     {  55, "MTLPixelFormatR32Float",        PIPE_FORMAT_R32_FLOAT },
     {  60, "MTLPixelFormatRG16Unorm",       PIPE_FORMAT_R16G16_UNORM },
     {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },
@@ -292,7 +311,16 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
     {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
     {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
-@@ -1658,7 +1686,7 @@
+@@ -1579,6 +1612,8 @@
+     * below is about.
+     */
+    pipe_sampler_view_reference(&texture->view, NULL);
++   pipe_sampler_view_reference(&texture->hazard_view, NULL);
++   pipe_resource_reference(&texture->hazard_res, NULL);
+    pipe_surface_reference(&texture->native_surface, NULL);
+    pipe_resource_reference(&texture->res, NULL);
+    free(texture);
+@@ -1658,7 +1693,7 @@
                size_t *out, char *why, size_t why_size)
  {
     unsigned texel = util_format_get_blocksize(texture->res->format);
@@ -301,7 +329,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1775,7 +1803,8 @@
+@@ -1775,7 +1810,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -311,7 +339,91 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3908,7 +3937,7 @@
+@@ -3717,6 +3753,62 @@
+    d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
+ }
+ 
++/* The view a draw samples when the texture is also one of its colour targets: a copy of
++ * every level of it, made by the GPU in submission order before the draw, kept with the
++ * texture and refreshed at each such draw. NULL if the copy could not be made.
++ */
++static struct pipe_sampler_view *
++hazard_view(struct rwa_device *device, struct rwa_texture *t)
++{
++   struct pipe_context *pipe = device->pipe;
++   struct pipe_resource *res = t->res;
++   if (!t->hazard_res) {
++      struct pipe_resource tmpl = { 0 };
++      tmpl.target = res->target;
++      tmpl.format = res->format;
++      tmpl.width0 = res->width0;
++      tmpl.height0 = res->height0;
++      tmpl.depth0 = res->depth0;
++      tmpl.array_size = res->array_size;
++      tmpl.last_level = res->last_level;
++      tmpl.nr_samples = res->nr_samples;
++      tmpl.nr_storage_samples = res->nr_storage_samples;
++      tmpl.usage = PIPE_USAGE_DEFAULT;
++      tmpl.bind = PIPE_BIND_SAMPLER_VIEW;
++      t->hazard_res = device->screen->resource_create(device->screen, &tmpl);
++      if (!t->hazard_res)
++         return NULL;
++      struct pipe_sampler_view v = { 0 };
++      u_sampler_view_default_template(&v, t->hazard_res, t->hazard_res->format);
++      if (res->target == PIPE_TEXTURE_2D) {
++         v.u.tex.first_level = t->first_level;
++         v.u.tex.last_level = t->first_level + t->level_count - 1;
++      }
++      t->hazard_view = pipe->create_sampler_view(pipe, t->hazard_res, &v);
++      if (!t->hazard_view) {
++         pipe_resource_reference(&t->hazard_res, NULL);
++         return NULL;
++      }
++   }
++   for (unsigned l = t->first_level; l < t->first_level + t->level_count; l++) {
++      struct pipe_box box = {
++         .x = 0, .y = 0, .z = 0,
++         .width = (int)u_minify(res->width0, l),
++         .height = (int)u_minify(res->height0, l),
++         .depth = res->target == PIPE_TEXTURE_3D ? (int)u_minify(res->depth0, l)
++                                                  : (int)res->array_size,
++      };
++      pipe->resource_copy_region(pipe, t->hazard_res, l, 0, 0, 0, res, l, &box);
++   }
++   static unsigned logged;
++   if (logged < 4) {
++      logged++;
++      fprintf(stderr, "SweetNativeMetal: a draw samples its own colour target (%ux%u, %u levels): "
++              "it reads a copy made just before it\n", res->width0, res->height0, t->level_count);
++   }
++   return t->hazard_view;
++}
++
+ static int
+ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
+            const struct air_shader_info *info, void **own_sampler,
+@@ -3903,12 +3995,27 @@
+                return -1;
+             }
+          }
+-         views[r->index] = t->view;
++         {
++            struct pipe_sampler_view *use = t->view;
++            for (unsigned h = 0; h < device->hazard_count; h++) {
++               if (device->hazard_targets[h] == t->res) {
++                  use = hazard_view(device, t);
++                  break;
++               }
++            }
++            if (!use) {
++               say(why, why_size, "%s would not copy the %s bound at texture %u, which this "
++                                  "draw also renders into", rwa_device_name(device),
++                   t->format_name, r->index);
++               return -1;
++            }
++            views[r->index] = use;
++         }
+          num_views = MAX2(num_views, r->index + 1);
           break;
  
        case AIR_RESOURCE_IMAGE:
@@ -320,7 +432,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +3947,14 @@
+@@ -3918,12 +4025,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -337,6 +449,25 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
+@@ -7201,6 +7310,10 @@
+    pipe->set_vertex_buffers(pipe, nvb, vbs);
+ 
+    native_draw_checkpoint(device,&native_phase_at,1);
++   device->hazard_count = 0;
++   for (unsigned i = 0; i < draw->color_count && i < 8; i++)
++      if (draw->color && draw->color[i])
++         device->hazard_targets[device->hazard_count++] = draw->color[i]->res;
+    struct rwa_bound fbound = { 0 }, vbound = { 0 };
+    int rc = -1;
+    if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
+@@ -7294,6 +7407,7 @@
+ 
+ unbind:
+    native_draw_checkpoint(device,&native_phase_at,3);
++   device->hazard_count = 0;
+    unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);
+    if (!render->generated_vertex)
+       unbind_stage(device, PIPE_SHADER_VERTEX, &vbound);
 diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 --- a/userland/src/redwoodmetal.m
 +++ b/userland/src/redwoodmetal.m

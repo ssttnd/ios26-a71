@@ -633,3 +633,11 @@
   Commit 083a576, Metal CI `44699219394`. Next TWRP: 2120-drawlog image + payload (this bundle + rewritten drawlog file): boot 1 traces with ids (ASTC bundle loaded), boot 2 runs NoCopy for Mercury.
 - Owner asked for a shorter wait: `build/a71-ios26-2120-drawlog75.img` (payload delay 75 s; last time 150 s landed at uptime ~180 s, Metal restart of backboardd ~60 s) SHA-256 `5ec226ee862bcd91de6d079068309793e9ea017081fbee996e551f2552946b0f`. Not written yet.
 - Metal CI `44699219394` (083a576) 6/6 match. TWRP: `build/a71-ios26-metal-nocopy-drawlog.payload` VERIFY OK `7ec690aa...345e`, boot 2120-drawlog75 readback 5ec226ee OK. Rebooted.
+- **Glass cause found** (trace with ids, `logs/drawlog-glass-ids-20261120.txt`; console lines are split, rejoin
+  `|backboardd|` pieces to read it): CoreAnimation's variable blur builds its mip chain IN PLACE.
+  DRAW 7 renders texture #c298 (448x960, 3 levels) from #c288; DRAW 8/9 `variable_blur_downsample_frag` render
+  into #c298 while sampling #c298 (L0+3) in the same draw; then `glass_background(_sdf)_no_bleed` samples all 3
+  levels of #c298. Same resource as colour target and texture in one draw: no ordering guaranteed on the
+  Adreno. Fix (in ios26-image-write-levels.patch): render_draw records its colour targets; bind_stage gives a
+  texture that is also a target a GPU copy of all its levels (resource_copy_region just before the draw,
+  copy resource kept per texture). Logs "a draw samples its own colour target" (first 4).
