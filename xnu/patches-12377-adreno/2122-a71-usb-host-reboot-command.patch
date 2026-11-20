@@ -1,0 +1,113 @@
+A71: commands from the PC on the USB serial port (sweetusb=3). A line "a71:recovery" (or "a71:reboot",
+"a71:bootloader") reboots the phone into that mode through reboot_kernel (file systems synced) and
+sweet_reboot.c, which now also runs on samsung,a71 (same SM7150 IMEM restart_reason 0x146aa65c and PM6150
+PON spare 0x88f as sweet). Lets the PC take the phone from iOS to TWRP without the key combo.
+
+diff --git a/bsd/dev/sweet_reboot.c b/bsd/dev/sweet_reboot.c
+index dbea036..d4c5793 100644
+--- a/bsd/dev/sweet_reboot.c
++++ b/bsd/dev/sweet_reboot.c
+@@ -151,7 +151,8 @@ sweet_reboot_init(void)
+ 	 * with the PON and IMEM reasons set first, so `sweetreboot fastboot` lands in ABL fastboot.
+ 	 */
+ 	const bool sweet = !sweet_board_beryllium();
+-	if (sr_ready || (sweet && !sweet_board_is("xiaomi,sweet"))) {
++	/* 2122: the A71 is the same SM7150 + PM6150 (IMEM 0x146aa000, PON spare 0x88f) */
++	if (sr_ready || (sweet && !sweet_board_is("xiaomi,sweet") && !sweet_board_is("samsung,a71"))) {
+ 		return;
+ 	}
+ 	if (PE_parse_boot_argn("sweetreboot", arg, sizeof(arg))) {
+@@ -203,6 +204,17 @@ sr_pon_set_reason(unsigned magic)
+ 	printf("SWEET REBOOT: PON_SOFT_RB_SPARE 0x88f 0x%02x -> 0x%02x (read back 0x%02x)\n", old, upd, back);
+ }
+ 
++/* 2122: the mode of the next reboot, from the kernel (USB host command): 0 normal,
++ * 1 bootloader, 2 recovery, as the sysctl would set it. */
++void sweet_reboot_set_mode(int mode);
++void
++sweet_reboot_set_mode(int mode)
++{
++	sr_override = mode == 2 ? SR_RECOVERY : mode == 1 ? SR_BOOTLOADER : SR_NORMAL;
++	printf("SWEET REBOOT: next reboot mode set to %s (kernel)
++", sr_name(sr_override));
++}
++
+ /* Called by SweetPlatformExpert::haltRestart for panic notifications. */
+ void
+ sweet_reboot_note_panic(void)
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+index 799bad2..099f0f8 100644
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -596,6 +596,51 @@ ud_rx_arm(void)
+ 	ud_start_trb(EP_RX, UD_TRB_RX, UD_RX, UD_FRAME_MAX, TRBCTL_NORMAL);
+ }
+ 
++/*
++ * 2122: commands from the host on the ACM serial port (bulk OUT). The bytes used to be
++ * thrown away; a line "a71:recovery" (or "a71:reboot", "a71:bootloader") now restarts the
++ * phone into that mode, so a PC can get from iOS to TWRP with no hand on the phone.
++ * Only noted here (event context); ud_acm_cmd_thread does the reboot.
++ */
++static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader */
++extern void sweet_reboot_set_mode(int mode);    /* bsd/dev/sweet_reboot.c (2122) */
++extern int reboot_kernel(int howto, char *message);
++
++static void
++ud_acm_take_command(const char *p, uint32_t len)
++{
++	static const struct { const char *word; int cmd; } words[] = {
++		{ "a71:recovery", 2 }, { "a71:bootloader", 3 }, { "a71:reboot", 1 },
++	};
++	for (uint32_t i = 0; i < len; i++) {
++		for (unsigned w = 0; w < sizeof(words) / sizeof(words[0]); w++) {
++			size_t n = strlen(words[w].word);
++			if (len - i >= n && memcmp(p + i, words[w].word, n) == 0) {
++				ud_cmd = words[w].cmd;
++				return;
++			}
++		}
++	}
++}
++
++static void
++ud_acm_cmd_thread(void *arg __unused, wait_result_t wr __unused)
++{
++	for (;;) {
++		ud_sleep_ms(100);
++		int cmd = ud_cmd;
++		if (cmd == 0) {
++			continue;
++		}
++		ud_cmd = 0;
++		printf("SWEET USB: host asked for a reboot into %s
++",
++		    cmd == 2 ? "recovery" : cmd == 3 ? "bootloader" : "normal");
++		sweet_reboot_set_mode(cmd == 2 ? 2 : cmd == 3 ? 1 : 0);
++		(void)reboot_kernel(0 /* RB_AUTOBOOT */, (char *)"USB host command");
++	}
++}
++
+ static void
+ ud_rx_done(void)
+ {
+@@ -603,6 +648,9 @@ ud_rx_done(void)
+ 	ud_sync(UD_TRB_RX, 16);
+ 	uint32_t len = UD_FRAME_MAX - (t[2] & 0xffffff);
+ 	ud_sync(UD_RX, UD_FRAME_MAX);
++	if (ud.acm && len > 0 && len <= UD_FRAME_MAX) {
++		ud_acm_take_command((const char *)(ud.dma + UD_RX), len);
++	}
+ 	if (ud.ifp != NULL && len >= ETHER_HDR_LEN && len <= ETHER_MAX_LEN) {
+ 		/*
+ 		 * One mbuf with a 2 KiB cluster holds any frame. (mbuf_allocpacket
+@@ -1417,6 +1465,9 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+ 	if (livelog && ud.acm && kernel_thread_start(ud_acm_log_thread, NULL, &thread) == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
++	if (ud.acm && kernel_thread_start(ud_acm_cmd_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
+ }
+ 
+ /* ---- sweetusb=3: bring the controller up from nothing (Samsung normal boot) ---- */
