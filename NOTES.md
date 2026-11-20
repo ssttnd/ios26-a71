@@ -1065,3 +1065,8 @@ Next:
   `aabbeeba5504b1fb1316420ba131cbb47b1ff655c1c110de780c341db2b166d4`, and verified readback. iOS booted,
   installed all 9 entries with errno=0, and published Metal. USB capture
   `logs/usb-ios26-metal-framebuffer-target.txt` is active for the owner's preview test.
+
+## 2026-11-21 — Uber preview shader
+
+- `c904f4f` handles specialized optional inputs/outputs, aggregate phis, computed byte offsets in helper calls, and narrow helper returns. The actual `uber_fragment` translated offline (16,092 NIR instructions). Prior boot linked accumulator_color; owner still saw black.
+- CI `44819830656` passed, artifact `14672630199` verified 6/6. At owner's request installed the bundle-only package from TWRP. Verified existing boot `f6679f41...c8b0`, left it in place, and verified package readback `0c3bd315c9cc031d9a83bfd282c65121ec6dc52faab142fe24d679b349f4bc9a`. Requested system reboot. Visual preview not verified.
