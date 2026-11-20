@@ -536,3 +536,11 @@
   (`pipe_image_view.u.tex.level = first_level`, air_metal.c ~3911). Planned fix: for a non-constant lod emit an
   if-ladder of image stores, branch k storing to an extra image slot bound by the host to level k of the same
   texture (new air_resource fields: level slot base and count). Not written yet.
+- Metal CI `44690309011` (34846e7, attachment size fix) succeeded; artifact `14608602053`, all six bundle files
+  match build.json. Package `build/a71-ios26-metal-attsize.payload` (9 entries) TWRP VERIFY OK
+  `26835c7ccecb65b6e121a67af04772477776dbf5ad3edff7c81102fcfc6c9168` (owner asked to install it). Boot is
+  nowifi-b (`71584527...`, sweetpayload=1). Rebooted with `twrp reboot system`. Result pending.
+- Wallpaper fix written: `userspace/native-metal/ios26-image-write-levels.patch` (generator
+  `research/ios26/make-image-level-patch.py`), applied in CI after the blur patch. Checked: applies alone and
+  stacked on the blur patch to the donor air files. Commit da20e9a, Metal CI `44690970901` building. Not compiled
+  before this run.
