@@ -1,0 +1,16 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -1071,7 +1071,11 @@
+ 	uint32_t dmasync = 1;
+ 	PE_parse_boot_argn("ufsdmasync", &dmasync, sizeof(dmasync));
+ 	su.dmasync = (dmasync != 0);
+-	su.verify = 0;
++	/* A71: read back every write by default (ufsverify=0 turns it off). On 2026-11-20 a
++	 * catalog node reached the disk with zeroed records and a garbage offset table although
++	 * the B-tree code checks a node before writing it; a write the device got wrong is one
++	 * explanation, and this catches it and retries. */
++	su.verify = 1;
+ 	su.fua = 0;
+ 	su.retries = UFS_RETRIES;
+ 	su.syncsecs = UFS_SYNC_SECS;
