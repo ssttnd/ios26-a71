@@ -1030,3 +1030,16 @@ Next:
   reachable incoming edges once translated. Pointers that change buffer bindings still fail. Offline the vertex
   now translates (775 NIR instructions) with constants set to zero and to ones; the fragment still translates.
   Pushed the commit and dispatched iOS 26 CI `44815994187`. Real GPU output is unverified.
+- Corpus comparison showed the loop change adds 175 translations and does not lose any working ones.
+  It also exposed an earlier regression from unlocking wide constants: `primitive_coverage_fragment` in the
+  same library switched from a clean refusal to a Mesa assertion. The inliner requires helper returns
+  lowered first. `be206bc` orders `nir_lower_returns` before `nir_inline_functions` after CFG structuring.
+  Offline `primitive_coverage_fragment` now translates alongside `path_distance_vertex`. CI `44816642930`
+  builds both fixes; loop-only run `44815994187` was cancelled before installation.
+- Final local corpus comparison (211 libraries) added `primitive_coverage_fragment` and lost no translations.
+  Final totals: 9,521 translations, 14,759 refusals, 53 pre-existing aborts, and 24 non-applicable modules.
+- CI `44816642930` succeeded on `be206bc`; artifact `14669917019` verified 6/6. TWRP verified and kept the
+  existing `f6679f41...c8b0` boot image. Wrote bundle-only `build/a71-ios26-metal-path-distance.payload`,
+  readback SHA-256 `7a934ab639773f6482db717af9ff104546204a9c7f8664a2f7b51ac98e445980`, then rebooted.
+  USB capture `logs/usb-ios26-metal-path-distance.txt`: boot succeeded, install 9/9 with errno=0, Metal published.
+  Asked the owner to check the same preview while monitoring for errors and actual draws.
