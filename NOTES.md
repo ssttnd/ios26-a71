@@ -626,3 +626,7 @@
 - Metal CI `44698113596` (c146e30, ASTC + draw log ids) succeeded, 6/6 match. TWRP: `build/a71-ios26-metal-astc.payload`
   VERIFY OK `917bb91b...3f2e`, boot back to mercuryonly (23eebb59, no payload delay) so the new bundle runs on
   the first boot. Draw trace with ids is the next TWRP visit (2120 image + a payload that rewrites the drawlog file).
+- ASTC boot (c146e30, mercuryonly image): payload 9/9; makeTexture astc_6x6_srgb passes now. Next Mercury error:
+  `albedo-a.ktx: textureCreationFailed("Failed to create staging buffer")` with no driver line before it:
+  `newBufferWithBytesNoCopy:` always returned nil. Implemented as copy into our own buffer, caller's deallocator
+  run when that buffer is freed (associated object). Owner: transparency still vanishes (trace with ids next).

@@ -337,6 +337,73 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
+diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -936,6 +936,37 @@
+ 
+ #include "SweetNativeLibrary.inc"
+ 
++@interface SweetNativeNoCopyRelease : NSObject {
++	void (^_deallocator)(void *, NSUInteger);
++	void *_bytes;
++	NSUInteger _length;
++}
++- (instancetype)initWithDeallocator:(void (^)(void *, NSUInteger))d bytes:(void *)b length:(NSUInteger)n;
++@end
++
++@implementation SweetNativeNoCopyRelease
++- (instancetype)initWithDeallocator:(void (^)(void *, NSUInteger))d bytes:(void *)b length:(NSUInteger)n
++{
++	self = [super init];
++	if (self != nil) {
++		_deallocator = d ? [d copy] : nil;
++		_bytes = b;
++		_length = n;
++	}
++	return self;
++}
++- (void)dealloc
++{
++	if (_deallocator != nil) {
++		_deallocator(_bytes, _length);
++		[_deallocator release];
++	}
++	[super dealloc];
++}
++@end
++
++static char sweet_nocopy_key;
++
+ @implementation SweetNativeMetalDevice
+ 
+ + (void)load
+@@ -2172,8 +2203,23 @@
+ 		       options:(NSUInteger)options
+ 		   deallocator:(void (^)(void *, NSUInteger))deallocator
+ { NATIVE_OBJECT_LOCK; 
+-	(void)bytes; (void)length; (void)options; (void)deallocator;
+-	return nil;   /* wrapping the caller's own pages needs the kernel to map them: not yet */
++	if (bytes == NULL || length == 0)
++		return nil;
++	id buffer = [self newBufferWithLength:length options:options];
++	if (buffer == nil || [buffer contents] == NULL) {
++		[buffer release];
++		return nil;
++	}
++	memcpy([buffer contents], bytes, length);
++	RW_ONCE("newBufferWithBytesNoCopy: %lu bytes copied (the caller's pages are not "
++		"mapped into the GPU; later writes to them are not seen)\n", (unsigned long)length);
++	if (deallocator != nil) {
++		SweetNativeNoCopyRelease *r = [[SweetNativeNoCopyRelease alloc]
++			initWithDeallocator:deallocator bytes:bytes length:length];
++		objc_setAssociatedObject(buffer, &sweet_nocopy_key, r, OBJC_ASSOCIATION_RETAIN);
++		[r release];
++	}
++	return buffer;
+ }
+ - (id)newIndirectCommandBufferWithDescriptor:(id)d
+ 			      maxCommandCount:(NSUInteger)count
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
