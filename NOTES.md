@@ -564,6 +564,16 @@
   active); Metal published; MercuryPosterExtension opened the GPU; `the draw failed` 0. Mercury's own shader errors
   are not on the console (no sweetdtlog). Visual result (wallpaper, Settings/CC glass) pending from owner.
 - Owner: wallpaper still black with the image-level Metal. Mercury's shader result is not on the console.
-  Built `build/a71-ios26-nowifi-mercurylog.img` = nowifi-b + `--dtlog MercuryPosterExtension` (keeps --payload),
-  SHA-256 `b6a6ef45be2d2cc213a879e41337628bb5aaa3691243218af96211ccb8085aa3`. Not flashed yet (needs TWRP). Also
+  Built `build/a71-ios26-nowifi-mercurylog.img` = nowifi-b + `--dtlog MercuryPosterExtension,PosterBoard` (keeps --payload),
+  SHA-256 `e47ec7a986b068e2d00fe8987d3a342862c115b931f627514aa2c2e608cfe28b`, TWRP boot readback verified. Also
   tells whether dtlog or the missing sweetpayload caused the earlier backboardd loop.
+- Owner on levels-sync: iOS 26 wallpapers vanished from the wallpaper list; Settings search glass still vanishes;
+  CC a bit better, but pressing a button makes the buttons around it lose glass, sometimes all of them. So waiting
+  at commit (sweet-native-sync-commit) does NOT fix it: a CPU-side completion race is unlikely. Flag still on.
+- levels-sync boot: PosterBoard aborts twice (sig 6, same pc), never seen before; likely why iOS 26 wallpapers left the list.
+- mercurylog boot (dtlog MercuryPosterExtension,PosterBoard + payload): no backboardd loop (so the earlier loop was
+  the missing sweetpayload=1 / no-payload image, not dtlog), but ~10k console lines in 100 s; owner: touch not
+  working (kernel touch init identical to good boots; guess: console flood). Mercury: "argument 3 is not a
+  constant" is gone (level slots work); new refusal `a bitcast from 1 x 32 bits to 4 x 8 bits` (4x, block 1434)
+  -> coordinator not set up ("trying to update environment for a coordinator that isn't there" x398).
+  Fix: any same-size bitcast via nir_bitcast_vector, added to ios26-image-write-levels.patch.

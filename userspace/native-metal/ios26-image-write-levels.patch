@@ -28,7 +28,16 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     };
     return &info->resources[info->num_resources++];
  }
-@@ -4305,8 +4306,8 @@
+@@ -2345,6 +2346,8 @@
+          res = nir_unpack_32_2x16(&c->b, x);
+       else if (sn == 2 && sb == 16 && dn == 1 && db == 32)
+          res = nir_pack_32_2x16(&c->b, x);
++      else if (sn * sb == dn * db)
++         res = nir_bitcast_vector(&c->b, x, db);
+       else
+          return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
+                              "which is a repacking this frontend does not do",
+@@ -4305,8 +4308,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
