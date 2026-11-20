@@ -660,3 +660,9 @@
   with recovered-error sense), not proven. Proposed: rewrite those two blocks with the identical bytes (auto
   mode refused without explicit owner OK); asked the owner.
 - Owner OK: rewrote catalog node 28370 (fs blocks 3851251-3851252) with the identical bytes, readback sha aaf024b9 same. Rebooted.
+- Panic 3 (after identical rewrite): same node 28370 / tzinit exit 5 (`logs/ios26-blit-panic2.txt`). Last good boots were on the 2120 kernel; flashed 2120-drawlog75 (5ec226ee) back to test.
+- 2120 kernel panics the same way, so not the kernel version. UFS driver (xnu 0028/0030/0034) reads through a
+  1 MiB bounce buffer in <=1 MiB pieces; nothing obviously wrong found yet. The phone has no working boot now.
+  Options put to the owner: (1) rewrite the iOS root (first 24 GiB of userdata) from
+  `build/ios26-root-a71-23G90.img` and replay the setup payloads (reliable, destructive, loses runtime state);
+  (2) keep debugging why XNU reads catalog node 28370's second half as zeros (kernel CI per try).
