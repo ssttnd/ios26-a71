@@ -630,3 +630,4 @@
   `albedo-a.ktx: textureCreationFailed("Failed to create staging buffer")` with no driver line before it:
   `newBufferWithBytesNoCopy:` always returned nil. Implemented as copy into our own buffer, caller's deallocator
   run when that buffer is freed (associated object). Owner: transparency still vanishes (trace with ids next).
+  Commit 083a576, Metal CI `44699219394`. Next TWRP: 2120-drawlog image + payload (this bundle + rewritten drawlog file): boot 1 traces with ids (ASTC bundle loaded), boot 2 runs NoCopy for Mercury.
