@@ -700,3 +700,29 @@
   (argbuf still refused); texture_op splits a texture/sampler chosen at run time into one op per place and
   selects the results (writes refused, a null side takes the other's result); is_null_texture on resolved and
   run-time-chosen pointers.
+
+## 2026-11-20 evening — HANDOFF (owner stopped for the day)
+
+State of the phone: boots iOS 26 on `build/a71-ios26-nowifi-mercuryonly.img` (2119 kernel, no Wi-Fi, payload at
+mount, dtlog MercuryPosterExtension). Installed Metal: CI 44705378496 (55996bf: queued blits + util_gen_mipmap +
+buffer pointer phis + everything before). Catalog node 28370 was repaired by hand today (backup in
+`research/hfs-repair/`).
+
+Running when stopped (results NOT checked):
+- Metal CI `44706701933` (6dce3a5): textures chosen at run time (pointer phis between textures/samplers/null;
+  texture_op split per place) + `is_null_texture`. Goal: Mercury wallpaper. Install with a package at mount
+  (mercuryonly image), never with sweetpayloaddelay.
+- Kernel CI `44707209045` (ad4cbb2): xnu 2121 makes `ufsverify=1` (read back every UFS write, retry) the default.
+  Untested. Expect slower writes. Pack with the usual options; `ufsverify=0` turns it off.
+
+Done today and verified on the phone: flicker fixed (attachment size MIN); Settings works; Mercury shaders all
+compile; ASTC, NoCopy buffers, blit encoder; Wi-Fi resets the phone (keep `--wifi` off).
+Open:
+1. Glass still vanishes (Settings rarely; CC, dock, App Library often). Copy-on-self-sample and real mipmaps did
+   not fix it. Next: a draw trace with ids at the moment it vanishes (`logs/drawlog-glass-ids-20261120.txt` is
+   from before those fixes), compare frames with and without glass; check sampler LOD clamps on the
+   variable blur and whether `glass_background` draws are skipped by CoreAnimation itself.
+2. Wallpaper: after 44706701933, read Mercury's next error (`grep Mercury` in the USB log).
+3. Root cause of the catalog corruption is unknown (B-tree code would panic before writing a bad node, UFS
+   strategy is locked): candidates are a device-level bad write (2121 checks) or memory corruption.
+4. Wi-Fi: phone resets right after `mission mode on` / CE rings at 0xf0000000.
