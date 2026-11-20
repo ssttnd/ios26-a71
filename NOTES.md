@@ -632,3 +632,4 @@
   run when that buffer is freed (associated object). Owner: transparency still vanishes (trace with ids next).
   Commit 083a576, Metal CI `44699219394`. Next TWRP: 2120-drawlog image + payload (this bundle + rewritten drawlog file): boot 1 traces with ids (ASTC bundle loaded), boot 2 runs NoCopy for Mercury.
 - Owner asked for a shorter wait: `build/a71-ios26-2120-drawlog75.img` (payload delay 75 s; last time 150 s landed at uptime ~180 s, Metal restart of backboardd ~60 s) SHA-256 `5ec226ee862bcd91de6d079068309793e9ea017081fbee996e551f2552946b0f`. Not written yet.
+- Metal CI `44699219394` (083a576) 6/6 match. TWRP: `build/a71-ios26-metal-nocopy-drawlog.payload` VERIFY OK `7ec690aa...345e`, boot 2120-drawlog75 readback 5ec226ee OK. Rebooted.
