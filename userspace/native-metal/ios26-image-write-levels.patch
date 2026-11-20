@@ -261,12 +261,36 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     if (ret_struct) {
        struct air_val *agg = air_val_agg(c, rt->num_members);
-@@ -3586,10 +3661,63 @@
-  * a missing operand from a reachable block is a refusal and only an edge the
-  * entry cannot reach at all is passed over.
+@@ -3565,56 +3640,146 @@
+    return true;
+ }
+ 
+-/* A phi of POINTERS, resolved rather than carried in a register.
+- *
+- * A pointer here is *(which resource, which byte offset)* decided while
+- * translating, so it has no bits to put in a register and a phi of two of them
+- * is not a value NIR can hold. It need not be: LLVM duplicates a
+- * `getelementptr` onto two paths and phis the copies back, so both operands
+- * name the same member -- 207 of the pointer phis in Resident Evil 4's library
+- * are exactly that, and not one names two different members.
+- *
+- * Refused when they differ. This COULD go through the AIR_VAL_PTR_SELECT
+- * machinery that already loads both sides and selects the values, but nothing
+- * in reach needs it, a texture or a sampler is not a value that path can load,
+- * and an untested path is worse than a refusal.
+- *
+- * `reachable` is why this is sound rather than optimistic: the blocks are
+- * walked in reverse post order, so an operand coming in over a BACK edge has
+- * not been translated yet. Skipping an operand merely because it is missing
+- * would accept a loop-carried pointer by ignoring the edge that changes it, so
+- * a missing operand from a reachable block is a refusal and only an edge the
+- * entry cannot reach at all is passed over.
++/* Represent pointer phis by a place selector or a buffer-relative byte offset.
++ * A pending operand must be checked once the incoming edge has been translated.
   */
 +struct air_ptr_phi {
 +   nir_def *reg;
++   struct air_val *offset_base;
 +   unsigned n;
 +   struct air_val *v[8];
 +};
@@ -316,18 +340,48 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +   return NULL;
 +}
 +
++static bool
++ptr_phi_same_buffer(const struct air_ptr *a, const struct air_ptr *b)
++{
++   return a->class == b->class && a->binding == b->binding && a->is_image == b->is_image;
++}
++
++static nir_def *
++ptr_phi_offset(struct air_ctx *c, const struct air_ptr *base, struct air_val *v)
++{
++   if (!v)
++      return NULL;
++   if (v->kind == AIR_VAL_PTR)
++      return ptr_phi_same_buffer(base, &v->ptr) ? ptr_offset(c, v->ptr) : NULL;
++   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
++      nir_def *a = ptr_phi_offset(c, base, v->elems[0]);
++      nir_def *b = ptr_phi_offset(c, base, v->elems[1]);
++      return a && b ? nir_bcsel(&c->b, v->def, a, b) : NULL;
++   }
++   return NULL;
++}
++
  static bool
  resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                      const struct air_edges *edges)
  {
 +   struct air_val *leaves[8];
 +   unsigned n = 0;
++   bool pending_operand = false;
     struct air_val *first = NULL;
     for (unsigned k = 0; k < in->num_operands; k++) {
        if (!in->targets[k] ||
-@@ -3601,20 +3729,36 @@
-                              "a loop edge, so which resource it is depends on the "
-                              "iteration");
+           !edge_possible(edges, in->targets[k]->index, in->parent->index))
+          continue;
+       struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
+-      if (!e)
+-         return air_error(c, "instruction: a phi of pointers whose operand comes in over "
+-                             "a loop edge, so which resource it is depends on the "
+-                             "iteration");
++      if (!e) {
++         pending_operand = true;
++         continue;
++      }
        struct air_val *v = e->data;
 -      if (!v || v->kind != AIR_VAL_PTR)
 -         return air_error(c, "instruction: a phi of pointers one of whose operands is "
@@ -347,6 +401,22 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +      return air_error(c, "instruction: a phi of pointers with no reachable operand");
 +   struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
 +   struct air_ptr_phi *pp = pe ? pe->data : NULL;
++   if (pending_operand) {
++      /* A loop can advance a pointer through one buffer. Carry its offset in
++       * the phi register and verify all incoming buffer bindings once the
++       * predecessors have been translated.
++       */
++      struct air_ptr place = first->ptr;
++      if (!pp || (place.class != AIR_PTR_UBO && place.class != AIR_PTR_SSBO))
++         return air_error(c, "instruction: a loop-carried pointer phi without a buffer base");
++      for (unsigned j = 0; j < n; j++)
++         if (!ptr_phi_same_buffer(&place, &leaves[j]->ptr))
++            return air_error(c, "instruction: a loop-carried pointer phi selects different buffers");
++      pp->offset_base = first;
++      place.offset = nir_load_reg(&c->b, pp->reg);
++      air_set(c, &in->base, air_val_ptr(c, place));
++      return true;
++   }
 +   if (n < 2) {
 +      if (pp)
 +         pp->n = 0;
@@ -373,7 +443,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3779,14 @@
+@@ -3635,8 +3800,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -389,14 +459,14 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3842,9 +3992,30 @@
+@@ -3842,9 +4013,31 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
 +         if (in->base.type->kind == AIR_TYPE_POINTER) {
 +            struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
 +            struct air_ptr_phi *pp = pe ? pe->data : NULL;
-+            if (!pp || pp->n < 2)
++            if (!pp || (!pp->offset_base && pp->n < 2))
 +               continue; /* resolved to one place, or never reached */
 +            for (unsigned k = 0; k < in->num_operands; k++) {
 +               struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
@@ -405,11 +475,12 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +               struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
 +               struct air_val *v = e ? e->data : NULL;
 +               c->b.cursor = *(nir_cursor *)ce->data;
-+               nir_def *idx = ptr_phi_index(c, pp, v);
-+               if (!idx)
-+                  return air_error(c, "instruction: a phi of pointers whose operand is not "
-+                                      "one of the places it was resolved to");
-+               nir_store_reg(&c->b, idx, pp->reg);
++               nir_def *incoming = pp->offset_base ? ptr_phi_offset(c, &pp->offset_base->ptr, v) :
++                                                     ptr_phi_index(c, pp, v);
++               if (!incoming)
++                  return air_error(c, "instruction: a pointer phi operand cannot be represented by its "
++                                      "resolved places or loop buffer");
++               nir_store_reg(&c->b, incoming, pp->reg);
 +               *(nir_cursor *)ce->data = c->b.cursor;
 +            }
 +            continue;
@@ -421,7 +492,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -4305,8 +4476,8 @@
+@@ -4305,8 +4498,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:

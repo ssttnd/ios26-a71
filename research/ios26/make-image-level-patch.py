@@ -279,17 +279,39 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
    if (!emit_module_call(c, in, f, name, argv, ssa, tmp, fields))
       return false;
 '''),
-     # A phi of pointers to different buffers (Mercury's wallpaper render pipeline): each
-     # incoming edge stores which one it brings into a 32-bit register, and the phi becomes
-     # the select chain AIR_VAL_PTR_SELECT already gives a `select` of buffer pointers.
-     # Textures, samplers and argument-buffer members cannot be loaded that way and keep
-     # their refusal.
+     ('''/* A phi of POINTERS, resolved rather than carried in a register.
+ *
+ * A pointer here is *(which resource, which byte offset)* decided while
+ * translating, so it has no bits to put in a register and a phi of two of them
+ * is not a value NIR can hold. It need not be: LLVM duplicates a
+ * `getelementptr` onto two paths and phis the copies back, so both operands
+ * name the same member -- 207 of the pointer phis in Resident Evil 4's library
+ * are exactly that, and not one names two different members.
+ *
+ * Refused when they differ. This COULD go through the AIR_VAL_PTR_SELECT
+ * machinery that already loads both sides and selects the values, but nothing
+ * in reach needs it, a texture or a sampler is not a value that path can load,
+ * and an untested path is worse than a refusal.
+ *
+ * `reachable` is why this is sound rather than optimistic: the blocks are
+ * walked in reverse post order, so an operand coming in over a BACK edge has
+ * not been translated yet. Skipping an operand merely because it is missing
+ * would accept a loop-carried pointer by ignoring the edge that changes it, so
+ * a missing operand from a reachable block is a refusal and only an edge the
+ * entry cannot reach at all is passed over.
+ */
+''',
+      '''/* Represent pointer phis by a place selector or a buffer-relative byte offset.
+ * A pending operand must be checked once the incoming edge has been translated.
+ */
+'''),
      ('''static bool
 resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                     const struct air_edges *edges)
 {''',
       '''struct air_ptr_phi {
    nir_def *reg;
+   struct air_val *offset_base;
    unsigned n;
    struct air_val *v[8];
 };
@@ -340,11 +362,43 @@ ptr_phi_index(struct air_ctx *c, const struct air_ptr_phi *pp, struct air_val *v
 }
 
 static bool
+ptr_phi_same_buffer(const struct air_ptr *a, const struct air_ptr *b)
+{
+   return a->class == b->class && a->binding == b->binding && a->is_image == b->is_image;
+}
+
+static nir_def *
+ptr_phi_offset(struct air_ctx *c, const struct air_ptr *base, struct air_val *v)
+{
+   if (!v)
+      return NULL;
+   if (v->kind == AIR_VAL_PTR)
+      return ptr_phi_same_buffer(base, &v->ptr) ? ptr_offset(c, v->ptr) : NULL;
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
+      nir_def *a = ptr_phi_offset(c, base, v->elems[0]);
+      nir_def *b = ptr_phi_offset(c, base, v->elems[1]);
+      return a && b ? nir_bcsel(&c->b, v->def, a, b) : NULL;
+   }
+   return NULL;
+}
+
+static bool
 resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                     const struct air_edges *edges)
 {
    struct air_val *leaves[8];
-   unsigned n = 0;'''),
+   unsigned n = 0;
+   bool pending_operand = false;'''),
+     ('''      if (!e)
+         return air_error(c, "instruction: a phi of pointers whose operand comes in over "
+                             "a loop edge, so which resource it is depends on the "
+                             "iteration");
+''',
+      '''      if (!e) {
+         pending_operand = true;
+         continue;
+      }
+'''),
      ('''      struct air_val *v = e->data;
       if (!v || v->kind != AIR_VAL_PTR)
          return air_error(c, "instruction: a phi of pointers one of whose operands is "
@@ -374,6 +428,22 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
       return air_error(c, "instruction: a phi of pointers with no reachable operand");
    struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
    struct air_ptr_phi *pp = pe ? pe->data : NULL;
+   if (pending_operand) {
+      /* A loop can advance a pointer through one buffer. Carry its offset in
+       * the phi register and verify all incoming buffer bindings once the
+       * predecessors have been translated.
+       */
+      struct air_ptr place = first->ptr;
+      if (!pp || (place.class != AIR_PTR_UBO && place.class != AIR_PTR_SSBO))
+         return air_error(c, "instruction: a loop-carried pointer phi without a buffer base");
+      for (unsigned j = 0; j < n; j++)
+         if (!ptr_phi_same_buffer(&place, &leaves[j]->ptr))
+            return air_error(c, "instruction: a loop-carried pointer phi selects different buffers");
+      pp->offset_base = first;
+      place.offset = nir_load_reg(&c->b, pp->reg);
+      air_set(c, &in->base, air_val_ptr(c, place));
+      return true;
+   }
    if (n < 2) {
       if (pp)
          pp->n = 0;
@@ -411,7 +481,7 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
       '''         if (in->base.type->kind == AIR_TYPE_POINTER) {
             struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
             struct air_ptr_phi *pp = pe ? pe->data : NULL;
-            if (!pp || pp->n < 2)
+            if (!pp || (!pp->offset_base && pp->n < 2))
                continue; /* resolved to one place, or never reached */
             for (unsigned k = 0; k < in->num_operands; k++) {
                struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
@@ -420,11 +490,12 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
                struct air_val *v = e ? e->data : NULL;
                c->b.cursor = *(nir_cursor *)ce->data;
-               nir_def *idx = ptr_phi_index(c, pp, v);
-               if (!idx)
-                  return air_error(c, "instruction: a phi of pointers whose operand is not "
-                                      "one of the places it was resolved to");
-               nir_store_reg(&c->b, idx, pp->reg);
+               nir_def *incoming = pp->offset_base ? ptr_phi_offset(c, &pp->offset_base->ptr, v) :
+                                                     ptr_phi_index(c, pp, v);
+               if (!incoming)
+                  return air_error(c, "instruction: a pointer phi operand cannot be represented by its "
+                                      "resolved places or loop buffer");
+               nir_store_reg(&c->b, incoming, pp->reg);
                *(nir_cursor *)ce->data = c->b.cursor;
             }
             continue;
