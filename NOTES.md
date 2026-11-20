@@ -988,3 +988,10 @@ Next:
   wallpaper was selected during the test. Also observed four fragment specialization failures in the look
   preview (`uber-*` and `plane_color-*`, `unsupported constant type or value ABI`). The current diagnostic
   combines unsupported types and method ABI failures, so the specific mismatch remains unknown.
+- Offline before/after sweep on 211 libraries (including QuartzCore): translation outcomes unchanged,
+  9,323 successes, 14,957 refusals and 77 modules without a translation result. QuartzCore remained 173/189.
+- CI `44813311915` succeeded for `4431bc2`, artifact `14668532613` verified 6/6 against `build.json`.
+  Superseded `44813058465` cancelled. TWRP verified the existing `f6679f41...c8b0` boot image and left it
+  in place. Wrote only the approved bundle package `build/a71-ios26-metal-mercury-drawable.payload`, readback
+  SHA-256 `d4e84d4777b1e4be369923d00158db49448b8127a2e7c22b39b63c3505d7cfb1`. Requested system reboot.
+  The new USB capture is `logs/usb-ios26-metal-mercury-drawable.txt`.
