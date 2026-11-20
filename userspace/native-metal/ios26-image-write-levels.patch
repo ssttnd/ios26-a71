@@ -37,7 +37,132 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        else
           return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
                               "which is a repacking this frontend does not do",
-@@ -4305,8 +4308,8 @@
+@@ -3586,6 +3589,13 @@
+  * a missing operand from a reachable block is a refusal and only an edge the
+  * entry cannot reach at all is passed over.
+  */
++struct air_ptr_phi {
++   nir_def *reg;
++   unsigned n;
++   struct air_val *v[8];
++};
++#define PTR_PHI_KEY(in) ((const void *)((const char *)(in) + 1))
++
+ static bool
+ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
+                     const struct air_edges *edges)
+@@ -3608,13 +3618,56 @@
+                                       : "not a resolved pointer");
+       if (!first)
+          first = v;
+-      else if (!same_ptr(&first->ptr, &v->ptr))
+-         return air_error(c, "instruction: a phi between pointers that name different "
+-                             "places, which would have to be chosen at run time");
++      if (!same_ptr(&first->ptr, &v->ptr)) {
++         struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
++         struct air_ptr_phi *pp = pe ? pe->data : NULL;
++         bool loadable = v->ptr.class != AIR_PTR_TEXTURE && v->ptr.class != AIR_PTR_SAMPLER &&
++                         v->ptr.class != AIR_PTR_ARGBUF &&
++                         first->ptr.class != AIR_PTR_TEXTURE &&
++                         first->ptr.class != AIR_PTR_SAMPLER &&
++                         first->ptr.class != AIR_PTR_ARGBUF;
++         if (!pp || !loadable)
++            return air_error(c, "instruction: a phi between pointers that name different "
++                                "places, which would have to be chosen at run time");
++      }
+    }
+    if (!first)
+       return air_error(c, "instruction: a phi of pointers with no reachable operand");
+-   air_set(c, &in->base, first);
++   /* the distinct places, in the order the edges bring them */
++   struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
++   struct air_ptr_phi *pp = pe ? pe->data : NULL;
++   if (pp) {
++      pp->n = 0;
++      for (unsigned k = 0; k < in->num_operands; k++) {
++         if (!in->targets[k] ||
++             !edge_possible(edges, in->targets[k]->index, in->parent->index))
++            continue;
++         struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
++         struct air_val *v = e ? e->data : NULL;
++         if (!v)
++            continue;
++         bool seen = false;
++         for (unsigned j = 0; j < pp->n; j++)
++            seen |= same_ptr(&pp->v[j]->ptr, &v->ptr);
++         if (!seen) {
++            if (pp->n == ARRAY_SIZE(pp->v))
++               return air_error(c, "instruction: a phi between more than %u different "
++                                   "pointers", (unsigned)ARRAY_SIZE(pp->v));
++            pp->v[pp->n++] = v;
++         }
++      }
++   }
++   if (!pp || pp->n < 2) {
++      if (pp)
++         pp->n = 0;
++      air_set(c, &in->base, first);
++      return true;
++   }
++   nir_def *sel = nir_load_reg(&c->b, pp->reg);
++   struct air_val *r = pp->v[pp->n - 1];
++   for (int j = (int)pp->n - 2; j >= 0; j--)
++      r = air_val_ptr_select(c, nir_ieq_imm(&c->b, sel, j), pp->v[j], r);
++   air_set(c, &in->base, r);
+    return true;
+ }
+ 
+@@ -3635,8 +3688,14 @@
+       const struct air_block *blk = &f->blocks[bi];
+       for (unsigned i = 0; i < blk->num_insts; i++) {
+          const struct air_inst *in = blk->insts[i];
+-         if (in->op != AIR_OP_PHI || in->base.type->kind == AIR_TYPE_POINTER)
++         if (in->op != AIR_OP_PHI)
+             continue;
++         if (in->base.type->kind == AIR_TYPE_POINTER) {
++            struct air_ptr_phi *pp = rzalloc(c->mem_ctx, struct air_ptr_phi);
++            pp->reg = nir_decl_reg(&entry, 1, 32, 0);
++            _mesa_hash_table_insert(c->phi_regs, PTR_PHI_KEY(in), pp);
++            continue;
++         }
+          /* A phi of an AGGREGATE, named here rather than by whatever notices
+           * the consequence further down. A struct is a tree of values in this
+           * translator and never a NIR value, so there is no register to carry
+@@ -3842,9 +3901,32 @@
+          const struct air_inst *in = blk->insts[i];
+          if (in->op != AIR_OP_PHI)
+             continue;
++         if (in->base.type->kind == AIR_TYPE_POINTER) {
++            struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
++            struct air_ptr_phi *pp = pe ? pe->data : NULL;
++            if (!pp || pp->n < 2)
++               continue; /* resolved to one place, or never reached */
++            for (unsigned k = 0; k < in->num_operands; k++) {
++               struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
++               if (!ce || !edge_possible(&edges, in->targets[k]->index, bi))
++                  continue;
++               struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
++               struct air_val *v = e ? e->data : NULL;
++               unsigned j = 0;
++               while (v && j < pp->n && !same_ptr(&pp->v[j]->ptr, &v->ptr))
++                  j++;
++               if (!v || j == pp->n)
++                  return air_error(c, "instruction: a phi of pointers whose operand is not "
++                                      "one of the places it was resolved to");
++               c->b.cursor = *(nir_cursor *)ce->data;
++               nir_store_reg(&c->b, nir_imm_int(&c->b, (int)j), pp->reg);
++               *(nir_cursor *)ce->data = c->b.cursor;
++            }
++            continue;
++         }
+          struct hash_entry *re = _mesa_hash_table_search(c->phi_regs, in);
+          if (!re)
+-            continue; /* a phi in an unreachable block, or one of pointers */
++            continue; /* a phi in an unreachable block */
+          for (unsigned k = 0; k < in->num_operands; k++) {
+             struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
+             if (!ce)
+@@ -4305,8 +4387,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -257,7 +382,15 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 --- a/tools/mesa/air/air_metal.c
 +++ b/tools/mesa/air/air_metal.c
-@@ -85,6 +85,9 @@
+@@ -64,6 +64,7 @@
+ #include "util/format/u_format.h"
+ #include "util/half_float.h"
+ #include "util/u_inlines.h"
++#include "util/u_gen_mipmap.h"
+ #include "util/u_sampler.h"
+ #include "util/u_debug.h"
+ 
+@@ -85,6 +86,9 @@
  struct rwa_device {
     struct pipe_screen *screen;
     struct pipe_context *pipe;
@@ -267,7 +400,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     /* NIR's options for this screen, asked once: the translator needs them to know what
      * the consumer can be handed (what it may leave for the backend to lower).
-@@ -219,6 +222,8 @@
+@@ -219,6 +223,8 @@
     struct rwa_device *device;
     struct pipe_resource *res;
     struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */
@@ -276,7 +409,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_surface *native_surface;
     struct rwa_texture_shape shape;
     const char *format_name;         /* the MTLPixelFormat, spelled out */
-@@ -868,6 +873,34 @@
+@@ -868,6 +874,34 @@
     {  55, "MTLPixelFormatR32Float",        PIPE_FORMAT_R32_FLOAT },
     {  60, "MTLPixelFormatRG16Unorm",       PIPE_FORMAT_R16G16_UNORM },
     {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },
@@ -311,7 +444,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
     {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
     {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
-@@ -1579,6 +1612,8 @@
+@@ -1579,6 +1613,8 @@
      * below is about.
      */
     pipe_sampler_view_reference(&texture->view, NULL);
@@ -320,7 +453,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe_surface_reference(&texture->native_surface, NULL);
     pipe_resource_reference(&texture->res, NULL);
     free(texture);
-@@ -1658,7 +1693,7 @@
+@@ -1658,7 +1694,7 @@
                size_t *out, char *why, size_t why_size)
  {
     unsigned texel = util_format_get_blocksize(texture->res->format);
@@ -329,7 +462,30 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1775,7 +1810,8 @@
+@@ -1670,6 +1706,22 @@
+    }
+    *out = stride;
+    return true;
++}
++
++/* -generateMipmapsForTexture: -- every level after the first from the one before, by the
++ * GPU, through Gallium's own helper (a blit per level with a linear filter). */
++int rwa_texture_generate_mipmap(struct rwa_texture *texture);
++int
++rwa_texture_generate_mipmap(struct rwa_texture *texture)
++{
++   if (!texture || texture->level_count < 2)
++      return 0;
++   struct pipe_resource *res = texture->res;
++   unsigned last_layer = (res->target == PIPE_TEXTURE_3D ? u_minify(res->depth0, texture->first_level)
++                                                          : res->array_size) - 1;
++   return util_gen_mipmap(texture->device->pipe, res, res->format, texture->first_level,
++                          texture->first_level + texture->level_count - 1, 0, last_layer,
++                          PIPE_TEX_FILTER_LINEAR) ? 0 : -1;
+ }
+ 
+ int
+@@ -1775,7 +1827,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -339,7 +495,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3717,6 +3753,62 @@
+@@ -3717,6 +3770,62 @@
     d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
  }
  
@@ -402,7 +558,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  static int
  bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
             const struct air_shader_info *info, void **own_sampler,
-@@ -3903,12 +3995,27 @@
+@@ -3903,12 +4012,27 @@
                 return -1;
              }
           }
@@ -432,7 +588,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4025,14 @@
+@@ -3918,12 +4042,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -449,7 +605,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -7201,6 +7310,10 @@
+@@ -7201,6 +7327,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -460,7 +616,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7294,6 +7407,7 @@
+@@ -7294,6 +7424,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -471,10 +627,19 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 --- a/userland/src/redwoodmetal.m
 +++ b/userland/src/redwoodmetal.m
-@@ -936,6 +936,37 @@
+@@ -830,6 +830,7 @@
+ 	unsigned stencilReference[2];
+ 	float depthRange[2];
+ 	BOOL hasDepthRange;
++	id nativeBlit;   /* a queued blit: a block run in order at commit */
+     float nativeViewport[4], nativeBlend[4];
+     unsigned nativeScissor[4], nativeFlags;
+     BOOL nativeClearOnly, nativeBarrier;
+@@ -935,6 +936,37 @@
+ @end
  
  #include "SweetNativeLibrary.inc"
- 
++
 +@interface SweetNativeNoCopyRelease : NSObject {
 +	void (^_deallocator)(void *, NSUInteger);
 +	void *_bytes;
@@ -505,11 +670,10 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +@end
 +
 +static char sweet_nocopy_key;
-+
+ 
  @implementation SweetNativeMetalDevice
  
- + (void)load
-@@ -2172,8 +2203,23 @@
+@@ -2172,8 +2204,23 @@
  		       options:(NSUInteger)options
  		   deallocator:(void (^)(void *, NSUInteger))deallocator
  { NATIVE_OBJECT_LOCK; 
@@ -535,17 +699,32 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  - (id)newIndirectCommandBufferWithDescriptor:(id)d
  			      maxCommandCount:(NSUInteger)count
-@@ -3472,6 +3518,145 @@
+@@ -3122,6 +3169,7 @@
+ - (void)dealloc { NATIVE_OBJECT_LOCK; 
+     [pipeline release];[render release];[depth release];[depthStencilState release];[indexBuffer release];
+     for(unsigned i=0;i<8;i++)[color[i] release];
++    [nativeBlit release];
+     for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[vertexBuffers[i] release];[buffers[i] release];[textures[i] release];[samplers[i] release];}
+     [super dealloc];
+ }
+@@ -3472,6 +3520,182 @@
  	RW_CB_ERROR        = 5,
  };
  
++int rwa_texture_generate_mipmap(struct rwa_texture *texture);
++
 +@interface SweetNativeMetalBlitEncoder : NSObject {
 +	id _device;
++	SweetNativeMetalCommandBuffer *_cb;   /* not retained: it owns the encoder's life */
 +	NSString *_label;
 +}
-+- (instancetype)initWithDevice:(id)device;
++- (instancetype)initWithCommandBuffer:(SweetNativeMetalCommandBuffer *)cb device:(id)device;
 +@end
 +
++/* Every blit is queued on the command buffer as work and runs in order with the passes
++ * around it at commit: CoreAnimation draws a texture, asks for its mipmaps and samples
++ * them, all in one command buffer, so a blit run at encode time would see the texture
++ * before the draw. */
 +@implementation SweetNativeMetalBlitEncoder
 ++ (void)load
 +{
@@ -553,14 +732,23 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +	if (p != NULL && !class_conformsToProtocol(self, p))
 +		class_addProtocol(self, p);
 +}
-+- (instancetype)initWithDevice:(id)device
++- (instancetype)initWithCommandBuffer:(SweetNativeMetalCommandBuffer *)cb device:(id)device
 +{
 +	self = [super init];
-+	if (self != nil)
++	if (self != nil) {
++		_cb = cb;
 +		_device = [device retain];
++	}
 +	return self;
 +}
 +- (void)dealloc { [_device release]; [_label release]; [super dealloc]; }
++- (void)enqueue:(void (^)(void))op
++{
++	SweetNativeMetalWork *work = [SweetNativeMetalWork new];
++	work->nativeBlit = [op copy];
++	[_cb recordWork:work];
++	[work release];
++}
 +- (id)device { return _device; }
 +- (NSString *)label { return _label; }
 +- (void)setLabel:(NSString *)l { [_label release]; _label = [l copy]; }
@@ -580,11 +768,14 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +     destinationOrigin:(MTLOrigin)origin options:(NSUInteger)options
 +{
 +	(void)options;
-+	const uint8_t *bytes = (const uint8_t *)[src contents];
-+	if (bytes == NULL || dst == nil)
++	if (src == nil || dst == nil)
 +		return;
-+	[dst replaceRegion:MTLRegionMake3D(origin.x, origin.y, origin.z, size.width, size.height, size.depth)
-+	       mipmapLevel:level slice:slice withBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi];
++	[self enqueue:^{
++		const uint8_t *bytes = (const uint8_t *)[src contents];
++		if (bytes != NULL)
++			[dst replaceRegion:MTLRegionMake3D(origin.x, origin.y, origin.z, size.width, size.height, size.depth)
++			       mipmapLevel:level slice:slice withBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi];
++	}];
 +}
 +- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)off sourceBytesPerRow:(NSUInteger)bpr
 +   sourceBytesPerImage:(NSUInteger)bpi sourceSize:(MTLSize)size toTexture:(id)dst
@@ -601,12 +792,15 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +    destinationBytesPerImage:(NSUInteger)bpi options:(NSUInteger)options
 +{
 +	(void)options;
-+	uint8_t *bytes = (uint8_t *)[dst contents];
-+	if (bytes == NULL || src == nil)
++	if (src == nil || dst == nil)
 +		return;
-+	[src getBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi
-+	   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, size.depth)
-+	  mipmapLevel:sl slice:ss];
++	[self enqueue:^{
++		uint8_t *bytes = (uint8_t *)[dst contents];
++		if (bytes != NULL)
++			[src getBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi
++			   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, size.depth)
++			  mipmapLevel:sl slice:ss];
++	}];
 +}
 +- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
 +           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toBuffer:(id)dst
@@ -626,17 +820,19 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +{
 +	if (src == nil || dst == nil || size.width == 0 || size.height == 0)
 +		return;
-+	NSUInteger depth = size.depth ? size.depth : 1;
-+	NSUInteger bpr = size.width * 16, bpi = bpr * size.height;
-+	uint8_t *tmp = malloc(bpi * depth);
-+	if (tmp == NULL)
-+		return;
-+	[src getBytes:tmp bytesPerRow:bpr bytesPerImage:bpi
-+	   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, depth)
-+	  mipmapLevel:sl slice:ss];
-+	[dst replaceRegion:MTLRegionMake3D(dorg.x, dorg.y, dorg.z, size.width, size.height, depth)
-+	       mipmapLevel:dl slice:ds withBytes:tmp bytesPerRow:bpr bytesPerImage:bpi];
-+	free(tmp);
++	[self enqueue:^{
++		NSUInteger depth = size.depth ? size.depth : 1;
++		NSUInteger bpr = size.width * 16, bpi = bpr * size.height;
++		uint8_t *tmp = malloc(bpi * depth);
++		if (tmp == NULL)
++			return;
++		[src getBytes:tmp bytesPerRow:bpr bytesPerImage:bpi
++		   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, depth)
++		  mipmapLevel:sl slice:ss];
++		[dst replaceRegion:MTLRegionMake3D(dorg.x, dorg.y, dorg.z, size.width, size.height, depth)
++		       mipmapLevel:dl slice:ds withBytes:tmp bytesPerRow:bpr bytesPerImage:bpi];
++		free(tmp);
++	}];
 +}
 +- (void)copyFromTexture:(id)src toTexture:(id)dst
 +{
@@ -651,20 +847,33 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)so toBuffer:(id)dst
 +     destinationOffset:(NSUInteger)doff size:(NSUInteger)n
 +{
-+	uint8_t *s = (uint8_t *)[src contents], *d = (uint8_t *)[dst contents];
-+	if (s != NULL && d != NULL && n)
-+		memmove(d + doff, s + so, n);
++	if (src == nil || dst == nil || n == 0)
++		return;
++	[self enqueue:^{
++		uint8_t *s = (uint8_t *)[src contents], *d = (uint8_t *)[dst contents];
++		if (s != NULL && d != NULL)
++			memmove(d + doff, s + so, n);
++	}];
 +}
 +- (void)fillBuffer:(id)b range:(NSRange)r value:(uint8_t)v
 +{
-+	uint8_t *d = (uint8_t *)[b contents];
-+	if (d != NULL && r.length)
-+		memset(d + r.location, v, r.length);
++	if (b == nil || r.length == 0)
++		return;
++	[self enqueue:^{
++		uint8_t *d = (uint8_t *)[b contents];
++		if (d != NULL)
++			memset(d + r.location, v, r.length);
++	}];
 +}
++/* the levels below the base, made by the GPU from the base (Gallium's util_gen_mipmap) */
 +- (void)generateMipmapsForTexture:(id)t
 +{
-+	(void)t;
-+	RW_ONCE("blit: generateMipmapsForTexture: is not done; the levels keep what they hold\n");
++	if (t == nil || ![t respondsToSelector:@selector(mesaTexture)])
++		return;
++	[self enqueue:^{
++		if (rwa_texture_generate_mipmap([t mesaTexture]) != 0)
++			RW_ONCE("blit: generateMipmapsForTexture: failed\n");
++	}];
 +}
 +/* anything else a blit encoder is asked does nothing rather than abort the caller */
 +- (NSMethodSignature *)methodSignatureForSelector:(SEL)s
@@ -681,19 +890,30 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  @implementation SweetNativeMetalCommandBuffer {
  	SweetNativeMetalCommandQueue *_queue;
  	NSMutableArray *_work;
-@@ -3613,7 +3798,11 @@
+@@ -3613,7 +3837,11 @@
  /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
   * absent, for the reason the device's own 44 were answered: a missing selector aborts the
   * caller, and these are the four that were still missing. */
 -- (id)blitCommandEncoder          { NATIVE_OBJECT_LOCK;  return nil; }
 +- (id)blitCommandEncoder
 +{ NATIVE_OBJECT_LOCK;
-+	return [[[SweetNativeMetalBlitEncoder alloc] initWithDevice:[_queue device]] autorelease];
++	return [[[SweetNativeMetalBlitEncoder alloc] initWithCommandBuffer:self device:[_queue device]] autorelease];
 +}
 +- (id)blitCommandEncoderWithDescriptor:(id)d { (void)d; return [self blitCommandEncoder]; }
  - (id)resourceStateCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (id)accelerationStructureCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (void)encodeSignalEvent:(id)event value:(uint64_t)value { NATIVE_OBJECT_LOCK;  (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }
+@@ -3651,6 +3879,10 @@
+         [self failWith:why];[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;
+     }
+ 	for (SweetNativeMetalWork *work in _work) {
++        if(work->nativeBlit) {
++            ((void (^)(void))work->nativeBlit)();
++            continue;
++        }
+         if(work->nativeBarrier) {
+             if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
+             continue;
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc

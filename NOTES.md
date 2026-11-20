@@ -684,3 +684,11 @@
   payload area (this image has no sweetpayload). Next: install it with a NON-delayed image (mercuryonly).
   Root cause to fix later: the in-kernel installer (2100/2120) inserting catalog records into a full node.
 - Before install: node 28370 now 67 records, table valid (kernel rewrote it during the repaired boot). Flashed mercuryonly (23eebb59, install at mount) to apply pending blit-glass (36aaf7b7). Rebooted.
+- blit-glass boot (install at mount, 9/9): glass copy active (`a draw samples its own colour target (256x192,
+  5 levels)`); owner: Settings glass vanishes less often, CC / App Library / dock still lose it. backboardd calls
+  `generateMipmapsForTexture:`, which the blit encoder skipped. Mercury: blit upload passes; next refusal
+  `this render pipeline is refused: a phi between pointers that name different places`.
+- Next Metal (in ios26-image-write-levels.patch): (1) blits are queued as command-buffer work (block in
+  SweetNativeMetalWork.nativeBlit) and run in order at commit, not at encode time; (2) generateMipmaps via
+  util_gen_mipmap (rwa_texture_generate_mipmap); (3) pointer phis between different BUFFERS: a 32-bit selector
+  register stored on each edge + the existing AIR_VAL_PTR_SELECT chain (textures/samplers/argbuf still refused).
