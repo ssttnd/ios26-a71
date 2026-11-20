@@ -995,3 +995,21 @@ Next:
   in place. Wrote only the approved bundle package `build/a71-ios26-metal-mercury-drawable.payload`, readback
   SHA-256 `d4e84d4777b1e4be369923d00158db49448b8127a2e7c22b39b63c3505d7cfb1`. Requested system reboot.
   The new USB capture is `logs/usb-ios26-metal-mercury-drawable.txt`.
+- Boot succeeded, payload `finished 9/9 errno=0 sync=0 clear=0`, Metal published. The first Mercury window
+  (two commands, no draws) took 156,491 µs encoding and 3,767 µs finishing, compared with 17,780,529 µs and
+  6,728 µs on the cache-only boot. Mercury reports initializer evaluation, and no expired-deadline errors
+  through the first capture. A local Mesa unpack test confirmed the `l10r` bit masks decode to B, G, R and A.
+  On the owner's preview test Mercury and backboardd both reached `l10r` format 94 texture imports without
+  previous `no drawable` errors. Owner reported all previews black. Mercury repeatedly rejected the
+  `uber-*`/`plane_color-*` fragment function specialization and logged unsuccessful look snapshots.
+
+## 2026-11-21 — wider function constants for the wallpaper preview
+
+- `ef3a733` carries packed 96- and 128-bit `float3/4`, `int3/4` and `uint3/4` constants from Metal through the
+  AIR specialization table, static initializer interpreter, and NIR vector loads. The failure diagnostic now
+  distinguishes Metal datatype, method ABI, and missing key or data. The previous combined 64-bit error did not
+  identify which case caused the owner's preview failure. On-device confirmation remains pending.
+- Verified the complete patch series applies. Local Mesa backend C type check passed. A host test passed distinct
+  nonzero lanes through 96- and 128-bit NIR loads and the static initializer byte reader, including the bounds
+  check. CI `44814681485` is building `ef3a733`. Phone still runs the verified `4431bc2` bundle and boot image
+  `f6679f41...c8b0`; capture `logs/usb-ios26-metal-mercury-drawable.txt`.
