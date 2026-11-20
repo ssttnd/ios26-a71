@@ -1599,6 +1599,42 @@ native_glassstat(const void *render)
 /* One attribute of one vertex, decoded by MTLVertexFormat. */
 '''))
 
+edit('tools/mesa/air/air_pointer_cells.inc',
+     ('static bool\nsev_run(struct sev_state *st, const struct air_function *f)\n',
+      '''static const struct air_block *switch_known_target(const struct air_inst *, uint64_t, unsigned);
+
+static bool
+sev_run(struct sev_state *st, const struct air_function *f)
+'''),
+     ('            if (!strcmp(name, "air.is_function_constant_defined")) {\n',
+      '''            if (!strcmp(name, "air.convert.f.f32.u.i1")) {
+               struct sev v = in->num_operands == 2 ? sev_get(st, in->operands[1]) : (struct sev){0};
+               if (!v.ok || v.n != 1 || n != 4)
+                  return false;
+               /* An unsigned boolean becomes IEEE-754 0.0f or 1.0f. */
+               sev_set(st, &in->base, sev_of_u((v.b[0] & 1) ? 0x3f800000u : 0, n));
+               break;
+            }
+            if (!strcmp(name, "air.is_function_constant_defined")) {
+'''),
+     ('         case AIR_OP_RET:\n            return true;\n',
+      '''         case AIR_OP_SWITCH: {
+            if (!in->num_targets || in->num_targets != in->num_operands)
+               return false;
+            const struct air_type *type = in->operands[0]->type;
+            struct sev selector = sev_get(st, in->operands[0]);
+            if (!type || type->kind != AIR_TYPE_INT || !selector.ok || !type->bits ||
+                type->bits > 64 || selector.n != (type->bits + 7) / 8)
+               return false;
+            next = switch_known_target(in, sev_u(&selector), type->bits);
+            if (!next)
+               return false;
+            break;
+         }
+         case AIR_OP_RET:
+            return true;
+'''))
+
 # Mercury's wallpaper drawable: a BGRA IOSurface (207x448, pitch 832) viewed as
 # MTLPixelFormatR32Uint ("no drawable ... Metal format 53 ... is not a supported linear
 # import"), so Mercury never drew and the wallpaper stayed black. A 32-bit single-channel

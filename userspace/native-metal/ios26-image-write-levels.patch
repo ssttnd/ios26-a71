@@ -1772,6 +1772,53 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  }
  
  /* One attribute of one vertex, decoded by MTLVertexFormat. */
+diff --git a/tools/mesa/air/air_pointer_cells.inc b/tools/mesa/air/air_pointer_cells.inc
+--- a/tools/mesa/air/air_pointer_cells.inc
++++ b/tools/mesa/air/air_pointer_cells.inc
+@@ -796,6 +796,8 @@
+    return bits >= 64 ? (int64_t)u : (int64_t)(u << (64 - bits)) >> (64 - bits);
+ }
+ 
++static const struct air_block *switch_known_target(const struct air_inst *, uint64_t, unsigned);
++
+ static bool
+ sev_run(struct sev_state *st, const struct air_function *f)
+ {
+@@ -970,6 +972,14 @@
+             const char *name = callee && callee->name ? callee->name : "";
+             if (!strncmp(name, "llvm.lifetime.", 14))
+                break;
++            if (!strcmp(name, "air.convert.f.f32.u.i1")) {
++               struct sev v = in->num_operands == 2 ? sev_get(st, in->operands[1]) : (struct sev){0};
++               if (!v.ok || v.n != 1 || n != 4)
++                  return false;
++               /* An unsigned boolean becomes IEEE-754 0.0f or 1.0f. */
++               sev_set(st, &in->base, sev_of_u((v.b[0] & 1) ? 0x3f800000u : 0, n));
++               break;
++            }
+             if (!strcmp(name, "air.is_function_constant_defined")) {
+                int g;
+                uint64_t off, bits;
+@@ -1000,6 +1010,19 @@
+                return false;
+             }
+             break;
++         case AIR_OP_SWITCH: {
++            if (!in->num_targets || in->num_targets != in->num_operands)
++               return false;
++            const struct air_type *type = in->operands[0]->type;
++            struct sev selector = sev_get(st, in->operands[0]);
++            if (!type || type->kind != AIR_TYPE_INT || !selector.ok || !type->bits ||
++                type->bits > 64 || selector.n != (type->bits + 7) / 8)
++               return false;
++            next = switch_known_target(in, sev_u(&selector), type->bits);
++            if (!next)
++               return false;
++            break;
++         }
+          case AIR_OP_RET:
+             return true;
+          default:
 diff --git a/userland/src/redwooddrawable.m b/userland/src/redwooddrawable.m
 --- a/userland/src/redwooddrawable.m
 +++ b/userland/src/redwooddrawable.m
