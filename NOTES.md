@@ -584,3 +584,4 @@
 - bitcast boot: payload 10/10; bitcast refusal gone. Next Mercury refusal: `intrinsic: air.pack.unorm.rgb10a2.v4f32`
   (4x). Added pack/unpack unorm rgb10a2 (saturate, x1023/x3, round-even; R low bits, A top two) to
   ios26-image-write-levels.patch.
+  Commit 5973a66, Metal CI `44694428663`.
