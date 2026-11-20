@@ -923,3 +923,20 @@ Next:
   Compared the packed command lines: the only differences are removal of `sweetfb_flip=0` and addition of
   `sweetdtlog=MercuryPosterExtension` (599 bytes total). Asked the owner for one physical restart. If the
   second boot panics, collect the displayed panic or TWRP log before changing the image.
+- The owner restarted the phone once and confirmed iOS booted. USB independently confirmed both boot arguments,
+  the sampler output, Metal startup, and framebuffer `flip=0`. `SWEET RTC` set the calendar twice; RTC
+  `1795206000` corresponds to 2026-11-21 01:20:00 +05:00, consistent with the host boot time.
+- Mercury extended render sessions on wake and unlock and reported two successful levelset captures. That
+  reports capture completion; the log gives no evidence about the captured pixels. No Mercury `GLASSSTAT`,
+  `dispatch failed` or GPU fence failure in this capture. The first three `FinishRender` assertions were
+  acquired; around 12:21:15 -0800 assertion 3 was invalidated (reason 4), then assertion 4 and subsequent
+  requests were rejected as `Assertion's invalidation time is in the past` (over 4,600 errors with the
+  calendar already set). The first main-thread sample of the active Mercury showed `__psynch_mutexwait`;
+  subsequent samples included `_mach_msg2_trap` and `_writev`.
+- Symbolicating the earlier Metal artifact's `rwa_dispatch_buffers` at return offset `0x87dc` puts the
+  condition-variable wait in `compute_state_for()` calling `get_compute_state_info` to query the compiled
+  variant. That ties the earlier Metal lock contention to a compile-time query. The combined trace shows
+  a separate expired-deadline loop after the first captures. Next, correlate deadlines across wake/unlock,
+  and trace whether the captured background pixels are nonzero before changing the renderer.
+- Phone is running the verified `2123-mercury-correlate` image. The hidden logger remains active. The Metal
+  bundle is still CI `44802843341`; no CI dispatched in this session.
