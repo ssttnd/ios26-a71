@@ -622,3 +622,4 @@
   through separate 192x384 / 320x704 textures; later frames blur 640x1408 -> 640x1408 (rt and sampled texture the
   same size: probably the same texture, different mip levels). The log shows neither texture identity nor level,
   so this is a guess. Added `#id/L<level>+<levels>` to rt and tex entries of the draw log for the next trace.
+  Commit c146e30, Metal CI `44698113596`.
