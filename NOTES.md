@@ -585,3 +585,11 @@
   (4x). Added pack/unpack unorm rgb10a2 (saturate, x1023/x3, round-even; R low bits, A top two) to
   ios26-image-write-levels.patch.
   Commit 5973a66, Metal CI `44694428663`.
+- Owner: transparency still vanishes (bitcast build, sync flag removed). No logged error. Plan: driver draw log
+  (`/var/local/sweet-native-drawlog`, SweetNativeDrawLog.inc) arms only when the file appears or changes after
+  backboardd started, so it needs the delayed payload of kernel 2120. CI 44593327297 (fa4a06f, 2118-2120)
+  kernel downloaded, SHA256SUMS OK, `research/ci-44593327297/`. Prepared, not written:
+  `build/a71-ios26-2120-drawlog.img` (nowifi-b options, 2120 kernel, `--payload-delay-ms 150000`) SHA-256
+  `f1f759c1f6817164c6429a3db6bbe9b36472f166497bb3f959a9b0b5d204f06b`, and `build/a71-ios26-drawlog-on.payload`
+  (text /var/local/sweet-native-drawlog=1500) `7585fd0dc658353d2ff458d2845030e8eee8506b69c9ef1e52c2f4d6e58b7be8`.
+  Order: first install the rgb10a2 Metal normally, then this.
