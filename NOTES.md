@@ -831,5 +831,15 @@ Open:
 - 8c577e4 TEXSTAT: for each logged glass_background draw, the slot-3 blur texture is read back per level (mean
   BGRA, % alpha 0). Superseded Metal CI 44800087775 cancelled; new Metal CI `44800819116` (IOSurface write +
   TEXSTAT).
+- 2122 first CI failed (two printf strings broken by a real newline from the generator script); fixed in de31684,
+  kernel CI `44802195088`.
+- TEXSTAT boot (`build/a71-ios26-metal-texstat.payload` `b76f7731...c52c`, log `logs/usb-ios26-texstat.txt`): blur
+  textures sampled by glass are NOT empty: after the "gone" marker uniform dark grey (~39,39,39,255), earlier up to
+  130 grey; at boot black (black wallpaper). So the blur chain works; glass over a black/dark backdrop may simply
+  be near invisible, or glass_background output is wrong. Fix the wallpaper first.
+- Mercury: no more refusals, but every compute dispatch was dropped: `207x448x1 threads do not divide into groups
+  of 32x32x1 ... partial-group support` (dispatchThreads, VariableBlurrer/VTMTS/space). freedreno ignores
+  pipe_grid_info.last_block. 38c5652 rounds groups up (extra edge threads; Adreno drops OOB image/IBO stores).
+  Metal CI `44802843341`.
 - Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
   key=` lines land in the same USB log as the 30 s draw-trace windows).
