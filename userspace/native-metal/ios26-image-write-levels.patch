@@ -51,7 +51,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  static bool
  resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                      const struct air_edges *edges)
-@@ -3608,13 +3618,56 @@
+@@ -3608,13 +3618,55 @@
                                        : "not a resolved pointer");
        if (!first)
           first = v;
@@ -61,11 +61,10 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +      if (!same_ptr(&first->ptr, &v->ptr)) {
 +         struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
 +         struct air_ptr_phi *pp = pe ? pe->data : NULL;
-+         bool loadable = v->ptr.class != AIR_PTR_TEXTURE && v->ptr.class != AIR_PTR_SAMPLER &&
-+                         v->ptr.class != AIR_PTR_ARGBUF &&
-+                         first->ptr.class != AIR_PTR_TEXTURE &&
-+                         first->ptr.class != AIR_PTR_SAMPLER &&
-+                         first->ptr.class != AIR_PTR_ARGBUF;
++         /* buffers are loaded on both sides and selected; a texture or sampler is
++          * split per place by texture_op (air_intrinsics.c); an argument-buffer member
++          * has neither */
++         bool loadable = v->ptr.class != AIR_PTR_ARGBUF && first->ptr.class != AIR_PTR_ARGBUF;
 +         if (!pp || !loadable)
 +            return air_error(c, "instruction: a phi between pointers that name different "
 +                                "places, which would have to be chosen at run time");
@@ -112,7 +111,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3688,14 @@
+@@ -3635,8 +3687,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -128,7 +127,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3842,9 +3901,32 @@
+@@ -3842,9 +3900,32 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -162,7 +161,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -4305,8 +4387,8 @@
+@@ -4305,8 +4386,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -347,7 +346,105 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1693,16 +1836,24 @@
+@@ -1563,6 +1706,48 @@
+    return coord;
+ }
+ 
++/* is_null_texture on a resolved pointer, or on one chosen at run time */
++static nir_def *
++null_texture_test(struct air_ctx *c, struct air_val *v)
++{
++   if (!v) {
++      air_error(c, "intrinsic: is_null_texture of nothing");
++      return NULL;
++   }
++   if (v->kind == AIR_VAL_PTR)
++      return v->ptr.class == AIR_PTR_NONE ? nir_imm_true(&c->b) : nir_imm_false(&c->b);
++   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
++      nir_def *a = null_texture_test(c, v->elems[0]);
++      nir_def *b = null_texture_test(c, v->elems[1]);
++      return a && b ? nir_bcsel(&c->b, v->def, a, b) : NULL;
++   }
++   air_error(c, "intrinsic: is_null_texture of something that is not a texture");
++   return NULL;
++}
++
++/* one of two results of the same operation, member by member for a struct */
++static struct air_val *
++select_tex_result(struct air_ctx *c, nir_def *cond, struct air_val *a, struct air_val *b)
++{
++   if (a == b)
++      return a;
++   if (a->kind == AIR_VAL_SSA && b->kind == AIR_VAL_SSA)
++      return air_val_ssa(c, nir_bcsel(&c->b, cond, a->def, b->def));
++   if (a->kind == AIR_VAL_AGG && b->kind == AIR_VAL_AGG && a->num_elems == b->num_elems) {
++      struct air_val *agg = rzalloc(c->mem_ctx, struct air_val);
++      agg->kind = AIR_VAL_AGG;
++      agg->num_elems = a->num_elems;
++      agg->elems = rzalloc_array(c->mem_ctx, struct air_val *, MAX2(a->num_elems, 1));
++      for (unsigned i = 0; i < a->num_elems; i++) {
++         agg->elems[i] = select_tex_result(c, cond, a->elems[i], b->elems[i]);
++         if (!agg->elems[i])
++            return NULL;
++      }
++      return agg;
++   }
++   return NULL;
++}
++
+ static bool
+ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
+ {
+@@ -1574,6 +1759,48 @@
+    if (!strncmp(n->part[0], "get_null_", 9) && in->base.type->kind == AIR_TYPE_POINTER) {
+       struct air_ptr p = { .class = AIR_PTR_NONE };
+       air_set(c, &in->base, air_val_ptr(c, p));
++      return true;
++   }
++   if (!strncmp(n->part[0], "is_null_texture", 15)) {
++      nir_def *r = null_texture_test(c, air_get(c, in->operands[1]));
++      if (!r)
++         return false;
++      air_set(c, &in->base, air_val_ssa(c, r));
++      return true;
++   }
++   for (unsigned k = 1; k < in->num_operands; k++) {
++      struct hash_entry *he = _mesa_hash_table_search(c->values, in->operands[k]);
++      struct air_val *v = he ? he->data : NULL;
++      if (!v || v->kind != AIR_VAL_PTR_SELECT || v->num_elems != 2)
++         continue;
++      if (!strncmp(n->part[0], "write_", 6))
++         return air_error(c, "intrinsic: air.%s through a texture chosen at run time",
++                          n->part[0]);
++      struct air_val *res[2] = { NULL, NULL };
++      for (unsigned s = 0; s < 2; s++) {
++         struct air_val *el = v->elems[s];
++         if (el->kind == AIR_VAL_PTR && el->ptr.class == AIR_PTR_NONE)
++            continue;
++         _mesa_hash_table_insert(c->values, in->operands[k], el);
++         bool ok = texture_op(c, in, n);
++         _mesa_hash_table_insert(c->values, in->operands[k], v);
++         if (!ok)
++            return false;
++         struct hash_entry *re = _mesa_hash_table_search(c->values, &in->base);
++         res[s] = re ? re->data : NULL;
++      }
++      if (!res[0] && !res[1])
++         return air_error(c, "intrinsic: air.%s of a texture that is null on every path",
++                          n->part[0]);
++      if (!res[0])
++         res[0] = res[1];
++      if (!res[1])
++         res[1] = res[0];
++      struct air_val *r = select_tex_result(c, v->def, res[0], res[1]);
++      if (!r)
++         return air_error(c, "intrinsic: air.%s through a texture chosen at run time, "
++                             "whose result cannot be selected", n->part[0]);
++      air_set(c, &in->base, r);
+       return true;
+    }
+    struct air_tex_name t;
+@@ -1693,16 +1920,24 @@
        nir_def *value = air_get_ssa(c, in->operands[arg++]);
        if (!value)
           return false;

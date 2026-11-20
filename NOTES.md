@@ -694,3 +694,9 @@
   register stored on each edge + the existing AIR_VAL_PTR_SELECT chain (textures/samplers/argbuf still refused).
   Commit 55996bf, Metal CI `44705378496`.
 - Metal CI `44705378496` 6/6 match. TWRP: `build/a71-ios26-metal-mips-phi.payload` VERIFY OK `c61457c9...c355`, boot mercuryonly (23eebb59, install at mount). Rebooted.
+- mips-phi boot (9/9): generateMipmaps runs now (no "not done" line). Owner: glass unchanged. Mercury still
+  refuses the pointer phi: so it is between textures/samplers (not buffers). Also `air.is_null_texture_2d`
+  (called by Mercury) was not translated at all. Added: pointer phis between textures/samplers/null allowed
+  (argbuf still refused); texture_op splits a texture/sampler chosen at run time into one op per place and
+  selects the results (writes refused, a null side takes the other's result); is_null_texture on resolved and
+  run-time-chosen pointers.
