@@ -547,3 +547,12 @@
 - **Attachment-size Metal works (owner: flicker gone).** USB: payload 9/9 errno=0, Metal published, `the draw failed`
   0 times this boot (389 before), swaps up to ~24/s, no backboardd crash. Lock screen / CC glass visual detail
   not yet reported.
+- Owner on attachment-size Metal: glass in the Settings search bar disappears now and then. USB for this boot: no
+  `the draw failed`, no refused pipeline, GPU completion failures 0, gpu/latch timeouts 0; swap_wait_timeouts
+  674 and late_scheduled ~160-200 per 5 s window. No logged cause; needs a draw trace of the moment it vanishes.
+- Metal CI `44690970901` (da20e9a, + image write levels) succeeded; artifact `14608981486`, 6/6 files match
+  build.json. Package `build/a71-ios26-metal-levels-sync.payload` (12 entries: bundle + empty
+  `/var/local/sweet-native-sync-commit`, owner OK for the race test) TWRP VERIFY OK
+  `b335b8316546f9de3b9be641f67336264720db51c305a5667fe4138f1a825d53`. Boot unchanged (nowifi-b). Pitfall: in Git
+  Bash run a71-payload.py with MSYS_NO_PATHCONV=1, or `/System/...` becomes `C:/Program Files/Git/System/...`.
+  To undo the race test: rm `/var/local/sweet-native-sync-commit` (payload `rm:`).
