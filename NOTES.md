@@ -673,3 +673,8 @@
   (2120 sweetpayloaddelay, NoCopy boot) overfilled the node instead of splitting it. Do not use delayed payloads
   again until the installer is checked. Proposed minimal repair (needs owner OK): numRecords 93, offsets
   0..92 unchanged, free-space offset 7076, zero the rest; keep the current node as a backup to undo.
+- Owner OK: repaired catalog node 28370 in place. Backup `research/hfs-repair/node28370-before.bin` (aaf024b9),
+  repaired `node28370-repaired.bin` (numRecords 93, offsets 0..92 kept, free space 7076, rest zero) written to
+  fs blocks 3851251-3851252, readback 44487a98 OK. Lost: 5 thread records (CNIDs after 609266). Header
+  leafRecords not adjusted. Boot `build/a71-ios26-nopayload-2119.img` (no sweetpayload, no dtlog) readback
+  ca6839df OK, to check the FS before the pending blit-glass package is applied.
