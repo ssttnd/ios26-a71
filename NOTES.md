@@ -1043,3 +1043,20 @@ Next:
   readback SHA-256 `7a934ab639773f6482db717af9ff104546204a9c7f8664a2f7b51ac98e445980`, then rebooted.
   USB capture `logs/usb-ios26-metal-path-distance.txt`: boot succeeded, install 9/9 with errno=0, Metal published.
   Asked the owner to check the same preview while monitoring for errors and actual draws.
+- The owner still saw a black preview. `path_distance_vertex -> path_distance_fragment` linked and issued
+  draws on the device. The remaining repeated refusal changed to `accumulator_color` with
+  `interface: an air.render_target input without a target`.
+
+## 2026-11-21 — specialized framebuffer targets
+
+- Local accumulator AIR confirmed both the fetch input and color output use a global reference in place of
+  their literal attachment number. A static initializer extracts a lane from the wide shader-state constant
+  to choose attachment 0 or 2. `2d5c0ec` evaluates the specialized metadata before assigning shader I/O,
+  leaves inline sampler assignment after explicit resource bindings, and handles vector lane extraction.
+- Local `accumulator_color_fragment` now translates. A nonzero test independently verified fetch mask `0x6`
+  and three color slots for attachment 2, versus mask `0x3` and two slots for attachment 0. Other accumulator
+  functions also translate except the pre-existing visible-function-reference limitation in `accumulator_custom`.
+- Pushed the fix and dispatched iOS Metal CI `44817972400` on `2d5c0ec`. The phone is still on Metal
+  `44816642930` and boot `f6679f41...c8b0` until the new artifact is ready.
+- Local 211-library before/after run gained 16 successful translations, including `accumulator_color_fragment`,
+  and lost none. Pre-existing abort and non-applicable counts did not change.
