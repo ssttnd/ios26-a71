@@ -785,5 +785,16 @@ Open:
   another library. Fixed generally in a871a6b (phi operands flattened to leaf places; the edge stores a bcsel
   index); offline corpus: that refusal 32 -> 0, +6 modules translate, no regressions; Metal CI `44794161842`.
 - GLASSSTAT in that boot (backboardd, per second): CoreAnimation sends glass all the time while the UI is used:
-  glass_bg 150-730 and blur 30-290 per second, total draws 3000-6700 per second. Whether glass vanished during
-  these windows is not yet reported by the owner.
+  glass_bg 150-730 and blur 30-290 per second, total draws 3000-6700 per second. Owner: glass DID vanish in that
+  boot, so CoreAnimation keeps sending glass draws and the fault is in our rendering.
+- 24d92d5: periodic draw log (`/var/local/sweet-native-drawlog-every` = "SECONDS DRAWS PROCESS", read once at
+  process start; installed at mount, no delayed package). Metal CI `44794565128` OK 6/6; package
+  `build/a71-ios26-metal-glasstrace.payload` (bundle + that file = "30 1200 backboardd") VERIFY OK `a4d7ab9f...e108`,
+  boot mercuryonly unchanged. Boot: payload 11/11, `DRAWLOG every 30 s, 1200 draws`; USB log
+  `logs/usb-ios26-glasstrace.txt`. Owner: bigger clock, wallpaper black (no glass test result yet).
+- Mercury now builds every pipeline (no refusal). Black wallpaper causes in the log: (1) `colour attachment 0 asks for
+  a multisample resolve ... this driver resolves nothing` (~250x): Mercury renders, resolves into a resolveTexture,
+  and the driver never resolved, so the shown texture stayed black; (2) unimplemented blit
+  `copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:`.
+  fa83a3d: resolve queued at render -endEncoding as a GPU pipe->blit (rwa_texture_resolve, in order at commit), and
+  the slice/level-count copy. Applies; not compiled locally. Metal CI `44796529125`.
