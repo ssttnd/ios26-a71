@@ -1153,6 +1153,31 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '    for(unsigned i=0;i<8;i++)[color[i] release];\n    [nativeBlit release];\n'),
      ('        if(work->nativeBarrier) {\n',
       '        if(work->nativeBlit) {\n            ((void (^)(void))work->nativeBlit)();\n            continue;\n        }\n        if(work->nativeBarrier) {\n'),
+     # dispatchThreads with a grid that does not divide into the threadgroup size (Metal's
+     # non-uniform threadgroups). Mercury's VariableBlurrer and VideoToolbox dispatch 207x448 in
+     # 32x32 groups and every one was refused, so the wallpaper never rendered. freedreno has
+     # no partial last group (pipe_grid_info.last_block is ignored), so the groups are rounded
+     # up: the extra threads at the far edge read textures clamped, and the Adreno drops image
+     # and IBO stores outside the descriptor's size.
+     ('''	if (size.width == 0 || size.height == 0 || size.depth == 0 ||
+	    threads.width % size.width != 0 || threads.height % size.height != 0 ||
+	    threads.depth % size.depth != 0) {
+		rw_print("%lux%lux%lu threads do not divide into groups of "''',
+      '''	if (size.width != 0 && size.height != 0 && size.depth != 0 &&
+	    (threads.width % size.width != 0 || threads.height % size.height != 0 ||
+	     threads.depth % size.depth != 0)) {
+		RW_ONCE("dispatchThreads: %lux%lux%lu threads in groups of %lux%lux%lu rounded up to whole "
+		        "groups (no partial groups on this GPU)\\n", (unsigned long)threads.width,
+		        (unsigned long)threads.height, (unsigned long)threads.depth,
+		        (unsigned long)size.width, (unsigned long)size.height, (unsigned long)size.depth);
+		groups.width = (threads.width + size.width - 1) / size.width;
+		groups.height = (threads.height + size.height - 1) / size.height;
+		groups.depth = (threads.depth + size.depth - 1) / size.depth;
+		[self dispatchThreadgroups:groups threadsPerThreadgroup:size];
+		return;
+	}
+	if (size.width == 0 || size.height == 0 || size.depth == 0) {
+		rw_print("%lux%lux%lu threads do not divide into groups of "'''),
      # Multisample resolve: recorded per colour attachment, queued at -endEncoding as a GPU
      # blit run in order after the pass's draws (rwa_texture_resolve).
      ('\tunsigned _fragmentTextureCount, _fragmentSamplerCount;\n\tBOOL _complained;\n}',
