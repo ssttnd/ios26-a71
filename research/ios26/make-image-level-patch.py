@@ -1118,6 +1118,46 @@ edit('userland/src/SweetNativeDrawLog.inc',
      # per second only while something draws. It tells the two causes apart: CoreAnimation
      # stops sending glass draws (its own decision, e.g. late frames) or keeps sending them
      # (then the picture is wrong here).
+     # Periodic arming: the touch-a-file trigger needs a file to change AFTER the process
+     # started, which only a delayed package could do, and a delayed package corrupted the
+     # catalog once. /var/local/sweet-native-drawlog-every ("SECONDS DRAWS PROCESS", read once,
+     # installed at mount like any package) arms the log in that one process every SECONDS.
+     ('''\tif (!remaining)
+\t\treturn 0;
+\tremaining--;''',
+      '''\t{
+\t\tstatic bool every_read;
+\t\tstatic unsigned every_s, every_n;
+\t\tstatic uint64_t every_next;
+\t\tif (!every_read) {
+\t\t\tevery_read = true;
+\t\t\tchar name[64] = "";
+\t\t\tFILE *f = fopen("/var/local/sweet-native-drawlog-every", "r");
+\t\t\tif (f) {
+\t\t\t\tif (fscanf(f, "%u %u %63s", &every_s, &every_n, name) != 3 ||
+\t\t\t\t    strcmp(name, getprogname()) != 0)
+\t\t\t\t\tevery_s = 0;
+\t\t\t\tfclose(f);
+\t\t\t}
+\t\t\tif (every_s) {
+\t\t\t\tevery_n = every_n ? (every_n > 20000 ? 20000 : every_n) : 1500;
+\t\t\t\tevery_next = ms + (uint64_t)every_s * 1000;
+\t\t\t\tfprintf(stderr, "SweetNativeMetal: DRAWLOG every %u s, %u draws\\n", every_s, every_n);
+\t\t\t}
+\t\t}
+\t\tif (every_s && ms >= every_next) {
+\t\t\tevery_next = ms + (uint64_t)every_s * 1000;
+\t\t\tif (!remaining) {
+\t\t\t\tremaining = every_n;
+\t\t\t\tnative_drawlog_detail_on = false;
+\t\t\t\tfprintf(stderr, "SweetNativeMetal: DRAWLOG armed for %u draws (every %u s)\\n",
+\t\t\t\t        every_n, every_s);
+\t\t\t}
+\t\t}
+\t}
+\tif (!remaining)
+\t\treturn 0;
+\tremaining--;'''),
      ('/* One attribute of one vertex, decoded by MTLVertexFormat. */\n',
       '''static void
 native_glassstat(const void *render)

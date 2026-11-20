@@ -1233,7 +1233,44 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -143,9 +143,12 @@
+@@ -121,6 +121,36 @@
+ 			last_sec = 0;   /* absent at start: the first touch arms */
+ 		}
+ 	}
++	{
++		static bool every_read;
++		static unsigned every_s, every_n;
++		static uint64_t every_next;
++		if (!every_read) {
++			every_read = true;
++			char name[64] = "";
++			FILE *f = fopen("/var/local/sweet-native-drawlog-every", "r");
++			if (f) {
++				if (fscanf(f, "%u %u %63s", &every_s, &every_n, name) != 3 ||
++				    strcmp(name, getprogname()) != 0)
++					every_s = 0;
++				fclose(f);
++			}
++			if (every_s) {
++				every_n = every_n ? (every_n > 20000 ? 20000 : every_n) : 1500;
++				every_next = ms + (uint64_t)every_s * 1000;
++				fprintf(stderr, "SweetNativeMetal: DRAWLOG every %u s, %u draws\n", every_s, every_n);
++			}
++		}
++		if (every_s && ms >= every_next) {
++			every_next = ms + (uint64_t)every_s * 1000;
++			if (!remaining) {
++				remaining = every_n;
++				native_drawlog_detail_on = false;
++				fprintf(stderr, "SweetNativeMetal: DRAWLOG armed for %u draws (every %u s)\n",
++				        every_n, every_s);
++			}
++		}
++	}
+ 	if (!remaining)
+ 		return 0;
+ 	remaining--;
+@@ -143,9 +173,12 @@
  	for (unsigned i = 0; i < ncolors && i < 4; i++) {
  		id t = colors[i];
  		size_t at = strlen(rt);
@@ -1248,7 +1285,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +158,67 @@
+@@ -155,13 +188,67 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);
