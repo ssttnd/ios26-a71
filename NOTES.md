@@ -678,3 +678,8 @@
   fs blocks 3851251-3851252, readback 44487a98 OK. Lost: 5 thread records (CNIDs after 609266). Header
   leafRecords not adjusted. Boot `build/a71-ios26-nopayload-2119.img` (no sweetpayload, no dtlog) readback
   ca6839df OK, to check the FS before the pending blit-glass package is applied.
+- **Repaired boot works.** tzinit passes, no BTNode errors, Metal published, frames (15.8 swaps/s). Expected side
+  effect: `cat_delete() failed to delete thread record id=609270/609274/609283` (the lost thread records),
+  handled without a crash. Usual `hfs_cnode.c:946` warnings (old). blit-glass package still pending in the
+  payload area (this image has no sweetpayload). Next: install it with a NON-delayed image (mercuryonly).
+  Root cause to fix later: the in-kernel installer (2100/2120) inserting catalog records into a full node.
