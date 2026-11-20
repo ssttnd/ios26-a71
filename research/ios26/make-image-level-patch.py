@@ -1187,6 +1187,26 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
 @end
 
 @implementation SweetNativeMetalComputeEncoder'''),
+     # The glass samples blur textures whose mipmapLevelCount reads 0 (draw trace
+     # 2026-11-20 night): say who asks for such a texture, the first 16 times.
+     ('''		.mip_levels = (unsigned)[descriptor mipmapLevelCount],
+		.sample_count = (unsigned)[descriptor sampleCount],
+		.usage = (unsigned)[descriptor usage],
+	};
+''',
+      '''		.mip_levels = (unsigned)[descriptor mipmapLevelCount],
+		.sample_count = (unsigned)[descriptor sampleCount],
+		.usage = (unsigned)[descriptor usage],
+	};
+	if (shape.mip_levels == 0) {
+		static unsigned told0;
+		if (told0++ < 16)
+			rw_print("texture with mipmapLevelCount 0: format %u type %u %ux%u usage %#x "
+			         "storage %lu descriptor %s\\n", shape.pixel_format, shape.type, shape.width,
+			         shape.height, shape.usage, (unsigned long)[descriptor storageMode],
+			         class_getName(object_getClass(descriptor)));
+	}
+'''),
      # GLASSSTAT: every draw is counted by kind (SweetNativeDrawLog.inc)
      ('\tconst unsigned dl = native_drawlog_next();\n',
       '\tnative_glassstat([work->render render]);\n\tconst unsigned dl = native_drawlog_next();\n'))
@@ -1310,6 +1330,16 @@ native_glassstat(const void *render)
 
 /* One attribute of one vertex, decoded by MTLVertexFormat. */
 '''))
+
+# Mercury's wallpaper drawable: a BGRA IOSurface (207x448, pitch 832) viewed as
+# MTLPixelFormatR32Uint ("no drawable ... Metal format 53 ... is not a supported linear
+# import"), so Mercury never drew and the wallpaper stayed black. A 32-bit single-channel
+# format over a 4-byte-per-pixel surface is the same memory read another way.
+edit('userland/src/redwooddrawable.m',
+     ("    case 115:fourcc='RGhA';bpp=8;break;\n",
+      "    case 115:fourcc='RGhA';bpp=8;break;\n"
+      "    case 53:case 54:case 55:   /* R32Uint/Sint/Float over a 4-byte surface */\n"
+      "        fourcc=(surface_format=='RGBA'||surface_format=='BGRA')?surface_format:'BGRA';bpp=4;break;\n"))
 
 Path('userspace/native-metal/ios26-image-write-levels.patch').write_text(''.join(changes), encoding='utf-8',
                                                                          newline='\n')

@@ -975,11 +975,10 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      float nativeViewport[4], nativeBlend[4];
      unsigned nativeScissor[4], nativeFlags;
      BOOL nativeClearOnly, nativeBarrier;
-@@ -935,6 +936,37 @@
- @end
+@@ -936,6 +937,37 @@
  
  #include "SweetNativeLibrary.inc"
-+
+ 
 +@interface SweetNativeNoCopyRelease : NSObject {
 +	void (^_deallocator)(void *, NSUInteger);
 +	void *_bytes;
@@ -1010,10 +1009,26 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +@end
 +
 +static char sweet_nocopy_key;
- 
++
  @implementation SweetNativeMetalDevice
  
-@@ -2172,8 +2204,23 @@
+ + (void)load
+@@ -1536,6 +1568,14 @@
+ 		.sample_count = (unsigned)[descriptor sampleCount],
+ 		.usage = (unsigned)[descriptor usage],
+ 	};
++	if (shape.mip_levels == 0) {
++		static unsigned told0;
++		if (told0++ < 16)
++			rw_print("texture with mipmapLevelCount 0: format %u type %u %ux%u usage %#x "
++			         "storage %lu descriptor %s\n", shape.pixel_format, shape.type, shape.width,
++			         shape.height, shape.usage, (unsigned long)[descriptor storageMode],
++			         class_getName(object_getClass(descriptor)));
++	}
+ 	struct rwa_texture *texture = mesa.texture_create(_mesa, &shape, why, sizeof(why));
+ 
+ 	if (texture == NULL) {
+@@ -2172,8 +2212,23 @@
  		       options:(NSUInteger)options
  		   deallocator:(void (^)(void *, NSUInteger))deallocator
  { NATIVE_OBJECT_LOCK; 
@@ -1039,7 +1054,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  - (id)newIndirectCommandBufferWithDescriptor:(id)d
  			      maxCommandCount:(NSUInteger)count
-@@ -3122,6 +3169,7 @@
+@@ -3122,6 +3177,7 @@
  - (void)dealloc { NATIVE_OBJECT_LOCK; 
      [pipeline release];[render release];[depth release];[depthStencilState release];[indexBuffer release];
      for(unsigned i=0;i<8;i++)[color[i] release];
@@ -1047,7 +1062,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[vertexBuffers[i] release];[buffers[i] release];[textures[i] release];[samplers[i] release];}
      [super dealloc];
  }
-@@ -3472,6 +3520,200 @@
+@@ -3472,6 +3528,200 @@
  	RW_CB_ERROR        = 5,
  };
  
@@ -1248,7 +1263,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  @implementation SweetNativeMetalCommandBuffer {
  	SweetNativeMetalCommandQueue *_queue;
  	NSMutableArray *_work;
-@@ -3613,7 +3855,11 @@
+@@ -3613,7 +3863,11 @@
  /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
   * absent, for the reason the device's own 44 were answered: a missing selector aborts the
   * caller, and these are the four that were still missing. */
@@ -1261,7 +1276,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  - (id)resourceStateCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (id)accelerationStructureCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (void)encodeSignalEvent:(id)event value:(uint64_t)value { NATIVE_OBJECT_LOCK;  (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }
-@@ -3651,6 +3897,10 @@
+@@ -3651,6 +3905,10 @@
          [self failWith:why];[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;
      }
  	for (SweetNativeMetalWork *work in _work) {
@@ -1272,7 +1287,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          if(work->nativeBarrier) {
              if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
              continue;
-@@ -3906,6 +4156,7 @@
+@@ -3906,6 +4164,7 @@
  		return NO;
  	}
  
@@ -1280,7 +1295,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	const unsigned dl = native_drawlog_next();
  	{
  		if (dl)
-@@ -4140,6 +4391,8 @@
+@@ -4140,6 +4399,8 @@
  	unsigned _vertexBufferCount, _fragmentBufferCount;
  	unsigned _fragmentTextureCount, _fragmentSamplerCount;
  	BOOL _complained;
@@ -1289,7 +1304,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (instancetype)initWithRedwoodCommandBuffer:(SweetNativeMetalCommandBuffer *)commandBuffer
-@@ -4176,7 +4429,15 @@
+@@ -4176,7 +4437,15 @@
  		 */
  		NSUInteger store = [attachment storeAction];
  
@@ -1306,7 +1321,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		    store == MTLStoreActionStoreAndMultisampleResolve ||
  		    [attachment resolveTexture] != nil) {
  			rw_print("colour attachment %u asks for a multisample "
-@@ -5456,6 +5717,23 @@
+@@ -5456,6 +5725,23 @@
          work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
          [_commandBuffer recordWork:work];[work release];
          _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
@@ -1455,3 +1470,15 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  }
  
  /* One attribute of one vertex, decoded by MTLVertexFormat. */
+diff --git a/userland/src/redwooddrawable.m b/userland/src/redwooddrawable.m
+--- a/userland/src/redwooddrawable.m
++++ b/userland/src/redwooddrawable.m
+@@ -137,6 +137,8 @@
+     case 70:case 71:fourcc='RGBA';bpp=4;break;
+     case 80:case 81:fourcc='BGRA';bpp=4;break;
+     case 115:fourcc='RGhA';bpp=8;break;
++    case 53:case 54:case 55:   /* R32Uint/Sint/Float over a 4-byte surface */
++        fourcc=(surface_format=='RGBA'||surface_format=='BGRA')?surface_format:'BGRA';bpp=4;break;
+     default:REFUSE("interface: Metal format %u / IOSurface %#x (%zux%zu pitch %zu) is not a supported linear import",want->pixel_format,IOSurfaceGetPixelFormat(s),width,height,pitch);
+     }
+     if(want->width!=width || want->height!=height || want->type!=2 || want->depth>1 ||
