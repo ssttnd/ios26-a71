@@ -1060,3 +1060,8 @@ Next:
   `44816642930` and boot `f6679f41...c8b0` until the new artifact is ready.
 - Local 211-library before/after run gained 16 successful translations, including `accumulator_color_fragment`,
   and lost none. Pre-existing abort and non-applicable counts did not change.
+- CI `44817972400` succeeded for `2d5c0ec`; artifact `14670890459`, six hashes verified. TWRP verified the
+  existing `f6679f41...c8b0` boot. Wrote `build/a71-ios26-metal-framebuffer-target.payload`, SHA-256
+  `aabbeeba5504b1fb1316420ba131cbb47b1ff655c1c110de780c341db2b166d4`, and verified readback. iOS booted,
+  installed all 9 entries with errno=0, and published Metal. USB capture
+  `logs/usb-ios26-metal-framebuffer-target.txt` is active for the owner's preview test.
