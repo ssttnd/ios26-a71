@@ -28,7 +28,18 @@ diff --git a/tools/mesa/air/nir_air.h b/tools/mesa/air/nir_air.h
 diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 --- a/tools/mesa/air/air_to_nir.c
 +++ b/tools/mesa/air/air_to_nir.c
-@@ -570,29 +570,20 @@
+@@ -188,7 +188,9 @@
+ param_glsl_type(struct air_ctx *c, const struct air_type *t)
+ {
+    unsigned bits = air_nir_bit_size(c, t);
+-   return glsl_vector_type(bits == 16 ? GLSL_TYPE_FLOAT16 :
++   return glsl_vector_type(bits == 1 ? GLSL_TYPE_BOOL :
++                           bits == 8 ? GLSL_TYPE_UINT8 :
++                           bits == 16 ? GLSL_TYPE_FLOAT16 :
+                            bits == 64 ? GLSL_TYPE_UINT64 : GLSL_TYPE_UINT,
+                            air_nir_components(t));
+ }
+@@ -570,29 +572,20 @@
           res = nir_imm_intN_t(&c->b, v->bits, as_bool ? 8 : bits);
           break;
        }
@@ -69,7 +80,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
        res = nir_vec(&c->b, fields, comps);
        break;
-@@ -687,6 +678,8 @@
+@@ -687,6 +680,8 @@
     return -1;
  }
  
@@ -78,7 +89,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  static bool
  md_key_int(const struct air_md *node, const char *key, uint64_t *out)
  {
-@@ -965,6 +958,7 @@
+@@ -965,6 +960,7 @@
        .raster_order_group = has_group ? (int)group : -1,
        /* a direct argument: Metal names it by .index and there is no set */
        .argbuf_set = ~0u, .argbuf_id = ~0u,
@@ -86,7 +97,39 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     };
     return &info->resources[info->num_resources++];
  }
-@@ -1864,7 +1858,7 @@
+@@ -1665,6 +1661,14 @@
+ }
+ 
+ static bool
++md_interface_disabled(struct air_ctx *c, const struct air_md *node)
++{
++   const struct air_md *predicate = md_key_node(node, "air.function_constant");
++   uint64_t enabled;
++   return predicate && md_interface_int(c, predicate, 0, &enabled) && !enabled;
++}
++
++static bool
+ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_varying)
+ {
+    uint64_t param;
+@@ -1674,6 +1678,16 @@
+       return air_error(c, "interface: input for parameter %u of %u", (unsigned)param,
+                        c->fn->num_args);
+    const struct air_type *t = c->fn->args[param].type;
++   if (md_interface_disabled(c, node)) {
++      if (t->kind == AIR_TYPE_POINTER) {
++         const struct air_ptr unused = { .class = AIR_PTR_NONE, .pointee = t->elem };
++         c->params[param] = air_val_ptr(c, unused);
++      } else {
++         c->params[param] = air_val_ssa(c, nir_undef(&c->b, air_nir_components(t),
++                                                     air_nir_bit_size(c, t)));
++      }
++      return true;
++   }
+ 
+    /* resources */
+    if (md_key(node, "air.buffer") >= 0) {
+@@ -1864,7 +1878,7 @@
           return true;
        }
        uint64_t n = 0;
@@ -95,7 +138,17 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           return air_error(c, "interface: an air.render_target input without a target");
        if (n >= MAX_DRAW_BUFFERS)
           return air_error(c, "interface: air.render_target input %u", (unsigned)n);
-@@ -1989,7 +1983,12 @@
+@@ -1983,13 +1997,22 @@
+ translate_output(struct air_ctx *c, const struct air_md *node, unsigned field,
+                  const struct air_type *t, unsigned *next_varying)
+ {
++   if (md_interface_disabled(c, node)) {
++      c->outputs[field].disabled = true;
++      return true;
++   }
+    unsigned location = ~0u, index = 0;
+    const char *name = md_key_str(node, "air.arg_name");
+ 
     int rt = md_key(node, "air.render_target");
     if (rt >= 0) {
        uint64_t n = 0, dual = 0;
@@ -109,7 +162,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        md_int(node, rt + 2, &dual);
        location = FRAG_RESULT_DATA0 + n;
        index = dual;
-@@ -2345,6 +2344,8 @@
+@@ -2345,6 +2368,8 @@
           res = nir_unpack_32_2x16(&c->b, x);
        else if (sn == 2 && sb == 16 && dn == 1 && db == 32)
           res = nir_pack_32_2x16(&c->b, x);
@@ -118,7 +171,90 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        else
           return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
                               "which is a repacking this frontend does not do",
-@@ -3277,6 +3278,108 @@
+@@ -2861,6 +2886,8 @@
+       if (v->kind != AIR_VAL_AGG || v->num_elems != rt->num_members)
+          return air_error(c, "instruction: a returned struct that was never built");
+       for (unsigned i = 0; i < v->num_elems; i++) {
++         if (c->outputs[i].disabled)
++            continue;
+          if (!c->outputs[i].var)
+             return air_error(c, "interface: field %u of the result has no output", i);
+          if (!v->elems[i] || v->elems[i]->kind != AIR_VAL_SSA)
+@@ -2872,6 +2899,8 @@
+    }
+    if (v->kind != AIR_VAL_SSA)
+       return air_error(c, "instruction: a returned value that is not a number");
++   if (c->num_outputs && c->outputs[0].disabled)
++      return true;
+    if (!c->num_outputs || !c->outputs[0].var)
+       return air_error(c, "interface: a returned value with no output");
+    nir_store_var(&c->b, c->outputs[0].var, v->def, BITFIELD_MASK(v->def->num_components));
+@@ -3049,7 +3078,7 @@
+  */
+ static nir_function *
+ translate_callee(struct air_ctx *c, const struct air_function *f,
+-                 struct air_val **argv, bool *is_param)
++                 struct air_val **argv, bool *is_param, nir_def **pointer_offsets)
+ {
+    /* A texture, sampler or buffer argument is not a value in this frontend: it
+     * is resolved at translation time into a binding, and tex_handle wants an
+@@ -3058,9 +3087,8 @@
+     * callee to its call site -- so it is not cached. Each of the four modules
+     * that needs this has exactly one call site, counted beforehand.
+     *
+-    * A pointer carrying a byte offset is refused instead: that offset is an
+-    * nir_def of the CALLER's impl, and using it here would be the same
+-    * cross-function def/use that the globals used to cause.
++    * A dynamic byte offset travels as a scalar NIR parameter; only the resource
++    * identity is specialized into the callee.
+     */
+    bool specialised = false;
+    for (unsigned i = 0; i < f->num_args; i++) {
+@@ -3076,9 +3104,14 @@
+       uint64_t const_offset;
+       if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&
+           !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {
+-         air_error(c, "intrinsic: a call passing a pointer at a computed offset as "
+-                      "argument %u, which would use the caller's own value here", i);
+-         return NULL;
++         const struct air_ptr *p = &argv[i]->ptr;
++         if (!pointer_offsets || (p->class != AIR_PTR_UBO && p->class != AIR_PTR_SSBO &&
++                                  p->class != AIR_PTR_SHARED && p->class != AIR_PTR_SCRATCH &&
++                                  p->class != AIR_PTR_CONSTANT_DATA)) {
++            air_error(c, "intrinsic: unsupported computed offset on pointer argument %u", i);
++            return NULL;
++         }
++         pointer_offsets[i] = p->offset;
+       }
+       /* The same reason, for the two pointers that are values: a chosen
+        * pointer's condition is a def of the CALLER's impl, and a slot's
+@@ -3168,6 +3201,8 @@
+       if (!is_param[i]) {
+          if (arg_is_flat(f, argv, is_param, i))
+             declare_leaves(fn, &idx, argv[i]);
++         else if (pointer_offsets && pointer_offsets[i])
++            fn->params[idx++] = (nir_parameter){ .num_components = 1, .bit_size = 32 };
+          continue;
+       }
+       const struct air_type *at = f->args[i].type;
+@@ -3250,9 +3285,13 @@
+          if (a->kind == AIR_VAL_PTR && a->ptr.offset) {
+             /* a constant byte offset is an immediate: rebuilt in this impl */
+             struct air_ptr rp = a->ptr;
+-            uint64_t bytes = 0;
+-            fold_scalar(c, a->ptr.offset, &bytes);   /* checked by the caller above */
+-            rp.offset = nir_imm_int(&c->b, bytes);
++            if (pointer_offsets && pointer_offsets[i]) {
++               rp.offset = nir_load_param(&c->b, pidx++);
++            } else {
++               uint64_t bytes = 0;
++               fold_scalar(c, a->ptr.offset, &bytes);   /* checked by the caller above */
++               rp.offset = nir_imm_int(&c->b, bytes);
++            }
+             a = air_val_ptr(c, rp);
+          }
+          air_set(c, &f->args[i], a);   /* the caller's own resolution */
+@@ -3277,6 +3316,111 @@
     return ok ? fn : NULL;
  }
  
@@ -192,7 +328,8 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +   }
 +
 +   bool *is_param = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_args, 1));
-+   nir_function *fn = translate_callee(c, f, argv, is_param);
++   nir_def **pointer_offsets = rzalloc_array(c->mem_ctx, nir_def *, MAX2(f->num_args, 1));
++   nir_function *fn = translate_callee(c, f, argv, is_param, pointer_offsets);
 +   if (!fn)
 +      return false;   /* translate_callee has said why */
 +
@@ -212,6 +349,8 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +      if (!is_param[i]) {
 +         if (arg_is_flat(f, argv, is_param, i))
 +            pass_leaves(call, &idx, argv[i]);
++         else if (pointer_offsets[i])
++            call->params[idx++] = nir_src_for_ssa(pointer_offsets[i]);
 +         continue;
 +      }
 +      nir_def *a = ssa[i] ? ssa[i] : air_get_ssa(c, in->operands[i + 1]);
@@ -227,7 +366,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  /* A call of a function this module defines. The callee is translated as a
   * nir_function (above) and the call becomes a nir_call, which
   * nir_inline_functions folds in after the whole shader is translated.
-@@ -3309,16 +3412,14 @@
+@@ -3309,16 +3453,14 @@
     /* resolved in the CALLER's value map, which is the live one here */
     struct air_val **argv = rzalloc_array(c->mem_ctx, struct air_val *,
                                           MAX2(f->num_args, 1));
@@ -248,7 +387,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
     bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
-@@ -3332,36 +3433,17 @@
+@@ -3332,36 +3474,17 @@
      */
     nir_variable **fields = ret_struct ?
        rzalloc_array(c->mem_ctx, nir_variable *, MAX2(rt->num_members, 1)) : NULL;
@@ -293,7 +432,16 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     if (ret_struct) {
        struct air_val *agg = air_val_agg(c, rt->num_members);
-@@ -3565,56 +3647,146 @@
+@@ -3524,7 +3647,7 @@
+                re->kind != AIR_TYPE_INT))
+       return air_error(c, "library: the return value is neither a scalar nor a vector");
+ 
+-   nir_function *fn = translate_callee(c, f, argv, is_param);
++   nir_function *fn = translate_callee(c, f, argv, is_param, NULL);
+    if (!fn)
+       return false;   /* translate_callee has said why */
+ 
+@@ -3565,56 +3688,198 @@
     return true;
  }
  
@@ -472,10 +620,62 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +   for (int j = (int)pp->n - 2; j >= 0; j--)
 +      r = air_val_ptr_select(c, nir_ieq_imm(&c->b, sel, j), pp->v[j], r);
 +   air_set(c, &in->base, r);
++   return true;
++}
++
++/* Aggregate phis use one register per numeric leaf, with the same edge
++ * writes and block-entry loads as the scalar phi path.
++ */
++static struct air_val *
++aggregate_phi_regs(struct air_ctx *c, nir_builder *entry, const struct air_type *type)
++{
++   if (ret_member_is_number(type))
++      return air_val_ssa(c, nir_decl_reg(entry, air_nir_components(type), air_nir_bit_size(c, type), 0));
++   const bool is_struct = type->kind == AIR_TYPE_STRUCT;
++   if (!is_struct && (type->kind != AIR_TYPE_ARRAY || type->count > UINT32_MAX))
++      return NULL;
++   struct air_val *regs = air_val_agg(c, is_struct ? type->num_members : type->count);
++   for (unsigned i = 0; i < regs->num_elems; i++) {
++      regs->elems[i] = aggregate_phi_regs(c, entry, is_struct ? type->members[i] : type->elem);
++      if (!regs->elems[i])
++         return NULL;
++   }
++   return regs;
++}
++
++static struct air_val *
++aggregate_phi_load(struct air_ctx *c, const struct air_val *regs)
++{
++   if (regs->kind == AIR_VAL_SSA)
++      return air_val_ssa(c, nir_load_reg(&c->b, regs->def));
++   struct air_val *value = air_val_agg(c, regs->num_elems);
++   for (unsigned i = 0; i < value->num_elems; i++)
++      value->elems[i] = aggregate_phi_load(c, regs->elems[i]);
++   return value;
++}
++
++static bool
++aggregate_phi_store(struct air_ctx *c, const struct air_val *regs, const struct air_val *value)
++{
++   if (regs->kind == AIR_VAL_SSA) {
++      nir_intrinsic_instr *decl = nir_reg_get_decl(regs->def);
++      const unsigned comps = nir_intrinsic_num_components(decl);
++      const unsigned bits = nir_intrinsic_bit_size(decl);
++      if (value && (value->kind != AIR_VAL_SSA || value->def->num_components != comps ||
++                    value->def->bit_size != bits))
++         return false;
++      nir_store_reg(&c->b, value ? value->def : nir_undef(&c->b, comps, bits), regs->def);
++      return true;
++   }
++   if (value && (value->kind != AIR_VAL_AGG || value->num_elems != regs->num_elems))
++      return false;
++   for (unsigned i = 0; i < regs->num_elems; i++)
++      if (!aggregate_phi_store(c, regs->elems[i], value ? value->elems[i] : NULL))
++         return false;
     return true;
  }
  
-@@ -3635,8 +3807,14 @@
+@@ -3635,8 +3900,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -491,7 +691,39 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3842,9 +4020,31 @@
+@@ -3646,11 +3917,13 @@
+           * "a returned struct that was never built" -- true of the module, and
+           * not what is wrong with it.
+           */
+-         if (in->base.type->kind == AIR_TYPE_STRUCT ||
+-             in->base.type->kind == AIR_TYPE_ARRAY)
+-            return air_error(c, "instruction: a phi of %s, which NIR has no register for",
+-                             in->base.type->kind == AIR_TYPE_STRUCT ? "a struct"
+-                                                                    : "an array");
++         if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY) {
++            struct air_val *regs = aggregate_phi_regs(c, &entry, in->base.type);
++            if (!regs)
++               return air_error(c, "instruction: an aggregate phi with a non-numeric member");
++            _mesa_hash_table_insert(c->phi_regs, in, regs);
++            continue;
++         }
+          nir_def *reg = nir_decl_reg(&entry, air_nir_components(in->base.type),
+                                      air_nir_bit_size(c, in->base.type), 0);
+          _mesa_hash_table_insert(c->phi_regs, in, reg);
+@@ -3702,8 +3975,10 @@
+             continue;
+          }
+          struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);
+-         air_set(c, &in->base,
+-                 air_val_ssa(c, nir_load_reg(&c->b, e->data)));
++         if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY)
++            air_set(c, &in->base, aggregate_phi_load(c, e->data));
++         else
++            air_set(c, &in->base, air_val_ssa(c, nir_load_reg(&c->b, e->data)));
+       }
+ 
+       for (unsigned i = 0; i < blk->num_insts; i++) {
+@@ -3842,9 +4117,31 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -524,7 +756,28 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -3922,14 +4122,21 @@
+@@ -3852,10 +4149,16 @@
+             if (!edge_possible(&edges, in->targets[k]->index, bi))
+                continue; /* an edge the function constants rule out */
+             c->b.cursor = *(nir_cursor *)ce->data;
+-            nir_def *val = air_get_ssa(c, in->operands[k]);
+-            if (!val)
+-               return false;
+-            nir_store_reg(&c->b, val, re->data);
++            if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY) {
++               struct air_val *val = air_get(c, in->operands[k]);
++               if (!val || !aggregate_phi_store(c, re->data, val))
++                  return air_error(c, "instruction: an aggregate phi with an incompatible operand");
++            } else {
++               nir_def *val = air_get_ssa(c, in->operands[k]);
++               if (!val)
++                  return false;
++               nir_store_reg(&c->b, val, re->data);
++            }
+             /* later stores into the same block go after this one */
+             *(nir_cursor *)ce->data = c->b.cursor;
+          }
+@@ -3922,14 +4225,21 @@
  }
  
  static void
@@ -550,7 +803,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
        /* llvm.compiler.used and llvm.global_ctors are lists for the linker,
         * not memory the shader reads
-@@ -3948,7 +4155,7 @@
+@@ -3948,7 +4258,7 @@
           }
           pl->class = AIR_PTR_FUNCTION_CONSTANT;
           pl->binding = idx;
@@ -559,7 +812,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A sampler the shader declares itself. It needs a real index, not a
            * sentinel: the Adreno's texture instruction holds the sampler in a
            * four-bit field, and ~0u there asserts in ir3's encoder. The index
-@@ -4025,8 +4232,48 @@
+@@ -4025,8 +4335,48 @@
           c->scratch_size += air_type_alloc_size(c->m, g->value_type);
        }
     }
@@ -609,7 +862,16 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  }
  
  /* Build the globals as values of the function being translated now. Called for
-@@ -4257,7 +4504,9 @@
+@@ -4093,7 +4443,7 @@
+           * also why this could not be reached before the reader learnt to read
+           * one.
+           */
+-         nir_function *fn = translate_callee(c, f, NULL, NULL);
++         nir_function *fn = translate_callee(c, f, NULL, NULL, NULL);
+          if (!fn)
+             return;   /* translate_callee has said why */
+          nir_builder_instr_insert(&c->b, &nir_call_instr_create(c->nir, fn)->instr);
+@@ -4257,7 +4607,9 @@
     }
  
     if (!c.error[0])
@@ -620,7 +882,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c.error[0])
        materialise_globals(&c);
     if (!c.error[0]) {
-@@ -4305,8 +4554,8 @@
+@@ -4305,8 +4657,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -631,7 +893,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4582,8 @@
+@@ -4333,6 +4685,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {
@@ -640,6 +902,17 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        NIR_PASS(_, c.nir, nir_inline_functions);
        NIR_PASS(_, c.nir, nir_opt_deref);
        nir_remove_non_entrypoints(c.nir);
+diff --git a/tools/mesa/air/air_private.h b/tools/mesa/air/air_private.h
+--- a/tools/mesa/air/air_private.h
++++ b/tools/mesa/air/air_private.h
+@@ -222,6 +222,7 @@
+    struct {
+       unsigned location;      /* gl_varying_slot or gl_frag_result */
+       unsigned index;         /* dual-source index */
++      bool disabled;          /* specialized out of the shader interface */
+       nir_variable *var;
+    } *outputs;
+ 
 diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 --- a/tools/mesa/air/air_intrinsics.c
 +++ b/tools/mesa/air/air_intrinsics.c

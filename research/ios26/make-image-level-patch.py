@@ -48,6 +48,78 @@ edit('tools/mesa/air/nir_air.h',
 };'''))
 
 edit('tools/mesa/air/air_to_nir.c',
+     ('''   return glsl_vector_type(bits == 16 ? GLSL_TYPE_FLOAT16 :
+                           bits == 64 ? GLSL_TYPE_UINT64 : GLSL_TYPE_UINT,
+''',
+      '''   return glsl_vector_type(bits == 1 ? GLSL_TYPE_BOOL :
+                           bits == 8 ? GLSL_TYPE_UINT8 :
+                           bits == 16 ? GLSL_TYPE_FLOAT16 :
+                           bits == 64 ? GLSL_TYPE_UINT64 : GLSL_TYPE_UINT,
+'''),
+     ('                 struct air_val **argv, bool *is_param)\n',
+      '                 struct air_val **argv, bool *is_param, nir_def **pointer_offsets)\n'),
+     ('''    * A pointer carrying a byte offset is refused instead: that offset is an
+    * nir_def of the CALLER's impl, and using it here would be the same
+    * cross-function def/use that the globals used to cause.
+''',
+      '''    * A dynamic byte offset travels as a scalar NIR parameter; only the resource
+    * identity is specialized into the callee.
+'''),
+     ('''      if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&
+          !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {
+         air_error(c, "intrinsic: a call passing a pointer at a computed offset as "
+                      "argument %u, which would use the caller's own value here", i);
+         return NULL;
+      }
+''',
+      '''      if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&
+          !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {
+         const struct air_ptr *p = &argv[i]->ptr;
+         if (!pointer_offsets || (p->class != AIR_PTR_UBO && p->class != AIR_PTR_SSBO &&
+                                  p->class != AIR_PTR_SHARED && p->class != AIR_PTR_SCRATCH &&
+                                  p->class != AIR_PTR_CONSTANT_DATA)) {
+            air_error(c, "intrinsic: unsupported computed offset on pointer argument %u", i);
+            return NULL;
+         }
+         pointer_offsets[i] = p->offset;
+      }
+'''),
+     ('''         if (arg_is_flat(f, argv, is_param, i))
+            declare_leaves(fn, &idx, argv[i]);
+         continue;
+''',
+      '''         if (arg_is_flat(f, argv, is_param, i))
+            declare_leaves(fn, &idx, argv[i]);
+         else if (pointer_offsets && pointer_offsets[i])
+            fn->params[idx++] = (nir_parameter){ .num_components = 1, .bit_size = 32 };
+         continue;
+'''),
+     ('''            uint64_t bytes = 0;
+            fold_scalar(c, a->ptr.offset, &bytes);   /* checked by the caller above */
+            rp.offset = nir_imm_int(&c->b, bytes);
+''',
+      '''            if (pointer_offsets && pointer_offsets[i]) {
+               rp.offset = nir_load_param(&c->b, pidx++);
+            } else {
+               uint64_t bytes = 0;
+               fold_scalar(c, a->ptr.offset, &bytes);   /* checked by the caller above */
+               rp.offset = nir_imm_int(&c->b, bytes);
+            }
+'''),
+     ('''   nir_function *fn = translate_callee(c, f, argv, is_param);
+   if (!fn)
+      return false;   /* translate_callee has said why */
+
+   unsigned bits = air_nir_bit_size(c, rt);
+''',
+      '''   nir_function *fn = translate_callee(c, f, argv, is_param, NULL);
+   if (!fn)
+      return false;   /* translate_callee has said why */
+
+   unsigned bits = air_nir_bit_size(c, rt);
+'''),
+     ('         nir_function *fn = translate_callee(c, f, NULL, NULL);\n',
+      '         nir_function *fn = translate_callee(c, f, NULL, NULL, NULL);\n'),
      ('static bool\nmd_key_int(const struct air_md *node, const char *key, uint64_t *out)\n',
       '''static bool md_interface_int(struct air_ctx *, const struct air_md *, unsigned, uint64_t *);
 
@@ -148,6 +220,60 @@ md_interface_int(struct air_ctx *c, const struct air_md *node, unsigned i, uint6
    if (!c.error[0])
       plan_globals(&c, true);
 '''),
+     ('''static bool
+translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_varying)
+''',
+      '''static bool
+md_interface_disabled(struct air_ctx *c, const struct air_md *node)
+{
+   const struct air_md *predicate = md_key_node(node, "air.function_constant");
+   uint64_t enabled;
+   return predicate && md_interface_int(c, predicate, 0, &enabled) && !enabled;
+}
+
+static bool
+translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_varying)
+'''),
+     ('''   const struct air_type *t = c->fn->args[param].type;
+
+   /* resources */
+''',
+      '''   const struct air_type *t = c->fn->args[param].type;
+   if (md_interface_disabled(c, node)) {
+      if (t->kind == AIR_TYPE_POINTER) {
+         const struct air_ptr unused = { .class = AIR_PTR_NONE, .pointee = t->elem };
+         c->params[param] = air_val_ptr(c, unused);
+      } else {
+         c->params[param] = air_val_ssa(c, nir_undef(&c->b, air_nir_components(t),
+                                                     air_nir_bit_size(c, t)));
+      }
+      return true;
+   }
+
+   /* resources */
+'''),
+     ('''   unsigned location = ~0u, index = 0;
+   const char *name = md_key_str(node, "air.arg_name");
+''',
+      '''   if (md_interface_disabled(c, node)) {
+      c->outputs[field].disabled = true;
+      return true;
+   }
+   unsigned location = ~0u, index = 0;
+   const char *name = md_key_str(node, "air.arg_name");
+'''),
+     ('''      for (unsigned i = 0; i < v->num_elems; i++) {
+         if (!c->outputs[i].var)
+''',
+      '''      for (unsigned i = 0; i < v->num_elems; i++) {
+         if (c->outputs[i].disabled)
+            continue;
+         if (!c->outputs[i].var)
+'''),
+     ('   if (!c->num_outputs || !c->outputs[0].var)\n',
+      '   if (c->num_outputs && c->outputs[0].disabled)\n'
+      '      return true;\n'
+      '   if (!c->num_outputs || !c->outputs[0].var)\n'),
      ('''   if (_mesa_hash_table_num_entries(c.fns)) {
       NIR_PASS(_, c.nir, nir_inline_functions);
 ''',
@@ -288,7 +414,8 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
    }
 
    bool *is_param = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_args, 1));
-   nir_function *fn = translate_callee(c, f, argv, is_param);
+   nir_def **pointer_offsets = rzalloc_array(c->mem_ctx, nir_def *, MAX2(f->num_args, 1));
+   nir_function *fn = translate_callee(c, f, argv, is_param, pointer_offsets);
    if (!fn)
       return false;   /* translate_callee has said why */
 
@@ -308,6 +435,8 @@ emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_
       if (!is_param[i]) {
          if (arg_is_flat(f, argv, is_param, i))
             pass_leaves(call, &idx, argv[i]);
+         else if (pointer_offsets[i])
+            call->params[idx++] = nir_src_for_ssa(pointer_offsets[i]);
          continue;
       }
       nir_def *a = ssa[i] ? ssa[i] : air_get_ssa(c, in->operands[i + 1]);
@@ -583,6 +712,102 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
             _mesa_hash_table_insert(c->phi_regs, PTR_PHI_KEY(in), pp);
             continue;
          }'''),
+     ('''         if (in->base.type->kind == AIR_TYPE_STRUCT ||
+             in->base.type->kind == AIR_TYPE_ARRAY)
+            return air_error(c, "instruction: a phi of %s, which NIR has no register for",
+                             in->base.type->kind == AIR_TYPE_STRUCT ? "a struct"
+                                                                    : "an array");
+''',
+      '''         if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY) {
+            struct air_val *regs = aggregate_phi_regs(c, &entry, in->base.type);
+            if (!regs)
+               return air_error(c, "instruction: an aggregate phi with a non-numeric member");
+            _mesa_hash_table_insert(c->phi_regs, in, regs);
+            continue;
+         }
+'''),
+     ('''         air_set(c, &in->base,
+                 air_val_ssa(c, nir_load_reg(&c->b, e->data)));
+''',
+      '''         if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY)
+            air_set(c, &in->base, aggregate_phi_load(c, e->data));
+         else
+            air_set(c, &in->base, air_val_ssa(c, nir_load_reg(&c->b, e->data)));
+'''),
+     ('''static bool
+translate_body(struct air_ctx *c)
+''',
+      '''/* Aggregate phis use one register per numeric leaf, with the same edge
+ * writes and block-entry loads as the scalar phi path.
+ */
+static struct air_val *
+aggregate_phi_regs(struct air_ctx *c, nir_builder *entry, const struct air_type *type)
+{
+   if (ret_member_is_number(type))
+      return air_val_ssa(c, nir_decl_reg(entry, air_nir_components(type), air_nir_bit_size(c, type), 0));
+   const bool is_struct = type->kind == AIR_TYPE_STRUCT;
+   if (!is_struct && (type->kind != AIR_TYPE_ARRAY || type->count > UINT32_MAX))
+      return NULL;
+   struct air_val *regs = air_val_agg(c, is_struct ? type->num_members : type->count);
+   for (unsigned i = 0; i < regs->num_elems; i++) {
+      regs->elems[i] = aggregate_phi_regs(c, entry, is_struct ? type->members[i] : type->elem);
+      if (!regs->elems[i])
+         return NULL;
+   }
+   return regs;
+}
+
+static struct air_val *
+aggregate_phi_load(struct air_ctx *c, const struct air_val *regs)
+{
+   if (regs->kind == AIR_VAL_SSA)
+      return air_val_ssa(c, nir_load_reg(&c->b, regs->def));
+   struct air_val *value = air_val_agg(c, regs->num_elems);
+   for (unsigned i = 0; i < value->num_elems; i++)
+      value->elems[i] = aggregate_phi_load(c, regs->elems[i]);
+   return value;
+}
+
+static bool
+aggregate_phi_store(struct air_ctx *c, const struct air_val *regs, const struct air_val *value)
+{
+   if (regs->kind == AIR_VAL_SSA) {
+      nir_intrinsic_instr *decl = nir_reg_get_decl(regs->def);
+      const unsigned comps = nir_intrinsic_num_components(decl);
+      const unsigned bits = nir_intrinsic_bit_size(decl);
+      if (value && (value->kind != AIR_VAL_SSA || value->def->num_components != comps ||
+                    value->def->bit_size != bits))
+         return false;
+      nir_store_reg(&c->b, value ? value->def : nir_undef(&c->b, comps, bits), regs->def);
+      return true;
+   }
+   if (value && (value->kind != AIR_VAL_AGG || value->num_elems != regs->num_elems))
+      return false;
+   for (unsigned i = 0; i < regs->num_elems; i++)
+      if (!aggregate_phi_store(c, regs->elems[i], value ? value->elems[i] : NULL))
+         return false;
+   return true;
+}
+
+static bool
+translate_body(struct air_ctx *c)
+'''),
+     ('''            nir_def *val = air_get_ssa(c, in->operands[k]);
+            if (!val)
+               return false;
+            nir_store_reg(&c->b, val, re->data);
+''',
+      '''            if (in->base.type->kind == AIR_TYPE_STRUCT || in->base.type->kind == AIR_TYPE_ARRAY) {
+               struct air_val *val = air_get(c, in->operands[k]);
+               if (!val || !aggregate_phi_store(c, re->data, val))
+                  return air_error(c, "instruction: an aggregate phi with an incompatible operand");
+            } else {
+               nir_def *val = air_get_ssa(c, in->operands[k]);
+               if (!val)
+                  return false;
+               nir_store_reg(&c->b, val, re->data);
+            }
+'''),
      ('''         struct hash_entry *re = _mesa_hash_table_search(c->phi_regs, in);
          if (!re)
             continue; /* a phi in an unreachable block, or one of pointers */''',
@@ -611,6 +836,11 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
          struct hash_entry *re = _mesa_hash_table_search(c->phi_regs, in);
          if (!re)
             continue; /* a phi in an unreachable block */'''))
+
+edit('tools/mesa/air/air_private.h',
+     ('      unsigned index;         /* dual-source index */\n',
+      '      unsigned index;         /* dual-source index */\n'
+      '      bool disabled;          /* specialized out of the shader interface */\n'))
 
 edit('tools/mesa/air/air_intrinsics.c',
      # Mercury packs colour as Metal's pack_float_to_unorm10a2: saturate, scale by 1023 or
