@@ -666,3 +666,10 @@
   Options put to the owner: (1) rewrite the iOS root (first 24 GiB of userdata) from
   `build/ios26-root-a71-23G90.img` and replay the setup payloads (reliable, destructive, loses runtime state);
   (2) keep debugging why XNU reads catalog node 28370's second half as zeros (kernel CI per try).
+- **Correction: catalog node 28370 IS corrupt on disk.** Offsets 0..93 valid; table entries 94..98 are
+  51739, 61467, 5660, 0, 0 (98 = free-space offset = 0, which is what XNU reports as "offset #0 invalid").
+  Record data from byte 7076 (record 93) on is zero: records 93..97 (thread records, CNIDs after 609266) lost.
+  Likely cause: the in-kernel payload installer adding catalog records during the LIVE delayed install
+  (2120 sweetpayloaddelay, NoCopy boot) overfilled the node instead of splitting it. Do not use delayed payloads
+  again until the installer is checked. Proposed minimal repair (needs owner OK): numRecords 93, offsets
+  0..92 unchanged, free-space offset 7076, zero the rest; keep the current node as a backup to undo.
