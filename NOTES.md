@@ -605,3 +605,4 @@
   plus the pack family already added. Added sincos (pointer or struct result), llvm.smax/smin/umin, llvm.bswap.
   Cancelled 44695495470 (lacked these). Caveat: this checks names only; an argument shape the frontend does not
   take can still be refused.
+  Commit 1ff2038, Metal CI `44695754790`.
