@@ -642,3 +642,9 @@
   texture that is also a target a GPU copy of all its levels (resource_copy_region just before the draw,
   copy resource kept per texture). Logs "a draw samples its own colour target" (first 4).
   Commit 08d807d, Metal CI `44700658186`.
+- NoCopy boot: staging buffer works (`newBufferWithBytesNoCopy: N bytes copied`). Next Mercury error:
+  `Failed to create blit encoder for private texture upload`: the driver had NO blit encoder
+  (-blitCommandEncoder returned nil). Added SweetNativeMetalBlitEncoder: buffer->texture, texture->buffer,
+  texture->texture (via a 16 B/texel temp), buffer->buffer, fillBuffer, no-op fences/sync, generateMipmaps
+  not done (logged), unknown selectors swallowed (logged once). Copies run at encode time through the
+  replaceRegion path. Also blitCommandEncoderWithDescriptor:. Cancelled 44700658186 (glass only).

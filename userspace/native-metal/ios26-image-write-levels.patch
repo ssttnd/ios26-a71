@@ -535,6 +535,165 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  - (id)newIndirectCommandBufferWithDescriptor:(id)d
  			      maxCommandCount:(NSUInteger)count
+@@ -3472,6 +3518,145 @@
+ 	RW_CB_ERROR        = 5,
+ };
+ 
++@interface SweetNativeMetalBlitEncoder : NSObject {
++	id _device;
++	NSString *_label;
++}
++- (instancetype)initWithDevice:(id)device;
++@end
++
++@implementation SweetNativeMetalBlitEncoder
+++ (void)load
++{
++	Protocol *p = objc_getProtocol("MTLBlitCommandEncoder");
++	if (p != NULL && !class_conformsToProtocol(self, p))
++		class_addProtocol(self, p);
++}
++- (instancetype)initWithDevice:(id)device
++{
++	self = [super init];
++	if (self != nil)
++		_device = [device retain];
++	return self;
++}
++- (void)dealloc { [_device release]; [_label release]; [super dealloc]; }
++- (id)device { return _device; }
++- (NSString *)label { return _label; }
++- (void)setLabel:(NSString *)l { [_label release]; _label = [l copy]; }
++- (void)endEncoding {}
++- (void)insertDebugSignpost:(NSString *)s { (void)s; }
++- (void)pushDebugGroup:(NSString *)s { (void)s; }
++- (void)popDebugGroup {}
++- (void)updateFence:(id)f { (void)f; }
++- (void)waitForFence:(id)f { (void)f; }
++- (void)synchronizeResource:(id)r { (void)r; }
++- (void)synchronizeTexture:(id)t slice:(NSUInteger)s level:(NSUInteger)l { (void)t; (void)s; (void)l; }
++- (void)optimizeContentsForGPUAccess:(id)t { (void)t; }
++- (void)optimizeContentsForCPUAccess:(id)t { (void)t; }
++- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)off sourceBytesPerRow:(NSUInteger)bpr
++   sourceBytesPerImage:(NSUInteger)bpi sourceSize:(MTLSize)size toTexture:(id)dst
++      destinationSlice:(NSUInteger)slice destinationLevel:(NSUInteger)level
++     destinationOrigin:(MTLOrigin)origin options:(NSUInteger)options
++{
++	(void)options;
++	const uint8_t *bytes = (const uint8_t *)[src contents];
++	if (bytes == NULL || dst == nil)
++		return;
++	[dst replaceRegion:MTLRegionMake3D(origin.x, origin.y, origin.z, size.width, size.height, size.depth)
++	       mipmapLevel:level slice:slice withBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi];
++}
++- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)off sourceBytesPerRow:(NSUInteger)bpr
++   sourceBytesPerImage:(NSUInteger)bpi sourceSize:(MTLSize)size toTexture:(id)dst
++      destinationSlice:(NSUInteger)slice destinationLevel:(NSUInteger)level
++     destinationOrigin:(MTLOrigin)origin
++{
++	[self copyFromBuffer:src sourceOffset:off sourceBytesPerRow:bpr sourceBytesPerImage:bpi
++		  sourceSize:size toTexture:dst destinationSlice:slice destinationLevel:level
++	   destinationOrigin:origin options:0];
++}
++- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
++           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toBuffer:(id)dst
++      destinationOffset:(NSUInteger)off destinationBytesPerRow:(NSUInteger)bpr
++    destinationBytesPerImage:(NSUInteger)bpi options:(NSUInteger)options
++{
++	(void)options;
++	uint8_t *bytes = (uint8_t *)[dst contents];
++	if (bytes == NULL || src == nil)
++		return;
++	[src getBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi
++	   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, size.depth)
++	  mipmapLevel:sl slice:ss];
++}
++- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
++           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toBuffer:(id)dst
++      destinationOffset:(NSUInteger)off destinationBytesPerRow:(NSUInteger)bpr
++    destinationBytesPerImage:(NSUInteger)bpi
++{
++	[self copyFromTexture:src sourceSlice:ss sourceLevel:sl sourceOrigin:so sourceSize:size
++		     toBuffer:dst destinationOffset:off destinationBytesPerRow:bpr
++	     destinationBytesPerImage:bpi options:0];
++}
++/* texture to texture through memory of our own: 16 bytes a texel is the widest format
++ * there is, so the row is long enough for any of them, block formats included */
++- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
++           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toTexture:(id)dst
++       destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl
++      destinationOrigin:(MTLOrigin)dorg
++{
++	if (src == nil || dst == nil || size.width == 0 || size.height == 0)
++		return;
++	NSUInteger depth = size.depth ? size.depth : 1;
++	NSUInteger bpr = size.width * 16, bpi = bpr * size.height;
++	uint8_t *tmp = malloc(bpi * depth);
++	if (tmp == NULL)
++		return;
++	[src getBytes:tmp bytesPerRow:bpr bytesPerImage:bpi
++	   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, depth)
++	  mipmapLevel:sl slice:ss];
++	[dst replaceRegion:MTLRegionMake3D(dorg.x, dorg.y, dorg.z, size.width, size.height, depth)
++	       mipmapLevel:dl slice:ds withBytes:tmp bytesPerRow:bpr bytesPerImage:bpi];
++	free(tmp);
++}
++- (void)copyFromTexture:(id)src toTexture:(id)dst
++{
++	NSUInteger levels = MIN([src mipmapLevelCount], [dst mipmapLevelCount]);
++	for (NSUInteger l = 0; l < levels; l++) {
++		NSUInteger w = MAX([src width] >> l, 1), h = MAX([src height] >> l, 1);
++		[self copyFromTexture:src sourceSlice:0 sourceLevel:l sourceOrigin:MTLOriginMake(0, 0, 0)
++			   sourceSize:MTLSizeMake(w, h, 1) toTexture:dst destinationSlice:0
++		     destinationLevel:l destinationOrigin:MTLOriginMake(0, 0, 0)];
++	}
++}
++- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)so toBuffer:(id)dst
++     destinationOffset:(NSUInteger)doff size:(NSUInteger)n
++{
++	uint8_t *s = (uint8_t *)[src contents], *d = (uint8_t *)[dst contents];
++	if (s != NULL && d != NULL && n)
++		memmove(d + doff, s + so, n);
++}
++- (void)fillBuffer:(id)b range:(NSRange)r value:(uint8_t)v
++{
++	uint8_t *d = (uint8_t *)[b contents];
++	if (d != NULL && r.length)
++		memset(d + r.location, v, r.length);
++}
++- (void)generateMipmapsForTexture:(id)t
++{
++	(void)t;
++	RW_ONCE("blit: generateMipmapsForTexture: is not done; the levels keep what they hold\n");
++}
++/* anything else a blit encoder is asked does nothing rather than abort the caller */
++- (NSMethodSignature *)methodSignatureForSelector:(SEL)s
++{
++	NSMethodSignature *m = [super methodSignatureForSelector:s];
++	return m ? m : [NSMethodSignature signatureWithObjCTypes:"v@:"];
++}
++- (void)forwardInvocation:(NSInvocation *)inv
++{
++	RW_ONCE("blit: %s is not implemented and was skipped\n", sel_getName([inv selector]));
++}
++@end
++
+ @implementation SweetNativeMetalCommandBuffer {
+ 	SweetNativeMetalCommandQueue *_queue;
+ 	NSMutableArray *_work;
+@@ -3613,7 +3798,11 @@
+ /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
+  * absent, for the reason the device's own 44 were answered: a missing selector aborts the
+  * caller, and these are the four that were still missing. */
+-- (id)blitCommandEncoder          { NATIVE_OBJECT_LOCK;  return nil; }
++- (id)blitCommandEncoder
++{ NATIVE_OBJECT_LOCK;
++	return [[[SweetNativeMetalBlitEncoder alloc] initWithDevice:[_queue device]] autorelease];
++}
++- (id)blitCommandEncoderWithDescriptor:(id)d { (void)d; return [self blitCommandEncoder]; }
+ - (id)resourceStateCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
+ - (id)accelerationStructureCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
+ - (void)encodeSignalEvent:(id)event value:(uint64_t)value { NATIVE_OBJECT_LOCK;  (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
