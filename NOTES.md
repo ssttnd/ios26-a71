@@ -940,3 +940,21 @@ Next:
   and trace whether the captured background pixels are nonzero before changing the renderer.
 - Phone is running the verified `2123-mercury-correlate` image. The hidden logger remains active. The Metal
   bundle is still CI `44802843341`; no CI dispatched in this session.
+
+## 2026-11-21 — cache compiled compute variants
+
+- Continued logging showed three `VTMTSComputeFunction1x1` pipeline creations alongside frontend command
+  windows with 23.74, 21.63 and 16.77 s of encode time, zero render draws, and 37, 24 and 6 ms of finish time.
+  Combined with the symbolicated `get_compute_state_info` wait, this points to real CPU compile latency before
+  GPU execution. It is still unverified whether eliminating repeat compilation restores the wallpaper.
+- `e8aa89a` is pushed. The Metal backend retains eight recent compute variants per Gallium context. Reuse
+  requires an exact serialized NIR match after function specialization and baking in the threadgroup size.
+  Pipeline references keep evicted states alive; keys over 2 MiB and failed compiles are not retained.
+  This does not speed up the first compile of a new variant.
+- Verified the Metal patches apply in CI order and the resulting Mesa backend passes a host C syntax/type
+  check. iOS Metal CI `44811566296` is building `e8aa89a`. Phone still runs the previous verified bundle.
+  Test the completed artifact for cache hits, Mercury encode times, and whether the wallpaper draws.
+- An isolated host test called the actual cache code with a mock Gallium context and NIR. It passed serialized
+  NIR reuse across independent pipelines, a miss for a different group size, rejection above the device limit,
+  survival after eviction while still referenced, and exactly one deletion per created state. It did not
+  execute GPU work. Device installation requires confirmation because the bundle is on the iOS root.
