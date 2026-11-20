@@ -906,3 +906,15 @@ Next:
   The 40-sample window is exhausted. For the next wake-to-wallpaper test, capture Mercury's `sweetdtlog` alongside
   stack samples and correlate the first render session with backend dispatch latency and completion. Glass has
   not been retested. No new kernel or Metal CI was dispatched.
+
+## 2026-11-21 — combined Mercury os_log and stack trace
+
+- `d0c1f63` is on `origin/codex/a71-settings`. `WORKFLOW.md` now requires pushing each commit and continuing
+  authorized work without waiting for another request.
+- Combined `--dtlog MercuryPosterExtension` with `--sample MercuryPosterExt --sample-interval-ms 5000`.
+  The initial command line was 614 bytes (shim limit: 607); removed `sweetfb_flip=0` from the packer after
+  verifying XNU defaults to zero in `SweetFramebuffer.cpp`. Kept the same verified kernel (CI `44805072035`),
+  30 Hz setting and no package replay. TWRP wrote and verified only `boot` for
+  `build/a71-ios26-2123-mercury-correlate.img` (22,478,848 bytes), SHA-256
+  `004c6ceaf427149a51b135f02b87eb5621ce10a797cb48d7d37f44f4cc42c874`. Requested system reboot.
+  New USB log is `logs/usb-ios26-2123-correlate.txt`.

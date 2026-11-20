@@ -19,7 +19,7 @@ BASE_ARGS = (
     'debug=0xc serial=1 keepsyms=1 -noprogress cpus=8 '
     'unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin wdt=-1 '
     'sweetarm64e=1 sweetearlyfb=1 -v sweetfb_noconsole=0 '
-    'sweetbattery=0 sweetusb=0 sweetcpufreq=0 sweetfb_flip=0'
+    'sweetbattery=0 sweetusb=0 sweetcpufreq=0'
 )
 SMOKE_ARGS = BASE_ARGS + ' rd=md0 sweetlog=0 -enable_kprintf_spam'
 ROOT_ARGS = BASE_ARGS + ' rd=ufsroot0 ufsrw=1 rootrw=1 sweetfb_scale=1 launchd_unsecure_cache=1 launchd_disable_all_timeouts=1'
