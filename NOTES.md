@@ -692,3 +692,4 @@
   SweetNativeMetalWork.nativeBlit) and run in order at commit, not at encode time; (2) generateMipmaps via
   util_gen_mipmap (rwa_texture_generate_mipmap); (3) pointer phis between different BUFFERS: a 32-bit selector
   register stored on each edge + the existing AIR_VAL_PTR_SELECT chain (textures/samplers/argbuf still refused).
+  Commit 55996bf, Metal CI `44705378496`.
