@@ -641,3 +641,4 @@
   Adreno. Fix (in ios26-image-write-levels.patch): render_draw records its colour targets; bind_stage gives a
   texture that is also a target a GPU copy of all its levels (resource_copy_region just before the draw,
   copy resource kept per texture). Logs "a draw samples its own colour target" (first 4).
+  Commit 08d807d, Metal CI `44700658186`.
