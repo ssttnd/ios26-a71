@@ -686,6 +686,166 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
 {'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('#include "nir_builder.h"\n',
+      '#include "nir_builder.h"\n#include "nir_serialize.h"\n#include "util/blob.h"\n'),
+     ('struct rwa_device {\n',
+      '''/* Keep recent compiled variants across pipeline lifetimes on the same context. */
+#define RWA_COMPUTE_CACHE_SIZE 8
+#define RWA_COMPUTE_CACHE_KEY_LIMIT (2u * 1024u * 1024u)
+
+struct rwa_compute_variant {
+   void *cso;
+   unsigned refs;
+   size_t key_size;
+   void *key;
+};
+
+struct rwa_device {
+   struct rwa_compute_variant *compute_cache[RWA_COMPUTE_CACHE_SIZE];
+   unsigned compute_cache_next;
+   bool compute_cache_reported;
+'''),
+     ('''   /* One compiled state, not a cache. The threadgroup size is a dispatch argument in
+    * Metal and a shader constant to both Gallium drivers here, so the state belongs to
+    * a size; a caller that alternates two sizes recompiles each time, which is a cost
+    * no caller here pays and cheaper than an eviction policy a library cannot choose.
+    */
+   void *cso;
+''',
+      '''   /* The pipeline retains its most recently used variant, even if evicted. */
+   struct rwa_compute_variant *variant;
+'''),
+     ('void\nrwa_device_close(struct rwa_device *device)\n',
+      '''static void release_compute_variant(struct rwa_device *, struct rwa_compute_variant *);
+
+void
+rwa_device_close(struct rwa_device *device)
+'''),
+     ('''   device->pipe->destroy(device->pipe);
+   device->screen->destroy(device->screen);
+   free(device);
+   glsl_type_singleton_decref();
+}
+''',
+      '''   for (unsigned i = 0; i < RWA_COMPUTE_CACHE_SIZE; i++)
+      release_compute_variant(device, device->compute_cache[i]);
+   device->pipe->destroy(device->pipe);
+   device->screen->destroy(device->screen);
+   free(device);
+   glsl_type_singleton_decref();
+}
+'''),
+     ('void\nrwa_compute_destroy(struct rwa_compute *compute)\n',
+      '''static void
+release_compute_variant(struct rwa_device *device, struct rwa_compute_variant *variant)
+{
+   if (variant && --variant->refs == 0) {
+      delete_compute_state(device, variant->cso);
+      free(variant->key);
+      free(variant);
+   }
+}
+
+void
+rwa_compute_destroy(struct rwa_compute *compute)
+'''),
+     ('''   if (compute->cso)
+      delete_compute_state(compute->device, compute->cso);
+''',
+      '''   release_compute_variant(compute->device, compute->variant);
+'''),
+     ('''   if (compute->cso && compute->cso_block[0] == block[0] &&
+       compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2])
+      return compute->cso;
+
+   if (compute->cso) {
+      delete_compute_state(device, compute->cso);
+      compute->cso = NULL;
+   }
+''',
+      '''   if (compute->variant && compute->cso_block[0] == block[0] &&
+       compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2])
+      return compute->variant->cso;
+'''),
+     ('''   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {ralloc_free(cs);return NULL;}
+''',
+      '''   /* This NIR already includes the function constants and the group size. Strip
+    * names and compare the full serialization within this device's context.
+    */
+   struct blob key;
+   blob_init(&key);
+   nir_serialize(&key, cs, true);
+   const bool cacheable = !key.out_of_memory && key.size <= RWA_COMPUTE_CACHE_KEY_LIMIT;
+   if (cacheable) {
+      for (unsigned i = 0; i < RWA_COMPUTE_CACHE_SIZE; i++) {
+         struct rwa_compute_variant *variant = device->compute_cache[i];
+         if (!variant || variant->key_size != key.size ||
+             memcmp(variant->key, key.data, key.size) != 0)
+            continue;
+
+         blob_finish(&key);
+         ralloc_free(cs);
+         variant->refs++;
+         release_compute_variant(device, compute->variant);
+         compute->variant = variant;
+         memcpy(compute->cso_block, block, sizeof(compute->cso_block));
+         if (!device->compute_cache_reported) {
+            fprintf(stderr, "SweetNativeMetal: reusing compiled compute variant %s (%ux%ux%u)\\n",
+                    compute->info.entry_point ? compute->info.entry_point : "unknown",
+                    block[0], block[1], block[2]);
+            device->compute_cache_reported = true;
+         }
+         return variant->cso;
+      }
+   }
+
+   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {
+      blob_finish(&key);
+      ralloc_free(cs);
+      return NULL;
+   }
+'''),
+     ('''      say(why, why_size, "%s would not make a compute pipeline of %s",
+''',
+      '''      blob_finish(&key);
+      say(why, why_size, "%s would not make a compute pipeline of %s",
+'''),
+     ('''         delete_compute_state(device, cso);
+         return NULL;
+''',
+      '''         delete_compute_state(device, cso);
+         blob_finish(&key);
+         return NULL;
+'''),
+     ('''   compute->cso = cso;
+   compute->cso_block[0] = block[0];
+   compute->cso_block[1] = block[1];
+   compute->cso_block[2] = block[2];
+''',
+      '''   struct rwa_compute_variant *variant = calloc(1, sizeof(*variant));
+   if (!variant) {
+      delete_compute_state(device, cso);
+      blob_finish(&key);
+      say(why, why_size, "out of memory keeping a compiled compute variant");
+      return NULL;
+   }
+   variant->cso = cso;
+   variant->refs = 1;
+   if (cacheable) {
+      variant->key = key.data;
+      variant->key_size = key.size;
+      variant->refs++;
+      unsigned index = device->compute_cache_next;
+      release_compute_variant(device, device->compute_cache[index]);
+      device->compute_cache[index] = variant;
+      device->compute_cache_next = (index + 1) % RWA_COMPUTE_CACHE_SIZE;
+   } else {
+      blob_finish(&key);
+   }
+   release_compute_variant(device, compute->variant);
+   compute->variant = variant;
+   memcpy(compute->cso_block, block, sizeof(compute->cso_block));
+'''),
      ('         images[r->index] = (struct pipe_image_view){',
       '         images[r->image_slot] = (struct pipe_image_view){'),
      ('            .u.tex.level = t->first_level,\n            .u.tex.first_layer = 0,',

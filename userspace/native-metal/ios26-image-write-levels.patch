@@ -690,7 +690,16 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 --- a/tools/mesa/air/air_metal.c
 +++ b/tools/mesa/air/air_metal.c
-@@ -64,6 +64,7 @@
+@@ -38,6 +38,8 @@
+ 
+ #include "nir.h"
+ #include "nir_builder.h"
++#include "nir_serialize.h"
++#include "util/blob.h"
+ #include "nir_air.h"
+ #include "air_live_resources.inc"
+ #include "air_stage_link.inc"
+@@ -64,6 +66,7 @@
  #include "util/format/u_format.h"
  #include "util/half_float.h"
  #include "util/u_inlines.h"
@@ -698,8 +707,25 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  #include "util/u_sampler.h"
  #include "util/u_debug.h"
  
-@@ -85,6 +86,9 @@
+@@ -82,9 +85,26 @@
+  */
+ #define RWA_MAX_TEXTURES 16
+ 
++/* Keep recent compiled variants across pipeline lifetimes on the same context. */
++#define RWA_COMPUTE_CACHE_SIZE 8
++#define RWA_COMPUTE_CACHE_KEY_LIMIT (2u * 1024u * 1024u)
++
++struct rwa_compute_variant {
++   void *cso;
++   unsigned refs;
++   size_t key_size;
++   void *key;
++};
++
  struct rwa_device {
++   struct rwa_compute_variant *compute_cache[RWA_COMPUTE_CACHE_SIZE];
++   unsigned compute_cache_next;
++   bool compute_cache_reported;
     struct pipe_screen *screen;
     struct pipe_context *pipe;
 +   /* the colour targets of the draw being bound, for hazard_view */
@@ -708,7 +734,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     /* NIR's options for this screen, asked once: the translator needs them to know what
      * the consumer can be handed (what it may leave for the backend to lower).
-@@ -219,6 +223,8 @@
+@@ -219,6 +239,8 @@
     struct rwa_device *device;
     struct pipe_resource *res;
     struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */
@@ -717,7 +743,40 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_surface *native_surface;
     struct rwa_texture_shape shape;
     const char *format_name;         /* the MTLPixelFormat, spelled out */
-@@ -868,6 +874,34 @@
+@@ -311,12 +333,8 @@
+     */
+    bool compare_sampler[RWA_MAX_TEXTURES];
+ 
+-   /* One compiled state, not a cache. The threadgroup size is a dispatch argument in
+-    * Metal and a shader constant to both Gallium drivers here, so the state belongs to
+-    * a size; a caller that alternates two sizes recompiles each time, which is a cost
+-    * no caller here pays and cheaper than an eviction policy a library cannot choose.
+-    */
+-   void *cso;
++   /* The pipeline retains its most recently used variant, even if evicted. */
++   struct rwa_compute_variant *variant;
+    unsigned cso_block[3];
+ };
+ 
+@@ -613,6 +631,8 @@
+    return NULL;
+ }
+ 
++static void release_compute_variant(struct rwa_device *, struct rwa_compute_variant *);
++
+ void
+ rwa_device_close(struct rwa_device *device)
+ {
+@@ -622,6 +642,8 @@
+       return;
+    if (device->default_sampler)
+       device->pipe->delete_sampler_state(device->pipe, device->default_sampler);
++   for (unsigned i = 0; i < RWA_COMPUTE_CACHE_SIZE; i++)
++      release_compute_variant(device, device->compute_cache[i]);
+    device->pipe->destroy(device->pipe);
+    device->screen->destroy(device->screen);
+    free(device);
+@@ -868,6 +890,34 @@
     {  55, "MTLPixelFormatR32Float",        PIPE_FORMAT_R32_FLOAT },
     {  60, "MTLPixelFormatRG16Unorm",       PIPE_FORMAT_R16G16_UNORM },
     {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },
@@ -752,7 +811,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
     {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
     {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
-@@ -1333,6 +1367,10 @@
+@@ -1333,6 +1383,10 @@
     }
     if (depth_stencil)
        write = false;
@@ -763,7 +822,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     unsigned bind = (read ? PIPE_BIND_SAMPLER_VIEW : 0) |
                     (write ? PIPE_BIND_SHADER_IMAGE : 0) |
-@@ -1579,6 +1617,8 @@
+@@ -1579,6 +1633,8 @@
      * below is about.
      */
     pipe_sampler_view_reference(&texture->view, NULL);
@@ -772,7 +831,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe_surface_reference(&texture->native_surface, NULL);
     pipe_resource_reference(&texture->res, NULL);
     free(texture);
-@@ -1658,7 +1698,7 @@
+@@ -1658,7 +1714,7 @@
                size_t *out, char *why, size_t why_size)
  {
     unsigned texel = util_format_get_blocksize(texture->res->format);
@@ -781,7 +840,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1670,6 +1710,54 @@
+@@ -1670,6 +1726,54 @@
     }
     *out = stride;
     return true;
@@ -836,7 +895,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  }
  
  int
-@@ -1775,7 +1863,8 @@
+@@ -1775,7 +1879,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -846,10 +905,144 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3717,6 +3806,62 @@
-    d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
+@@ -3081,13 +3186,22 @@
+    device->pipe->delete_compute_state(device->pipe, cso);
  }
  
++static void
++release_compute_variant(struct rwa_device *device, struct rwa_compute_variant *variant)
++{
++   if (variant && --variant->refs == 0) {
++      delete_compute_state(device, variant->cso);
++      free(variant->key);
++      free(variant);
++   }
++}
++
+ void
+ rwa_compute_destroy(struct rwa_compute *compute)
+ {
+    if (!compute)
+       return;
+-   if (compute->cso)
+-      delete_compute_state(compute->device, compute->cso);
++   release_compute_variant(compute->device, compute->variant);
+    /* and the states built for the samplers the shader declared itself. Nothing is
+     * unbound first, for the reason rwa_sampler_destroy gives: a dispatch leaves
+     * nothing of its own bound.
+@@ -3121,14 +3235,9 @@
+ {
+    struct rwa_device *device = compute->device;
+ 
+-   if (compute->cso && compute->cso_block[0] == block[0] &&
++   if (compute->variant && compute->cso_block[0] == block[0] &&
+        compute->cso_block[1] == block[1] && compute->cso_block[2] == block[2])
+-      return compute->cso;
+-
+-   if (compute->cso) {
+-      delete_compute_state(device, compute->cso);
+-      compute->cso = NULL;
+-   }
++      return compute->variant->cso;
+ 
+    nir_shader *cs = nir_shader_clone(NULL, compute->nir);
+    if (!cs) {
+@@ -3140,7 +3249,41 @@
+    cs->info.workgroup_size[2] = block[2];
+    cs->info.workgroup_size_variable = false;
+ 
+-   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {ralloc_free(cs);return NULL;}
++   /* This NIR already includes the function constants and the group size. Strip
++    * names and compare the full serialization within this device's context.
++    */
++   struct blob key;
++   blob_init(&key);
++   nir_serialize(&key, cs, true);
++   const bool cacheable = !key.out_of_memory && key.size <= RWA_COMPUTE_CACHE_KEY_LIMIT;
++   if (cacheable) {
++      for (unsigned i = 0; i < RWA_COMPUTE_CACHE_SIZE; i++) {
++         struct rwa_compute_variant *variant = device->compute_cache[i];
++         if (!variant || variant->key_size != key.size ||
++             memcmp(variant->key, key.data, key.size) != 0)
++            continue;
++
++         blob_finish(&key);
++         ralloc_free(cs);
++         variant->refs++;
++         release_compute_variant(device, compute->variant);
++         compute->variant = variant;
++         memcpy(compute->cso_block, block, sizeof(compute->cso_block));
++         if (!device->compute_cache_reported) {
++            fprintf(stderr, "SweetNativeMetal: reusing compiled compute variant %s (%ux%ux%u)\n",
++                    compute->info.entry_point ? compute->info.entry_point : "unknown",
++                    block[0], block[1], block[2]);
++            device->compute_cache_reported = true;
++         }
++         return variant->cso;
++      }
++   }
++
++   if (!finalize_for_gallium(cs, device->screen, why, why_size)) {
++      blob_finish(&key);
++      ralloc_free(cs);
++      return NULL;
++   }
+ 
+    void *cso = device->pipe->create_compute_state(device->pipe,
+       &(struct pipe_compute_state){
+@@ -3151,6 +3294,7 @@
+        * it already, and neither of the two drivers in this build can reach this at all
+        * (both return a state object and report a bad shader later, at launch).
+        */
++      blob_finish(&key);
+       say(why, why_size, "%s would not make a compute pipeline of %s",
+           device->screen->get_name(device->screen),
+           compute->info.entry_point ? compute->info.entry_point : "the shader");
+@@ -3172,14 +3316,34 @@
+                             "compiled shader takes at most %u: it uses too many "
+                             "registers for a group that large", threads, si.max_threads);
+          delete_compute_state(device, cso);
++         blob_finish(&key);
+          return NULL;
+       }
+    }
+ 
+-   compute->cso = cso;
+-   compute->cso_block[0] = block[0];
+-   compute->cso_block[1] = block[1];
+-   compute->cso_block[2] = block[2];
++   struct rwa_compute_variant *variant = calloc(1, sizeof(*variant));
++   if (!variant) {
++      delete_compute_state(device, cso);
++      blob_finish(&key);
++      say(why, why_size, "out of memory keeping a compiled compute variant");
++      return NULL;
++   }
++   variant->cso = cso;
++   variant->refs = 1;
++   if (cacheable) {
++      variant->key = key.data;
++      variant->key_size = key.size;
++      variant->refs++;
++      unsigned index = device->compute_cache_next;
++      release_compute_variant(device, device->compute_cache[index]);
++      device->compute_cache[index] = variant;
++      device->compute_cache_next = (index + 1) % RWA_COMPUTE_CACHE_SIZE;
++   } else {
++      blob_finish(&key);
++   }
++   release_compute_variant(device, compute->variant);
++   compute->variant = variant;
++   memcpy(compute->cso_block, block, sizeof(compute->cso_block));
+    return cso;
+ }
+ 
+@@ -3715,6 +3879,62 @@
+    d->pipe->set_constant_buffer(d->pipe,stage,slot,false,cb);
+    d->native_cb_ns+=native_now_ns()-began;
+    d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
++}
++
 +/* The view a draw samples when the texture is also one of its colour targets: a copy of
 + * every level of it, made by the GPU in submission order before the draw, kept with the
 + * texture and refreshed at each such draw. NULL if the copy could not be made.
@@ -904,12 +1097,10 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +              "it reads a copy made just before it\n", res->width0, res->height0, t->level_count);
 +   }
 +   return t->hazard_view;
-+}
-+
+ }
+ 
  static int
- bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
-            const struct air_shader_info *info, void **own_sampler,
-@@ -3903,12 +4048,27 @@
+@@ -3903,12 +4123,27 @@
                 return -1;
              }
           }
@@ -939,7 +1130,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4078,14 @@
+@@ -3918,12 +4153,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -956,7 +1147,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -7201,6 +7363,10 @@
+@@ -7201,6 +7438,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -967,7 +1158,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7294,6 +7460,7 @@
+@@ -7294,6 +7535,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
