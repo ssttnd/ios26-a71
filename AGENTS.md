@@ -2,6 +2,8 @@
 
 - Every new chat or session (Claude, ChatGPT/Codex) starts by turning on Remote Control for that chat. Do it once,
   only at the very start of a new chat, not again later in the same chat.
+- Read `docs/WORKFLOW.md` (how to drive the phone, logs, flashing, packages, CI, the PC reboot-to-TWRP command)
+  and keep it current when a procedure changes.
 - Read `NOTES.md` before starting: current state, blockers, next action. Older Redmi history is in
   `docs/sweet-history-notes.md`; search it, do not read it in full.
 - The user switches agents often. Update the handoff in `NOTES.md` after each milestone and before stopping:
