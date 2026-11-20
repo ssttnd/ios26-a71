@@ -754,3 +754,24 @@ Open:
   known_hosts: the host key changed). Donor sources under research/ios26 are CRLF: convert to LF before git apply
   on Linux. QuartzCore's glass shaders are not on disk as .metallib (embedded in the dyld cache): carve MTLB
   containers from the cache next, then audit them for approximations (glass vanishing has no refusals).
+- **Offline air2nir report done** (host build in the VM: `~/w/work/build-host/src/compiler/air/air2nir`, Mesa
+  25.0.7 + donor + blur + levels patches incl. 9e38959, `-Dgallium-drivers=` is enough for air2nir). Whole root:
+  9144 modules translate, 14947 refused, mostly irrelevant (8988 air.visible library functions, ray tracing,
+  tessellation, imageblock).
+  - Mercury (`research/metallibs/0018.metallib`): 29/44 translate. **All space::* (the selected poster) and all
+    fluidity::* (stock iOS 26 wallpaper) translate** with 9e38959, so call-split should unblock their shaders.
+    Still refused (other Mercury posters): Ajisai/Jurin frag "an externally initialized variable that is not a
+    function constant", Flocon colour frag "a struct where a number belongs", shippou compute stores function
+    pointers in memory ("function value used before it is defined"), tori::four vertex "array where a number
+    belongs".
+  - CoreAnimation glass: `/System/Library/Frameworks/QuartzCore.framework/default.metallib` is a fat file (cafebabe);
+    its first MTLB at +48 (1,552,128 bytes) is CA's AIR. Carved to ignored `research/metallibs-wrapped/w0000_0.metallib`.
+    173/189 translate; the 16 refusals are all imageblock tile shaders. Every glass/blur shader translates (glass_
+    background*/foreground*, variable_blur*, downsample*, narrow_blur*), with no approximation note. Glass samples
+    the blur chain with an explicit level (txl) through an inline sampler: linear/linear/mip linear, lod 0..65504,
+    decoded correctly. setVertexBytes/setFragmentBytes copy at once; viewport and scissor are applied
+    (air_metal.c ~7086, rasterizer scissor=1). So the vanishing glass is NOT a translation problem.
+- 0b083bf adds GLASSSTAT (always on, no file): once a second each process logs `GLASSSTAT ... draws N glass_bg
+  N glass_fg N blur N`. With the owner opening CC and pressing buttons, this tells whether CA stops sending glass
+  draws when it vanishes (CA's own choice, e.g. late frames: swap_wait_timeouts 674 in a boot) or keeps sending
+  them (our rendering). Combined Metal CI `44791373178` (call-split + GLASSSTAT) building.
