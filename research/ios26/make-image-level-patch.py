@@ -1,0 +1,1084 @@
+"""Generate userspace/native-metal/ios26-image-write-levels.patch against the donor tree.
+
+Metal's texture.write(value, coord, lod) may name the mip level at run time (Mercury's
+VariableBlurrer::downsample builds its chain that way). A Gallium image view is one level,
+so every texture written at a level other than a constant 0 gets up to eight extra image
+slots, slot base+k bound to level k of the same texture, and the store picks its slot from
+the level. Applies after ios26-mip-views.patch and ios26-blur-attachments.patch.
+"""
+from pathlib import Path
+from difflib import unified_diff
+
+r = Path('research/ios26/native-glass-src/donor')
+changes = []
+
+_astc = []
+for _i, (_w, _h) in enumerate([(4, 4), (5, 4), (5, 5), (6, 5), (6, 6)]):
+    _astc += [(186 + _i, f'ASTC_{_w}x{_h}_sRGB', f'ASTC_{_w}x{_h}_SRGB'), (204 + _i, f'ASTC_{_w}x{_h}_LDR', f'ASTC_{_w}x{_h}')]
+for _i, (_w, _h) in enumerate([(8, 5), (8, 6), (8, 8), (10, 5), (10, 6), (10, 8), (10, 10), (12, 10), (12, 12)]):
+    _astc += [(192 + _i, f'ASTC_{_w}x{_h}_sRGB', f'ASTC_{_w}x{_h}_SRGB'), (210 + _i, f'ASTC_{_w}x{_h}_LDR', f'ASTC_{_w}x{_h}')]
+ASTC_ROWS = ''.join(f'   {{ {m:3d}, "MTLPixelFormat{n}", PIPE_FORMAT_{g} }},\n' for m, n, g in sorted(_astc))
+
+
+def edit(name, *pairs):
+    old = (r / name).read_text(encoding='utf-8')
+    new = old
+    for a, b in pairs:
+        assert new.count(a) == 1, (name, a, new.count(a))
+        new = new.replace(a, b)
+    changes.append(f'diff --git a/{name} b/{name}\n' +
+                   ''.join(unified_diff(old.splitlines(True), new.splitlines(True), f'a/{name}', f'b/{name}')))
+
+
+edit('tools/mesa/air/nir_air.h',
+     ('   unsigned native_read_bytes; /* proved constant-offset UBO extent, zero = unknown */\n};',
+      '''   unsigned native_read_bytes; /* proved constant-offset UBO extent, zero = unknown */
+
+   /* A written texture is one Gallium image view, which is one mip level. image_slot is
+    * the image binding (Metal's index unless this is a level alias); mip_level is the
+    * level a level alias binds; level_base/level_count, on the texture's own entry, say
+    * where its aliases are when the shader writes a level that is not a constant 0.
+    */
+   unsigned image_slot;
+   unsigned mip_level;
+   unsigned level_base, level_count;
+};'''))
+
+edit('tools/mesa/air/air_to_nir.c',
+     ('      .argbuf_set = ~0u, .argbuf_id = ~0u,\n   };\n   return &info->resources[info->num_resources++];',
+      '      .argbuf_set = ~0u, .argbuf_id = ~0u,\n      .image_slot = index,\n   };\n   return &info->resources[info->num_resources++];'),
+     ('''         c.nir->info.num_images = MAX2(c.nir->info.num_images, r->index + 1);
+         BITSET_SET(c.nir->info.images_used, r->index);''',
+      '''         c.nir->info.num_images = MAX2(c.nir->info.num_images, r->image_slot + 1);
+         BITSET_SET(c.nir->info.images_used, r->image_slot);'''),
+     # Mercury's VTMTSComputeFunction1x1 bitcasts i32 -> <4 x i8>. Any reshaping that keeps
+     # the total bit count is the same little-endian move; NIR has it as nir_bitcast_vector.
+     ('''      else
+         return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "''',
+      '''      else if (sn * sb == dn * db)
+         res = nir_bitcast_vector(&c->b, x, db);
+      else
+         return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "'''),
+     # Mercury passes a texture chosen at run time (a pointer phi) to a function of its
+     # module. The callee is specialised per pointer, so the call is split: a goto_if on
+     # the choice, one call per side, both joining before the rest of the block (the CFG
+     # is unstructured here; nir_lower_goto_ifs orders it). Results go through the same
+     # local variables; SSA arguments are fetched before the split so they dominate both.
+     ('''/* A call of a function this module defines. The callee is translated as a
+ * nir_function (above)''',
+      '''/* A new block of the current impl, placed the way the switch lowering does */
+static nir_block *
+call_split_block(struct air_ctx *c)
+{
+   nir_block *nb = nir_block_create(c->nir);
+   exec_list_push_tail(&c->b.impl->body, &nb->cf_node.node);
+   nb->cf_node.parent = &c->b.impl->cf_node;
+   return nb;
+}
+
+/* the first pointer chosen at run time in an argument, itself or inside a struct */
+static struct air_val *
+first_chosen_ptr(struct air_val *v)
+{
+   if (!v)
+      return NULL;
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2)
+      return v;
+   if (v->kind == AIR_VAL_AGG) {
+      for (unsigned i = 0; i < v->num_elems; i++) {
+         struct air_val *s = first_chosen_ptr(v->elems[i]);
+         if (s)
+            return s;
+      }
+   }
+   return NULL;
+}
+
+/* the argument with that choice made: sel replaced by side, structs copied */
+static struct air_val *
+with_choice_made(struct air_ctx *c, struct air_val *v, struct air_val *sel,
+                 struct air_val *side)
+{
+   if (v == sel)
+      return side;
+   if (!v || v->kind != AIR_VAL_AGG)
+      return v;
+   struct air_val *agg = air_val_agg(c, v->num_elems);
+   for (unsigned i = 0; i < v->num_elems; i++)
+      agg->elems[i] = with_choice_made(c, v->elems[i], sel, side);
+   return agg;
+}
+
+static bool
+emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_function *f,
+                 const char *name, struct air_val **argv, nir_def **ssa,
+                 nir_variable *tmp, nir_variable **fields)
+{
+   for (unsigned i = 0; i < f->num_args; i++) {
+      struct air_val *sel = first_chosen_ptr(argv[i]);
+      if (!sel)
+         continue;
+      nir_block *side_block[2] = { call_split_block(c), call_split_block(c) };
+      nir_block *join = call_split_block(c);
+      nir_goto_if(&c->b, side_block[0], sel->def, side_block[1]);
+      for (unsigned s = 0; s < 2; s++) {
+         struct air_val **side = rzalloc_array(c->mem_ctx, struct air_val *,
+                                               MAX2(f->num_args, 1));
+         memcpy(side, argv, sizeof(*side) * f->num_args);
+         side[i] = with_choice_made(c, argv[i], sel, sel->elems[s]);
+         c->b.cursor = nir_after_block(side_block[s]);
+         if (!emit_module_call(c, in, f, name, side, ssa, tmp, fields))
+            return false;
+         nir_goto(&c->b, join);
+      }
+      c->b.cursor = nir_after_block(join);
+      return true;
+   }
+
+   bool *is_param = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_args, 1));
+   nir_function *fn = translate_callee(c, f, argv, is_param);
+   if (!fn)
+      return false;   /* translate_callee has said why */
+
+   const struct air_type *rt = f->fn_type->elem;
+   nir_call_instr *call = nir_call_instr_create(c->nir, fn);
+   unsigned idx = 0;
+   if (fields) {
+      for (unsigned i = 0; i < rt->num_members; i++)
+         if (fields[i])
+            call->params[idx++] =
+               nir_src_for_ssa(&nir_build_deref_var(&c->b, fields[i])->def);
+   } else if (tmp) {
+      call->params[idx++] = nir_src_for_ssa(&nir_build_deref_var(&c->b, tmp)->def);
+   }
+   /* operand 0 is the callee; the arguments follow it */
+   for (unsigned i = 0; i < f->num_args; i++) {
+      if (!is_param[i]) {
+         if (arg_is_flat(f, argv, is_param, i))
+            pass_leaves(call, &idx, argv[i]);
+         continue;
+      }
+      nir_def *a = ssa[i] ? ssa[i] : air_get_ssa(c, in->operands[i + 1]);
+      if (!a)
+         return air_error(c, "intrinsic: argument %u of %s is not a value this can pass",
+                          i, name);
+      call->params[idx++] = nir_src_for_ssa(a);
+   }
+   nir_builder_instr_insert(&c->b, &call->instr);
+   return true;
+}
+
+/* A call of a function this module defines. The callee is translated as a
+ * nir_function (above)'''),
+     ('''   bool *is_param = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_args, 1));
+   for (unsigned i = 0; i < f->num_args; i++) {
+      argv[i] = air_get(c, in->operands[i + 1]);
+      if (!argv[i])
+         return false;
+   }
+
+   nir_function *fn = translate_callee(c, f, argv, is_param);
+   if (!fn)
+      return false;   /* translate_callee has said why */
+
+   const struct air_type *rt''',
+      '''   nir_def **ssa = rzalloc_array(c->mem_ctx, nir_def *, MAX2(f->num_args, 1));
+   for (unsigned i = 0; i < f->num_args; i++) {
+      argv[i] = air_get(c, in->operands[i + 1]);
+      if (!argv[i])
+         return false;
+      if (argv[i]->kind == AIR_VAL_SSA)
+         ssa[i] = argv[i]->def;
+   }
+
+   const struct air_type *rt'''),
+     ('''   nir_call_instr *call = nir_call_instr_create(c->nir, fn);
+   unsigned idx = 0;
+   if (ret_struct) {
+      for (unsigned i = 0; i < rt->num_members; i++) {
+         if (!ret_member_is_number(rt->members[i]))
+            continue;
+         fields[i] = nir_local_variable_create(c->b.impl,
+                                               param_glsl_type(c, rt->members[i]),
+                                               "callret");
+         call->params[idx++] =
+            nir_src_for_ssa(&nir_build_deref_var(&c->b, fields[i])->def);
+      }
+   } else if (has_ret) {
+      tmp = nir_local_variable_create(c->b.impl, param_glsl_type(c, rt), "callret");
+      call->params[idx++] = nir_src_for_ssa(&nir_build_deref_var(&c->b, tmp)->def);
+   }
+   /* operand 0 is the callee; the arguments follow it */
+   for (unsigned i = 0; i < f->num_args; i++) {
+      if (!is_param[i]) {
+         if (arg_is_flat(f, argv, is_param, i))
+            pass_leaves(call, &idx, argv[i]);
+         continue;
+      }
+      nir_def *a = air_get_ssa(c, in->operands[i + 1]);
+      if (!a)
+         return air_error(c, "intrinsic: argument %u of %s is not a value this can pass",
+                          i, name);
+      call->params[idx++] = nir_src_for_ssa(a);
+   }
+   nir_builder_instr_insert(&c->b, &call->instr);
+''',
+      '''   if (ret_struct) {
+      for (unsigned i = 0; i < rt->num_members; i++)
+         if (ret_member_is_number(rt->members[i]))
+            fields[i] = nir_local_variable_create(c->b.impl,
+                                                  param_glsl_type(c, rt->members[i]),
+                                                  "callret");
+   } else if (has_ret) {
+      tmp = nir_local_variable_create(c->b.impl, param_glsl_type(c, rt), "callret");
+   }
+   if (!emit_module_call(c, in, f, name, argv, ssa, tmp, fields))
+      return false;
+'''),
+     # A phi of pointers to different buffers (Mercury's wallpaper render pipeline): each
+     # incoming edge stores which one it brings into a 32-bit register, and the phi becomes
+     # the select chain AIR_VAL_PTR_SELECT already gives a `select` of buffer pointers.
+     # Textures, samplers and argument-buffer members cannot be loaded that way and keep
+     # their refusal.
+     ('''static bool
+resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
+                    const struct air_edges *edges)
+{''',
+      '''struct air_ptr_phi {
+   nir_def *reg;
+   unsigned n;
+   struct air_val *v[8];
+};
+#define PTR_PHI_KEY(in) ((const void *)((const char *)(in) + 1))
+
+static bool
+resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
+                    const struct air_edges *edges)
+{'''),
+     ('''      if (!first)
+         first = v;
+      else if (!same_ptr(&first->ptr, &v->ptr))
+         return air_error(c, "instruction: a phi between pointers that name different "
+                             "places, which would have to be chosen at run time");
+   }
+   if (!first)
+      return air_error(c, "instruction: a phi of pointers with no reachable operand");
+   air_set(c, &in->base, first);
+   return true;
+}''',
+      '''      if (!first)
+         first = v;
+      if (!same_ptr(&first->ptr, &v->ptr)) {
+         struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
+         struct air_ptr_phi *pp = pe ? pe->data : NULL;
+         /* buffers are loaded on both sides and selected; a texture or sampler is
+          * split per place by texture_op (air_intrinsics.c); an argument-buffer member
+          * has neither */
+         bool loadable = v->ptr.class != AIR_PTR_ARGBUF && first->ptr.class != AIR_PTR_ARGBUF;
+         if (!pp || !loadable)
+            return air_error(c, "instruction: a phi between pointers that name different "
+                                "places, which would have to be chosen at run time");
+      }
+   }
+   if (!first)
+      return air_error(c, "instruction: a phi of pointers with no reachable operand");
+   /* the distinct places, in the order the edges bring them */
+   struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
+   struct air_ptr_phi *pp = pe ? pe->data : NULL;
+   if (pp) {
+      pp->n = 0;
+      for (unsigned k = 0; k < in->num_operands; k++) {
+         if (!in->targets[k] ||
+             !edge_possible(edges, in->targets[k]->index, in->parent->index))
+            continue;
+         struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
+         struct air_val *v = e ? e->data : NULL;
+         if (!v)
+            continue;
+         bool seen = false;
+         for (unsigned j = 0; j < pp->n; j++)
+            seen |= same_ptr(&pp->v[j]->ptr, &v->ptr);
+         if (!seen) {
+            if (pp->n == ARRAY_SIZE(pp->v))
+               return air_error(c, "instruction: a phi between more than %u different "
+                                   "pointers", (unsigned)ARRAY_SIZE(pp->v));
+            pp->v[pp->n++] = v;
+         }
+      }
+   }
+   if (!pp || pp->n < 2) {
+      if (pp)
+         pp->n = 0;
+      air_set(c, &in->base, first);
+      return true;
+   }
+   nir_def *sel = nir_load_reg(&c->b, pp->reg);
+   struct air_val *r = pp->v[pp->n - 1];
+   for (int j = (int)pp->n - 2; j >= 0; j--)
+      r = air_val_ptr_select(c, nir_ieq_imm(&c->b, sel, j), pp->v[j], r);
+   air_set(c, &in->base, r);
+   return true;
+}'''),
+     ('''         if (in->op != AIR_OP_PHI || in->base.type->kind == AIR_TYPE_POINTER)
+            continue;''',
+      '''         if (in->op != AIR_OP_PHI)
+            continue;
+         if (in->base.type->kind == AIR_TYPE_POINTER) {
+            struct air_ptr_phi *pp = rzalloc(c->mem_ctx, struct air_ptr_phi);
+            pp->reg = nir_decl_reg(&entry, 1, 32, 0);
+            _mesa_hash_table_insert(c->phi_regs, PTR_PHI_KEY(in), pp);
+            continue;
+         }'''),
+     ('''         struct hash_entry *re = _mesa_hash_table_search(c->phi_regs, in);
+         if (!re)
+            continue; /* a phi in an unreachable block, or one of pointers */''',
+      '''         if (in->base.type->kind == AIR_TYPE_POINTER) {
+            struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
+            struct air_ptr_phi *pp = pe ? pe->data : NULL;
+            if (!pp || pp->n < 2)
+               continue; /* resolved to one place, or never reached */
+            for (unsigned k = 0; k < in->num_operands; k++) {
+               struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
+               if (!ce || !edge_possible(&edges, in->targets[k]->index, bi))
+                  continue;
+               struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
+               struct air_val *v = e ? e->data : NULL;
+               unsigned j = 0;
+               while (v && j < pp->n && !same_ptr(&pp->v[j]->ptr, &v->ptr))
+                  j++;
+               if (!v || j == pp->n)
+                  return air_error(c, "instruction: a phi of pointers whose operand is not "
+                                      "one of the places it was resolved to");
+               c->b.cursor = *(nir_cursor *)ce->data;
+               nir_store_reg(&c->b, nir_imm_int(&c->b, (int)j), pp->reg);
+               *(nir_cursor *)ce->data = c->b.cursor;
+            }
+            continue;
+         }
+         struct hash_entry *re = _mesa_hash_table_search(c->phi_regs, in);
+         if (!re)
+            continue; /* a phi in an unreachable block */'''))
+
+edit('tools/mesa/air/air_intrinsics.c',
+     # Mercury packs colour as Metal's pack_float_to_unorm10a2: saturate, scale by 1023 or
+     # 3, round to nearest, R in the low ten bits and A in the top two. Its unpack is the
+     # inverse. Both are spelt air.(un)pack.unorm.rgb10a2.<type>.
+     ('''   } else if (!strcmp(op, "unpack") && n->num >= 2 &&
+              !strcmp(n->part[1], "unorm4x8")) {''',
+      '''   } else if (!strcmp(op, "pack") && n->num >= 2 &&
+              (!strcmp(n->part[1], "unorm4x8") || !strcmp(n->part[1], "snorm4x8") ||
+               !strcmp(n->part[1], "unorm2x16") || !strcmp(n->part[1], "snorm2x16"))) {
+      /* Metal's pack_float_to_{u,s}norm{4x8,2x16}: GLSL's packUnorm4x8 and friends,
+       * component 0 in the low bits, which is what NIR's opcodes define */
+      nir_def *v = nir_f2f32(&c->b, a[0]);
+      const char *k = n->part[1];
+      r = !strcmp(k, "unorm4x8") ? nir_pack_unorm_4x8(&c->b, v) :
+          !strcmp(k, "snorm4x8") ? nir_pack_snorm_4x8(&c->b, v) :
+          !strcmp(k, "unorm2x16") ? nir_pack_unorm_2x16(&c->b, v) :
+                                    nir_pack_snorm_2x16(&c->b, v);
+   } else if (!strcmp(op, "unpack") && n->num >= 2 &&
+              (!strcmp(n->part[1], "snorm4x8") || !strcmp(n->part[1], "unorm2x16") ||
+               !strcmp(n->part[1], "snorm2x16"))) {
+      nir_def *w = nir_u2u32(&c->b, a[0]);
+      const char *k = n->part[1];
+      r = !strcmp(k, "snorm4x8") ? nir_unpack_snorm_4x8(&c->b, w) :
+          !strcmp(k, "unorm2x16") ? nir_unpack_unorm_2x16(&c->b, w) :
+                                    nir_unpack_snorm_2x16(&c->b, w);
+      if (air_nir_bit_size(c, in->base.type) == 16)
+         r = nir_f2f16(&c->b, r);
+   } else if ((!strcmp(op, "pack") || !strcmp(op, "unpack")) && n->num >= 3 &&
+              !strcmp(n->part[1], "unorm") && !strcmp(n->part[2], "rgb10a2")) {
+      if (!strcmp(op, "pack")) {
+         nir_def *v = nir_fsat(&c->b, nir_f2f32(&c->b, a[0]));
+         nir_def *q = nir_f2u32(&c->b, nir_fround_even(&c->b,
+                          nir_fmul(&c->b, v, nir_imm_vec4(&c->b, 1023.0, 1023.0, 1023.0, 3.0))));
+         r = nir_ior(&c->b,
+                     nir_ior(&c->b, nir_channel(&c->b, q, 0),
+                             nir_ishl_imm(&c->b, nir_channel(&c->b, q, 1), 10)),
+                     nir_ior(&c->b, nir_ishl_imm(&c->b, nir_channel(&c->b, q, 2), 20),
+                             nir_ishl_imm(&c->b, nir_channel(&c->b, q, 3), 30)));
+      } else {
+         nir_def *w = nir_u2u32(&c->b, a[0]);
+         nir_def *ch[4];
+         for (unsigned i = 0; i < 4; i++)
+            ch[i] = nir_u2f32(&c->b, nir_ubitfield_extract(&c->b, w, nir_imm_int(&c->b, 10 * i),
+                                                           nir_imm_int(&c->b, i < 3 ? 10 : 2)));
+         r = nir_fmul(&c->b, nir_vec(&c->b, ch, 4),
+                      nir_imm_vec4(&c->b, 1.0 / 1023.0, 1.0 / 1023.0, 1.0 / 1023.0, 1.0 / 3.0));
+         if (air_nir_bit_size(c, in->base.type) == 16)
+            r = nir_f2f16(&c->b, r);
+      }
+   } else if (!strcmp(op, "unpack") && n->num >= 2 &&
+              !strcmp(n->part[1], "unorm4x8")) {'''),
+     # sincos: the cosine leaves through a pointer (Metal's `thread T &cosval`) or, in a
+     # struct-returning spelling, as the second member. Handled before math_op loads its
+     # arguments as numbers, which a pointer is not.
+     ('''   nir_def *a[4] = { 0 };
+   for (unsigned i = 0; i < argc && i < 4; i++)''',
+      '''   if (!strcmp(op, "fast_sincos") || !strcmp(op, "sincos")) {
+      nir_def *x = air_get_ssa(c, in->operands[1]);
+      if (!x)
+         return false;
+      *handled = true;
+      nir_def *s = nir_fsin(&c->b, x), *co = nir_fcos(&c->b, x);
+      if (in->base.type->kind == AIR_TYPE_STRUCT) {
+         struct air_val *agg = rzalloc(c->mem_ctx, struct air_val);
+         agg->kind = AIR_VAL_AGG;
+         agg->num_elems = 2;
+         agg->elems = rzalloc_array(c->mem_ctx, struct air_val *, 2);
+         agg->elems[0] = air_val_ssa(c, s);
+         agg->elems[1] = air_val_ssa(c, co);
+         air_set(c, &in->base, agg);
+         return true;
+      }
+      struct air_val *pv = argc >= 2 ? air_get(c, in->operands[2]) : NULL;
+      if (!pv || pv->kind != AIR_VAL_PTR)
+         return air_error(c, "intrinsic: air.%s without a pointer for the cosine", op);
+      if (!air_store_ptr(c, pv->ptr, co, 0))
+         return false;
+      air_set(c, &in->base, air_val_ssa(c, s));
+      return true;
+   }
+
+   nir_def *a[4] = { 0 };
+   for (unsigned i = 0; i < argc && i < 4; i++)'''),
+     # llvm.smax/smin/umin (Mercury: llvm.smax.i16; umax is in the blur patch) and
+     # llvm.bswap (VideoToolbox's scaler)
+     ('''   if (!strncmp(name, "llvm.fabs.", 10)) {''',
+      '''   if (!strncmp(name, "llvm.smax.", 10) || !strncmp(name, "llvm.smin.", 10) ||
+       !strncmp(name, "llvm.umin.", 10)) {
+      nir_def *x = air_get_ssa(c, in->operands[1]);
+      nir_def *y = air_get_ssa(c, in->operands[2]);
+      if (!x || !y)
+         return false;
+      nir_def *r = !strncmp(name, "llvm.smax.", 10) ? nir_imax(&c->b, x, y) :
+                   !strncmp(name, "llvm.smin.", 10) ? nir_imin(&c->b, x, y) :
+                                                      nir_umin(&c->b, x, y);
+      air_set(c, &in->base, air_val_ssa(c, r));
+      return true;
+   }
+   if (!strncmp(name, "llvm.bswap.", 11)) {
+      nir_def *x = air_get_ssa(c, in->operands[1]);
+      if (!x)
+         return false;
+      unsigned bits = x->bit_size;
+      nir_def *r = NULL;
+      for (unsigned i = 0; i < bits / 8; i++) {
+         nir_def *byte = nir_iand_imm(&c->b, nir_ushr_imm(&c->b, x, 8 * i), 0xff);
+         byte = nir_ishl_imm(&c->b, byte, bits - 8 - 8 * i);
+         r = r ? nir_ior(&c->b, r, byte) : byte;
+      }
+      if (!r)
+         return air_error(c, "intrinsic: %s", name);
+      air_set(c, &in->base, air_val_ssa(c, r));
+      return true;
+   }
+   if (!strncmp(name, "llvm.fabs.", 10)) {'''),
+     ('/* a constant i1/i32 argument, which these intrinsics use as flags */',
+      '''/* The image slots a texture written at a run-time mip level uses: slot base+k is bound
+ * to level k of the same texture (air_metal.c). Made once per texture, after every other
+ * image binding, at most eight and never past the sixteen image slots the runtime has.
+ */
+#define AIR_IMAGE_SLOTS 16
+static bool
+image_level_slots(struct air_ctx *c, unsigned binding, unsigned *base, unsigned *count)
+{
+   struct air_shader_info *info = c->info;
+   unsigned primary = ~0u, next = 0;
+   for (unsigned i = 0; i < info->num_resources; i++) {
+      const struct air_resource *r = &info->resources[i];
+      if (r->kind != AIR_RESOURCE_IMAGE)
+         continue;
+      next = MAX2(next, r->image_slot + 1);
+      if (r->index == binding && r->image_slot == r->index && primary == ~0u)
+         primary = i;
+   }
+   if (primary == ~0u)
+      return air_error(c, "intrinsic: a mip level write to texture %u, which is not an image",
+                       binding);
+   if (info->resources[primary].level_count) {
+      *base = info->resources[primary].level_base;
+      *count = info->resources[primary].level_count;
+      return true;
+   }
+   unsigned n = next < AIR_IMAGE_SLOTS ? MIN2(8, AIR_IMAGE_SLOTS - next) : 0;
+   if (n < 2)
+      return air_error(c, "intrinsic: no image slots left for the mip levels of texture %u",
+                       binding);
+   info->resources = reralloc(c->mem_ctx, info->resources, struct air_resource,
+                              info->num_resources + n);
+   for (unsigned k = 0; k < n; k++) {
+      struct air_resource *a = &info->resources[info->num_resources + k];
+      *a = info->resources[primary];
+      a->image_slot = next + k;
+      a->mip_level = k;
+      a->level_base = a->level_count = 0;
+   }
+   info->num_resources += n;
+   info->resources[primary].level_base = next;
+   info->resources[primary].level_count = n;
+   *base = next;
+   *count = n;
+   return true;
+}
+
+/* a constant i1/i32 argument, which these intrinsics use as flags */'''),
+     ('''      uint64_t lod;
+      if (!tex_flag(c, in, arg, &lod))
+         return false;
+      if (lod != 0)
+         return air_error(c, "intrinsic: air.%s to mip level %u (only 0 is handled)",
+                          n->part[0], (unsigned)lod);
+      if (!tex.is_image)
+         return air_error(c, "intrinsic: air.%s to a texture the interface says is not "
+                             "written", n->part[0]);
+      nir_image_store(&c->b, nir_imm_int(&c->b, tex.binding),''',
+      '''      if (!tex.is_image)
+         return air_error(c, "intrinsic: air.%s to a texture the interface says is not "
+                             "written", n->part[0]);
+      /* level 0 by a constant is the texture's own binding; any other level, or one
+       * computed at run time, picks the level alias for it (image_level_slots) */
+      nir_def *slot = nir_imm_int(&c->b, tex.binding);
+      uint64_t lod = 0;
+      if (!air_const_uint(in->operands[arg], &lod) || lod != 0) {
+         unsigned base, count;
+         if (!image_level_slots(c, tex.binding, &base, &count))
+            return false;
+         nir_def *level = air_get_ssa(c, in->operands[arg]);
+         if (!level)
+            return false;
+         level = nir_umin(&c->b, nir_u2u32(&c->b, level), nir_imm_int(&c->b, count - 1));
+         slot = nir_iadd_imm(&c->b, level, base);
+      }
+      nir_image_store(&c->b, slot,'''),
+     # A texture or sampler chosen at run time (a pointer phi between them, Mercury), and
+     # air.is_null_texture_*: the operation is translated once per place the pointer can
+     # name and the results selected; a null side gives the other side's answer, which
+     # the shader does not use (it tests is_null first). Writes through such a pointer
+     # stay refused.
+     ('''      air_set(c, &in->base, air_val_ptr(c, p));
+      return true;
+   }
+   struct air_tex_name t;
+''',
+      '''      air_set(c, &in->base, air_val_ptr(c, p));
+      return true;
+   }
+   if (!strncmp(n->part[0], "is_null_texture", 15)) {
+      nir_def *r = null_texture_test(c, air_get(c, in->operands[1]));
+      if (!r)
+         return false;
+      air_set(c, &in->base, air_val_ssa(c, r));
+      return true;
+   }
+   for (unsigned k = 1; k < in->num_operands; k++) {
+      struct hash_entry *he = _mesa_hash_table_search(c->values, in->operands[k]);
+      struct air_val *v = he ? he->data : NULL;
+      if (!v || v->kind != AIR_VAL_PTR_SELECT || v->num_elems != 2)
+         continue;
+      if (!strncmp(n->part[0], "write_", 6))
+         return air_error(c, "intrinsic: air.%s through a texture chosen at run time",
+                          n->part[0]);
+      struct air_val *res[2] = { NULL, NULL };
+      for (unsigned s = 0; s < 2; s++) {
+         struct air_val *el = v->elems[s];
+         if (el->kind == AIR_VAL_PTR && el->ptr.class == AIR_PTR_NONE)
+            continue;
+         _mesa_hash_table_insert(c->values, in->operands[k], el);
+         bool ok = texture_op(c, in, n);
+         _mesa_hash_table_insert(c->values, in->operands[k], v);
+         if (!ok)
+            return false;
+         struct hash_entry *re = _mesa_hash_table_search(c->values, &in->base);
+         res[s] = re ? re->data : NULL;
+      }
+      if (!res[0] && !res[1])
+         return air_error(c, "intrinsic: air.%s of a texture that is null on every path",
+                          n->part[0]);
+      if (!res[0])
+         res[0] = res[1];
+      if (!res[1])
+         res[1] = res[0];
+      struct air_val *r = select_tex_result(c, v->def, res[0], res[1]);
+      if (!r)
+         return air_error(c, "intrinsic: air.%s through a texture chosen at run time, "
+                             "whose result cannot be selected", n->part[0]);
+      air_set(c, &in->base, r);
+      return true;
+   }
+   struct air_tex_name t;
+'''),
+     ('static bool\ntexture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)\n{',
+      '''/* is_null_texture on a resolved pointer, or on one chosen at run time */
+static nir_def *
+null_texture_test(struct air_ctx *c, struct air_val *v)
+{
+   if (!v) {
+      air_error(c, "intrinsic: is_null_texture of nothing");
+      return NULL;
+   }
+   if (v->kind == AIR_VAL_PTR)
+      return v->ptr.class == AIR_PTR_NONE ? nir_imm_true(&c->b) : nir_imm_false(&c->b);
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
+      nir_def *a = null_texture_test(c, v->elems[0]);
+      nir_def *b = null_texture_test(c, v->elems[1]);
+      return a && b ? nir_bcsel(&c->b, v->def, a, b) : NULL;
+   }
+   air_error(c, "intrinsic: is_null_texture of something that is not a texture");
+   return NULL;
+}
+
+/* one of two results of the same operation, member by member for a struct */
+static struct air_val *
+select_tex_result(struct air_ctx *c, nir_def *cond, struct air_val *a, struct air_val *b)
+{
+   if (a == b)
+      return a;
+   if (a->kind == AIR_VAL_SSA && b->kind == AIR_VAL_SSA)
+      return air_val_ssa(c, nir_bcsel(&c->b, cond, a->def, b->def));
+   if (a->kind == AIR_VAL_AGG && b->kind == AIR_VAL_AGG && a->num_elems == b->num_elems) {
+      struct air_val *agg = rzalloc(c->mem_ctx, struct air_val);
+      agg->kind = AIR_VAL_AGG;
+      agg->num_elems = a->num_elems;
+      agg->elems = rzalloc_array(c->mem_ctx, struct air_val *, MAX2(a->num_elems, 1));
+      for (unsigned i = 0; i < a->num_elems; i++) {
+         agg->elems[i] = select_tex_result(c, cond, a->elems[i], b->elems[i]);
+         if (!agg->elems[i])
+            return NULL;
+      }
+      return agg;
+   }
+   return NULL;
+}
+
+static bool
+texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
+{'''))
+
+edit('tools/mesa/air/air_metal.c',
+     ('         images[r->index] = (struct pipe_image_view){',
+      '         images[r->image_slot] = (struct pipe_image_view){'),
+     ('            .u.tex.level = t->first_level,\n            .u.tex.first_layer = 0,',
+      '''            /* a level alias past the texture's levels repeats its last one: the shader
+             * clamps to the aliases there are, not to the levels this texture has */
+            .u.tex.level = t->first_level + MIN2(r->mip_level, t->level_count - 1),
+            .u.tex.first_layer = 0,'''),
+     ('         num_images = MAX2(num_images, r->index + 1);',
+      '         num_images = MAX2(num_images, r->image_slot + 1);'),
+     # ASTC (Mercury's albedo-a.ktx is astc_6x6_srgb); the A618 samples ASTC LDR itself
+     ('#include "util/u_inlines.h"\n',
+      '#include "util/u_inlines.h"\n#include "util/u_gen_mipmap.h"\n'),
+     ('int\nrwa_texture_write(struct rwa_texture *texture, unsigned level, unsigned layer,',
+      '''/* -generateMipmapsForTexture: -- every level after the first from the one before, by the
+ * GPU, through Gallium's own helper (a blit per level with a linear filter). */
+int rwa_texture_generate_mipmap(struct rwa_texture *texture);
+int
+rwa_texture_generate_mipmap(struct rwa_texture *texture)
+{
+   if (!texture || texture->level_count < 2)
+      return 0;
+   struct pipe_resource *res = texture->res;
+   unsigned last_layer = (res->target == PIPE_TEXTURE_3D ? u_minify(res->depth0, texture->first_level)
+                                                          : res->array_size) - 1;
+   return util_gen_mipmap(texture->device->pipe, res, res->format, texture->first_level,
+                          texture->first_level + texture->level_count - 1, 0, last_layer,
+                          PIPE_TEX_FILTER_LINEAR) ? 0 : -1;
+}
+
+int
+rwa_texture_write(struct rwa_texture *texture, unsigned level, unsigned layer,'''),
+     ('   {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },\n',
+      '   {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },\n' + ASTC_ROWS),
+     # a caller's rows of a block format are rows of blocks: counted in blocks, which is the
+     # same number as before for every uncompressed format
+     ('   size_t least = (size_t)box->width * texel;',
+      '   size_t least = (size_t)util_format_get_nblocksx(texture->res->format, box->width) * texel;'),
+     ('                                          PIPE_MAP_WRITE, &box, bytes, row,\n'
+      '                                          row * box.height);',
+      '                                          PIPE_MAP_WRITE, &box, bytes, row,\n'
+      '                                          row * util_format_get_nblocksy(texture->res->format,\n'
+      '                                                                         box.height));'),
+     # A draw that samples the texture it renders into. CoreAnimation's variable blur
+     # builds its mip chain in place: variable_blur_downsample renders level k+1 of a
+     # texture while sampling the same texture (draw trace 2026-11-20, #c298). Metal
+     # allows it; the Adreno gives no ordering between a render target and a texture
+     # fetch of the same memory inside a pass, and the glass came and went. Such a draw
+     # samples a copy instead, made by the GPU just before it.
+     ('   struct pipe_screen *screen;\n   struct pipe_context *pipe;\n',
+      '   struct pipe_screen *screen;\n   struct pipe_context *pipe;\n'
+      '   /* the colour targets of the draw being bound, for hazard_view */\n'
+      '   struct pipe_resource *hazard_targets[8];\n'
+      '   unsigned hazard_count;\n'),
+     ('   struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */\n',
+      '   struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */\n'
+      '   struct pipe_resource *hazard_res;       /* a copy for draws that render into this */\n'
+      '   struct pipe_sampler_view *hazard_view;\n'),
+     ('   pipe_sampler_view_reference(&texture->view, NULL);\n   pipe_surface_reference(&texture->native_surface, NULL);',
+      '   pipe_sampler_view_reference(&texture->view, NULL);\n'
+      '   pipe_sampler_view_reference(&texture->hazard_view, NULL);\n'
+      '   pipe_resource_reference(&texture->hazard_res, NULL);\n'
+      '   pipe_surface_reference(&texture->native_surface, NULL);'),
+     ('static int\nbind_stage(struct rwa_device *device, enum pipe_shader_type stage,',
+      '''/* The view a draw samples when the texture is also one of its colour targets: a copy of
+ * every level of it, made by the GPU in submission order before the draw, kept with the
+ * texture and refreshed at each such draw. NULL if the copy could not be made.
+ */
+static struct pipe_sampler_view *
+hazard_view(struct rwa_device *device, struct rwa_texture *t)
+{
+   struct pipe_context *pipe = device->pipe;
+   struct pipe_resource *res = t->res;
+   if (!t->hazard_res) {
+      struct pipe_resource tmpl = { 0 };
+      tmpl.target = res->target;
+      tmpl.format = res->format;
+      tmpl.width0 = res->width0;
+      tmpl.height0 = res->height0;
+      tmpl.depth0 = res->depth0;
+      tmpl.array_size = res->array_size;
+      tmpl.last_level = res->last_level;
+      tmpl.nr_samples = res->nr_samples;
+      tmpl.nr_storage_samples = res->nr_storage_samples;
+      tmpl.usage = PIPE_USAGE_DEFAULT;
+      tmpl.bind = PIPE_BIND_SAMPLER_VIEW;
+      t->hazard_res = device->screen->resource_create(device->screen, &tmpl);
+      if (!t->hazard_res)
+         return NULL;
+      struct pipe_sampler_view v = { 0 };
+      u_sampler_view_default_template(&v, t->hazard_res, t->hazard_res->format);
+      if (res->target == PIPE_TEXTURE_2D) {
+         v.u.tex.first_level = t->first_level;
+         v.u.tex.last_level = t->first_level + t->level_count - 1;
+      }
+      t->hazard_view = pipe->create_sampler_view(pipe, t->hazard_res, &v);
+      if (!t->hazard_view) {
+         pipe_resource_reference(&t->hazard_res, NULL);
+         return NULL;
+      }
+   }
+   for (unsigned l = t->first_level; l < t->first_level + t->level_count; l++) {
+      struct pipe_box box = {
+         .x = 0, .y = 0, .z = 0,
+         .width = (int)u_minify(res->width0, l),
+         .height = (int)u_minify(res->height0, l),
+         .depth = res->target == PIPE_TEXTURE_3D ? (int)u_minify(res->depth0, l)
+                                                  : (int)res->array_size,
+      };
+      pipe->resource_copy_region(pipe, t->hazard_res, l, 0, 0, 0, res, l, &box);
+   }
+   static unsigned logged;
+   if (logged < 4) {
+      logged++;
+      fprintf(stderr, "SweetNativeMetal: a draw samples its own colour target (%ux%u, %u levels): "
+              "it reads a copy made just before it\\n", res->width0, res->height0, t->level_count);
+   }
+   return t->hazard_view;
+}
+
+static int
+bind_stage(struct rwa_device *device, enum pipe_shader_type stage,'''),
+     ('         views[r->index] = t->view;\n',
+      '''         {
+            struct pipe_sampler_view *use = t->view;
+            for (unsigned h = 0; h < device->hazard_count; h++) {
+               if (device->hazard_targets[h] == t->res) {
+                  use = hazard_view(device, t);
+                  break;
+               }
+            }
+            if (!use) {
+               say(why, why_size, "%s would not copy the %s bound at texture %u, which this "
+                                  "draw also renders into", rwa_device_name(device),
+                   t->format_name, r->index);
+               return -1;
+            }
+            views[r->index] = use;
+         }
+'''),
+     ('   native_draw_checkpoint(device,&native_phase_at,1);\n',
+      '''   native_draw_checkpoint(device,&native_phase_at,1);
+   device->hazard_count = 0;
+   for (unsigned i = 0; i < draw->color_count && i < 8; i++)
+      if (draw->color && draw->color[i])
+         device->hazard_targets[device->hazard_count++] = draw->color[i]->res;
+'''),
+     ('unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n',
+      'unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n   device->hazard_count = 0;\n'))
+
+# newBufferWithBytesNoCopy: Mercury's KTX loader makes its staging buffer this way and the
+# driver answered nil ("Failed to create staging buffer"). The GPU cannot map the caller's
+# pages here, so the bytes are copied into a buffer of our own, and the caller's
+# deallocator runs when that buffer goes away, as Metal promises. A caller that writes the
+# pages after this call is not seen; the loader fills them first.
+edit('userland/src/redwoodmetal.m',
+     ('@implementation SweetNativeMetalDevice\n',
+      '''@interface SweetNativeNoCopyRelease : NSObject {
+	void (^_deallocator)(void *, NSUInteger);
+	void *_bytes;
+	NSUInteger _length;
+}
+- (instancetype)initWithDeallocator:(void (^)(void *, NSUInteger))d bytes:(void *)b length:(NSUInteger)n;
+@end
+
+@implementation SweetNativeNoCopyRelease
+- (instancetype)initWithDeallocator:(void (^)(void *, NSUInteger))d bytes:(void *)b length:(NSUInteger)n
+{
+	self = [super init];
+	if (self != nil) {
+		_deallocator = d ? [d copy] : nil;
+		_bytes = b;
+		_length = n;
+	}
+	return self;
+}
+- (void)dealloc
+{
+	if (_deallocator != nil) {
+		_deallocator(_bytes, _length);
+		[_deallocator release];
+	}
+	[super dealloc];
+}
+@end
+
+static char sweet_nocopy_key;
+
+@implementation SweetNativeMetalDevice
+'''),
+     ('''	(void)bytes; (void)length; (void)options; (void)deallocator;
+	return nil;   /* wrapping the caller's own pages needs the kernel to map them: not yet */''',
+      '''	if (bytes == NULL || length == 0)
+		return nil;
+	id buffer = [self newBufferWithLength:length options:options];
+	if (buffer == nil || [buffer contents] == NULL) {
+		[buffer release];
+		return nil;
+	}
+	memcpy([buffer contents], bytes, length);
+	RW_ONCE("newBufferWithBytesNoCopy: %lu bytes copied (the caller's pages are not "
+		"mapped into the GPU; later writes to them are not seen)\\n", (unsigned long)length);
+	if (deallocator != nil) {
+		SweetNativeNoCopyRelease *r = [[SweetNativeNoCopyRelease alloc]
+			initWithDeallocator:deallocator bytes:bytes length:length];
+		objc_setAssociatedObject(buffer, &sweet_nocopy_key, r, OBJC_ASSOCIATION_RETAIN);
+		[r release];
+	}
+	return buffer;'''),
+     # A blit encoder. There was none (-blitCommandEncoder answered nil), and Mercury
+     # uploads its wallpaper textures through one ("Failed to create blit encoder for
+     # private texture upload"). Every copy here runs when it is encoded, through the same
+     # texel path as -replaceRegion:; a blit that depends on GPU work encoded earlier in the
+     # same command buffer would see it undone, which an upload before a commit does not.
+     ('@implementation SweetNativeMetalCommandBuffer {\n',
+      '''int rwa_texture_generate_mipmap(struct rwa_texture *texture);
+
+@interface SweetNativeMetalBlitEncoder : NSObject {
+	id _device;
+	SweetNativeMetalCommandBuffer *_cb;   /* not retained: it owns the encoder's life */
+	NSString *_label;
+}
+- (instancetype)initWithCommandBuffer:(SweetNativeMetalCommandBuffer *)cb device:(id)device;
+@end
+
+/* Every blit is queued on the command buffer as work and runs in order with the passes
+ * around it at commit: CoreAnimation draws a texture, asks for its mipmaps and samples
+ * them, all in one command buffer, so a blit run at encode time would see the texture
+ * before the draw. */
+@implementation SweetNativeMetalBlitEncoder
++ (void)load
+{
+	Protocol *p = objc_getProtocol("MTLBlitCommandEncoder");
+	if (p != NULL && !class_conformsToProtocol(self, p))
+		class_addProtocol(self, p);
+}
+- (instancetype)initWithCommandBuffer:(SweetNativeMetalCommandBuffer *)cb device:(id)device
+{
+	self = [super init];
+	if (self != nil) {
+		_cb = cb;
+		_device = [device retain];
+	}
+	return self;
+}
+- (void)dealloc { [_device release]; [_label release]; [super dealloc]; }
+- (void)enqueue:(void (^)(void))op
+{
+	SweetNativeMetalWork *work = [SweetNativeMetalWork new];
+	work->nativeBlit = [op copy];
+	[_cb recordWork:work];
+	[work release];
+}
+- (id)device { return _device; }
+- (NSString *)label { return _label; }
+- (void)setLabel:(NSString *)l { [_label release]; _label = [l copy]; }
+- (void)endEncoding {}
+- (void)insertDebugSignpost:(NSString *)s { (void)s; }
+- (void)pushDebugGroup:(NSString *)s { (void)s; }
+- (void)popDebugGroup {}
+- (void)updateFence:(id)f { (void)f; }
+- (void)waitForFence:(id)f { (void)f; }
+- (void)synchronizeResource:(id)r { (void)r; }
+- (void)synchronizeTexture:(id)t slice:(NSUInteger)s level:(NSUInteger)l { (void)t; (void)s; (void)l; }
+- (void)optimizeContentsForGPUAccess:(id)t { (void)t; }
+- (void)optimizeContentsForCPUAccess:(id)t { (void)t; }
+- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)off sourceBytesPerRow:(NSUInteger)bpr
+   sourceBytesPerImage:(NSUInteger)bpi sourceSize:(MTLSize)size toTexture:(id)dst
+      destinationSlice:(NSUInteger)slice destinationLevel:(NSUInteger)level
+     destinationOrigin:(MTLOrigin)origin options:(NSUInteger)options
+{
+	(void)options;
+	if (src == nil || dst == nil)
+		return;
+	[self enqueue:^{
+		const uint8_t *bytes = (const uint8_t *)[src contents];
+		if (bytes != NULL)
+			[dst replaceRegion:MTLRegionMake3D(origin.x, origin.y, origin.z, size.width, size.height, size.depth)
+			       mipmapLevel:level slice:slice withBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi];
+	}];
+}
+- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)off sourceBytesPerRow:(NSUInteger)bpr
+   sourceBytesPerImage:(NSUInteger)bpi sourceSize:(MTLSize)size toTexture:(id)dst
+      destinationSlice:(NSUInteger)slice destinationLevel:(NSUInteger)level
+     destinationOrigin:(MTLOrigin)origin
+{
+	[self copyFromBuffer:src sourceOffset:off sourceBytesPerRow:bpr sourceBytesPerImage:bpi
+		  sourceSize:size toTexture:dst destinationSlice:slice destinationLevel:level
+	   destinationOrigin:origin options:0];
+}
+- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
+           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toBuffer:(id)dst
+      destinationOffset:(NSUInteger)off destinationBytesPerRow:(NSUInteger)bpr
+    destinationBytesPerImage:(NSUInteger)bpi options:(NSUInteger)options
+{
+	(void)options;
+	if (src == nil || dst == nil)
+		return;
+	[self enqueue:^{
+		uint8_t *bytes = (uint8_t *)[dst contents];
+		if (bytes != NULL)
+			[src getBytes:bytes + off bytesPerRow:bpr bytesPerImage:bpi
+			   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, size.depth)
+			  mipmapLevel:sl slice:ss];
+	}];
+}
+- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
+           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toBuffer:(id)dst
+      destinationOffset:(NSUInteger)off destinationBytesPerRow:(NSUInteger)bpr
+    destinationBytesPerImage:(NSUInteger)bpi
+{
+	[self copyFromTexture:src sourceSlice:ss sourceLevel:sl sourceOrigin:so sourceSize:size
+		     toBuffer:dst destinationOffset:off destinationBytesPerRow:bpr
+	     destinationBytesPerImage:bpi options:0];
+}
+/* texture to texture through memory of our own: 16 bytes a texel is the widest format
+ * there is, so the row is long enough for any of them, block formats included */
+- (void)copyFromTexture:(id)src sourceSlice:(NSUInteger)ss sourceLevel:(NSUInteger)sl
+           sourceOrigin:(MTLOrigin)so sourceSize:(MTLSize)size toTexture:(id)dst
+       destinationSlice:(NSUInteger)ds destinationLevel:(NSUInteger)dl
+      destinationOrigin:(MTLOrigin)dorg
+{
+	if (src == nil || dst == nil || size.width == 0 || size.height == 0)
+		return;
+	[self enqueue:^{
+		NSUInteger depth = size.depth ? size.depth : 1;
+		NSUInteger bpr = size.width * 16, bpi = bpr * size.height;
+		uint8_t *tmp = malloc(bpi * depth);
+		if (tmp == NULL)
+			return;
+		[src getBytes:tmp bytesPerRow:bpr bytesPerImage:bpi
+		   fromRegion:MTLRegionMake3D(so.x, so.y, so.z, size.width, size.height, depth)
+		  mipmapLevel:sl slice:ss];
+		[dst replaceRegion:MTLRegionMake3D(dorg.x, dorg.y, dorg.z, size.width, size.height, depth)
+		       mipmapLevel:dl slice:ds withBytes:tmp bytesPerRow:bpr bytesPerImage:bpi];
+		free(tmp);
+	}];
+}
+- (void)copyFromTexture:(id)src toTexture:(id)dst
+{
+	NSUInteger levels = MIN([src mipmapLevelCount], [dst mipmapLevelCount]);
+	for (NSUInteger l = 0; l < levels; l++) {
+		NSUInteger w = MAX([src width] >> l, 1), h = MAX([src height] >> l, 1);
+		[self copyFromTexture:src sourceSlice:0 sourceLevel:l sourceOrigin:MTLOriginMake(0, 0, 0)
+			   sourceSize:MTLSizeMake(w, h, 1) toTexture:dst destinationSlice:0
+		     destinationLevel:l destinationOrigin:MTLOriginMake(0, 0, 0)];
+	}
+}
+- (void)copyFromBuffer:(id)src sourceOffset:(NSUInteger)so toBuffer:(id)dst
+     destinationOffset:(NSUInteger)doff size:(NSUInteger)n
+{
+	if (src == nil || dst == nil || n == 0)
+		return;
+	[self enqueue:^{
+		uint8_t *s = (uint8_t *)[src contents], *d = (uint8_t *)[dst contents];
+		if (s != NULL && d != NULL)
+			memmove(d + doff, s + so, n);
+	}];
+}
+- (void)fillBuffer:(id)b range:(NSRange)r value:(uint8_t)v
+{
+	if (b == nil || r.length == 0)
+		return;
+	[self enqueue:^{
+		uint8_t *d = (uint8_t *)[b contents];
+		if (d != NULL)
+			memset(d + r.location, v, r.length);
+	}];
+}
+/* the levels below the base, made by the GPU from the base (Gallium's util_gen_mipmap) */
+- (void)generateMipmapsForTexture:(id)t
+{
+	if (t == nil || ![t respondsToSelector:@selector(mesaTexture)])
+		return;
+	[self enqueue:^{
+		if (rwa_texture_generate_mipmap([t mesaTexture]) != 0)
+			RW_ONCE("blit: generateMipmapsForTexture: failed\\n");
+	}];
+}
+/* anything else a blit encoder is asked does nothing rather than abort the caller */
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)s
+{
+	NSMethodSignature *m = [super methodSignatureForSelector:s];
+	return m ? m : [NSMethodSignature signatureWithObjCTypes:"v@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)inv
+{
+	RW_ONCE("blit: %s is not implemented and was skipped\\n", sel_getName([inv selector]));
+}
+@end
+
+@implementation SweetNativeMetalCommandBuffer {
+'''),
+     ('- (id)blitCommandEncoder          { NATIVE_OBJECT_LOCK;  return nil; }',
+      '''- (id)blitCommandEncoder
+{ NATIVE_OBJECT_LOCK;
+	return [[[SweetNativeMetalBlitEncoder alloc] initWithCommandBuffer:self device:[_queue device]] autorelease];
+}
+- (id)blitCommandEncoderWithDescriptor:(id)d { (void)d; return [self blitCommandEncoder]; }'''),
+     ('\tBOOL hasDepthRange;\n', '\tBOOL hasDepthRange;\n\tid nativeBlit;   /* a queued blit: a block run in order at commit */\n'),
+     ('    for(unsigned i=0;i<8;i++)[color[i] release];\n',
+      '    for(unsigned i=0;i<8;i++)[color[i] release];\n    [nativeBlit release];\n'),
+     ('        if(work->nativeBarrier) {\n',
+      '        if(work->nativeBlit) {\n            ((void (^)(void))work->nativeBlit)();\n            continue;\n        }\n        if(work->nativeBarrier) {\n'))
+
+# Draw log: which texture object (a view names its parent) and which level, so a pass that
+# samples the texture it renders into can be told from one that ping-pongs.
+edit('userland/src/SweetNativeDrawLog.inc',
+     ('\t\tsnprintf(rt + at, sizeof(rt) - at, "%s%u:%ux%u", i ? "," : "",\n'
+      '\t\t         t ? (unsigned)[t pixelFormat] : 0, t ? (unsigned)[t width] : 0,\n'
+      '\t\t         t ? (unsigned)[t height] : 0);',
+      '\t\tid p = t && [t respondsToSelector:@selector(parentTexture)] ? [t parentTexture] : nil;\n'
+      '\t\tsnprintf(rt + at, sizeof(rt) - at, "%s%u:%ux%u#%04x/L%u", i ? "," : "",\n'
+      '\t\t         t ? (unsigned)[t pixelFormat] : 0, t ? (unsigned)[t width] : 0,\n'
+      '\t\t         t ? (unsigned)[t height] : 0,\n'
+      '\t\t         (unsigned)(((uintptr_t)(p ? p : t) >> 4) & 0xffff),\n'
+      '\t\t         p ? (unsigned)[t parentRelativeLevel] : 0);'),
+     ('\t\tsnprintf(tx + at, sizeof(tx) - at, "%s%u:%u:%ux%u", at ? "," : "", i,\n'
+      '\t\t         (unsigned)[t pixelFormat], (unsigned)[t width], (unsigned)[t height]);',
+      '\t\tid p = [t respondsToSelector:@selector(parentTexture)] ? [t parentTexture] : nil;\n'
+      '\t\tsnprintf(tx + at, sizeof(tx) - at, "%s%u:%u:%ux%u#%04x/L%u+%u", at ? "," : "", i,\n'
+      '\t\t         (unsigned)[t pixelFormat], (unsigned)[t width], (unsigned)[t height],\n'
+      '\t\t         (unsigned)(((uintptr_t)(p ? p : t) >> 4) & 0xffff),\n'
+      '\t\t         p ? (unsigned)[t parentRelativeLevel] : 0, (unsigned)[t mipmapLevelCount]);'))
+
+Path('userspace/native-metal/ios26-image-write-levels.patch').write_text(''.join(changes), encoding='utf-8',
+                                                                         newline='\n')

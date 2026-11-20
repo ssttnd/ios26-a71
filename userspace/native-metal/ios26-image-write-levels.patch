@@ -37,7 +37,182 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        else
           return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
                               "which is a repacking this frontend does not do",
-@@ -3586,6 +3589,13 @@
+@@ -3277,6 +3280,108 @@
+    return ok ? fn : NULL;
+ }
+ 
++/* A new block of the current impl, placed the way the switch lowering does */
++static nir_block *
++call_split_block(struct air_ctx *c)
++{
++   nir_block *nb = nir_block_create(c->nir);
++   exec_list_push_tail(&c->b.impl->body, &nb->cf_node.node);
++   nb->cf_node.parent = &c->b.impl->cf_node;
++   return nb;
++}
++
++/* the first pointer chosen at run time in an argument, itself or inside a struct */
++static struct air_val *
++first_chosen_ptr(struct air_val *v)
++{
++   if (!v)
++      return NULL;
++   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2)
++      return v;
++   if (v->kind == AIR_VAL_AGG) {
++      for (unsigned i = 0; i < v->num_elems; i++) {
++         struct air_val *s = first_chosen_ptr(v->elems[i]);
++         if (s)
++            return s;
++      }
++   }
++   return NULL;
++}
++
++/* the argument with that choice made: sel replaced by side, structs copied */
++static struct air_val *
++with_choice_made(struct air_ctx *c, struct air_val *v, struct air_val *sel,
++                 struct air_val *side)
++{
++   if (v == sel)
++      return side;
++   if (!v || v->kind != AIR_VAL_AGG)
++      return v;
++   struct air_val *agg = air_val_agg(c, v->num_elems);
++   for (unsigned i = 0; i < v->num_elems; i++)
++      agg->elems[i] = with_choice_made(c, v->elems[i], sel, side);
++   return agg;
++}
++
++static bool
++emit_module_call(struct air_ctx *c, const struct air_inst *in, const struct air_function *f,
++                 const char *name, struct air_val **argv, nir_def **ssa,
++                 nir_variable *tmp, nir_variable **fields)
++{
++   for (unsigned i = 0; i < f->num_args; i++) {
++      struct air_val *sel = first_chosen_ptr(argv[i]);
++      if (!sel)
++         continue;
++      nir_block *side_block[2] = { call_split_block(c), call_split_block(c) };
++      nir_block *join = call_split_block(c);
++      nir_goto_if(&c->b, side_block[0], sel->def, side_block[1]);
++      for (unsigned s = 0; s < 2; s++) {
++         struct air_val **side = rzalloc_array(c->mem_ctx, struct air_val *,
++                                               MAX2(f->num_args, 1));
++         memcpy(side, argv, sizeof(*side) * f->num_args);
++         side[i] = with_choice_made(c, argv[i], sel, sel->elems[s]);
++         c->b.cursor = nir_after_block(side_block[s]);
++         if (!emit_module_call(c, in, f, name, side, ssa, tmp, fields))
++            return false;
++         nir_goto(&c->b, join);
++      }
++      c->b.cursor = nir_after_block(join);
++      return true;
++   }
++
++   bool *is_param = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_args, 1));
++   nir_function *fn = translate_callee(c, f, argv, is_param);
++   if (!fn)
++      return false;   /* translate_callee has said why */
++
++   const struct air_type *rt = f->fn_type->elem;
++   nir_call_instr *call = nir_call_instr_create(c->nir, fn);
++   unsigned idx = 0;
++   if (fields) {
++      for (unsigned i = 0; i < rt->num_members; i++)
++         if (fields[i])
++            call->params[idx++] =
++               nir_src_for_ssa(&nir_build_deref_var(&c->b, fields[i])->def);
++   } else if (tmp) {
++      call->params[idx++] = nir_src_for_ssa(&nir_build_deref_var(&c->b, tmp)->def);
++   }
++   /* operand 0 is the callee; the arguments follow it */
++   for (unsigned i = 0; i < f->num_args; i++) {
++      if (!is_param[i]) {
++         if (arg_is_flat(f, argv, is_param, i))
++            pass_leaves(call, &idx, argv[i]);
++         continue;
++      }
++      nir_def *a = ssa[i] ? ssa[i] : air_get_ssa(c, in->operands[i + 1]);
++      if (!a)
++         return air_error(c, "intrinsic: argument %u of %s is not a value this can pass",
++                          i, name);
++      call->params[idx++] = nir_src_for_ssa(a);
++   }
++   nir_builder_instr_insert(&c->b, &call->instr);
++   return true;
++}
++
+ /* A call of a function this module defines. The callee is translated as a
+  * nir_function (above) and the call becomes a nir_call, which
+  * nir_inline_functions folds in after the whole shader is translated.
+@@ -3309,16 +3414,14 @@
+    /* resolved in the CALLER's value map, which is the live one here */
+    struct air_val **argv = rzalloc_array(c->mem_ctx, struct air_val *,
+                                          MAX2(f->num_args, 1));
+-   bool *is_param = rzalloc_array(c->mem_ctx, bool, MAX2(f->num_args, 1));
++   nir_def **ssa = rzalloc_array(c->mem_ctx, nir_def *, MAX2(f->num_args, 1));
+    for (unsigned i = 0; i < f->num_args; i++) {
+       argv[i] = air_get(c, in->operands[i + 1]);
+       if (!argv[i])
+          return false;
+-   }
+-
+-   nir_function *fn = translate_callee(c, f, argv, is_param);
+-   if (!fn)
+-      return false;   /* translate_callee has said why */
++      if (argv[i]->kind == AIR_VAL_SSA)
++         ssa[i] = argv[i]->def;
++   }
+ 
+    const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
+    bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
+@@ -3332,36 +3435,17 @@
+     */
+    nir_variable **fields = ret_struct ?
+       rzalloc_array(c->mem_ctx, nir_variable *, MAX2(rt->num_members, 1)) : NULL;
+-   nir_call_instr *call = nir_call_instr_create(c->nir, fn);
+-   unsigned idx = 0;
+    if (ret_struct) {
+-      for (unsigned i = 0; i < rt->num_members; i++) {
+-         if (!ret_member_is_number(rt->members[i]))
+-            continue;
+-         fields[i] = nir_local_variable_create(c->b.impl,
+-                                               param_glsl_type(c, rt->members[i]),
+-                                               "callret");
+-         call->params[idx++] =
+-            nir_src_for_ssa(&nir_build_deref_var(&c->b, fields[i])->def);
+-      }
++      for (unsigned i = 0; i < rt->num_members; i++)
++         if (ret_member_is_number(rt->members[i]))
++            fields[i] = nir_local_variable_create(c->b.impl,
++                                                  param_glsl_type(c, rt->members[i]),
++                                                  "callret");
+    } else if (has_ret) {
+       tmp = nir_local_variable_create(c->b.impl, param_glsl_type(c, rt), "callret");
+-      call->params[idx++] = nir_src_for_ssa(&nir_build_deref_var(&c->b, tmp)->def);
+-   }
+-   /* operand 0 is the callee; the arguments follow it */
+-   for (unsigned i = 0; i < f->num_args; i++) {
+-      if (!is_param[i]) {
+-         if (arg_is_flat(f, argv, is_param, i))
+-            pass_leaves(call, &idx, argv[i]);
+-         continue;
+-      }
+-      nir_def *a = air_get_ssa(c, in->operands[i + 1]);
+-      if (!a)
+-         return air_error(c, "intrinsic: argument %u of %s is not a value this can pass",
+-                          i, name);
+-      call->params[idx++] = nir_src_for_ssa(a);
+-   }
+-   nir_builder_instr_insert(&c->b, &call->instr);
++   }
++   if (!emit_module_call(c, in, f, name, argv, ssa, tmp, fields))
++      return false;
+ 
+    if (ret_struct) {
+       struct air_val *agg = air_val_agg(c, rt->num_members);
+@@ -3586,6 +3670,13 @@
   * a missing operand from a reachable block is a refusal and only an edge the
   * entry cannot reach at all is passed over.
   */
@@ -51,7 +226,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  static bool
  resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                      const struct air_edges *edges)
-@@ -3608,13 +3618,55 @@
+@@ -3608,13 +3699,55 @@
                                        : "not a resolved pointer");
        if (!first)
           first = v;
@@ -111,7 +286,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3687,14 @@
+@@ -3635,8 +3768,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -127,7 +302,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3842,9 +3900,32 @@
+@@ -3842,9 +3981,32 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -161,7 +336,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -4305,8 +4386,8 @@
+@@ -4305,8 +4467,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
