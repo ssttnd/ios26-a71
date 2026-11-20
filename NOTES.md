@@ -659,3 +659,4 @@
   node's second 4 KiB as zeros while Linux reads it fine. Guess: our UFS driver mishandles that LBA (e.g. a read
   with recovered-error sense), not proven. Proposed: rewrite those two blocks with the identical bytes (auto
   mode refused without explicit owner OK); asked the owner.
+- Owner OK: rewrote catalog node 28370 (fs blocks 3851251-3851252) with the identical bytes, readback sha aaf024b9 same. Rebooted.
