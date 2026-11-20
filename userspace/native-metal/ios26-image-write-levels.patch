@@ -51,7 +51,39 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 --- a/tools/mesa/air/air_intrinsics.c
 +++ b/tools/mesa/air/air_intrinsics.c
-@@ -554,6 +554,49 @@
+@@ -193,6 +193,31 @@
+        !strncmp(op, "gather", 6) || !strncmp(op, "read_", 5) || !strncmp(op, "write_", 6) ||
+        strstr(op, "_lod_")) {
+       *handled = false;
++      return true;
++   }
++
++   if (!strcmp(op, "fast_sincos") || !strcmp(op, "sincos")) {
++      nir_def *x = air_get_ssa(c, in->operands[1]);
++      if (!x)
++         return false;
++      *handled = true;
++      nir_def *s = nir_fsin(&c->b, x), *co = nir_fcos(&c->b, x);
++      if (in->base.type->kind == AIR_TYPE_STRUCT) {
++         struct air_val *agg = rzalloc(c->mem_ctx, struct air_val);
++         agg->kind = AIR_VAL_AGG;
++         agg->num_elems = 2;
++         agg->elems = rzalloc_array(c->mem_ctx, struct air_val *, 2);
++         agg->elems[0] = air_val_ssa(c, s);
++         agg->elems[1] = air_val_ssa(c, co);
++         air_set(c, &in->base, agg);
++         return true;
++      }
++      struct air_val *pv = argc >= 2 ? air_get(c, in->operands[2]) : NULL;
++      if (!pv || pv->kind != AIR_VAL_PTR)
++         return air_error(c, "intrinsic: air.%s without a pointer for the cosine", op);
++      if (!air_store_ptr(c, pv->ptr, co, 0))
++         return false;
++      air_set(c, &in->base, air_val_ssa(c, s));
+       return true;
+    }
+ 
+@@ -554,6 +579,49 @@
         */
        r = nir_b2iN(&c->b, nir_ine_imm(&c->b, a[0], 0),
                     air_nir_bit_size(c, in->base.type));
@@ -101,7 +133,42 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
     } else if (!strcmp(op, "unpack") && n->num >= 2 &&
                !strcmp(n->part[1], "unorm4x8")) {
        /* four unsigned bytes of a word, each divided by 255. Component 0 is the
-@@ -1400,6 +1443,53 @@
+@@ -1163,6 +1231,34 @@
+       air_set(c, &in->base, air_val_ssa(c, nir_ffma(&c->b, a, b, d)));
+       return true;
+    }
++   if (!strncmp(name, "llvm.smax.", 10) || !strncmp(name, "llvm.smin.", 10) ||
++       !strncmp(name, "llvm.umin.", 10)) {
++      nir_def *x = air_get_ssa(c, in->operands[1]);
++      nir_def *y = air_get_ssa(c, in->operands[2]);
++      if (!x || !y)
++         return false;
++      nir_def *r = !strncmp(name, "llvm.smax.", 10) ? nir_imax(&c->b, x, y) :
++                   !strncmp(name, "llvm.smin.", 10) ? nir_imin(&c->b, x, y) :
++                                                      nir_umin(&c->b, x, y);
++      air_set(c, &in->base, air_val_ssa(c, r));
++      return true;
++   }
++   if (!strncmp(name, "llvm.bswap.", 11)) {
++      nir_def *x = air_get_ssa(c, in->operands[1]);
++      if (!x)
++         return false;
++      unsigned bits = x->bit_size;
++      nir_def *r = NULL;
++      for (unsigned i = 0; i < bits / 8; i++) {
++         nir_def *byte = nir_iand_imm(&c->b, nir_ushr_imm(&c->b, x, 8 * i), 0xff);
++         byte = nir_ishl_imm(&c->b, byte, bits - 8 - 8 * i);
++         r = r ? nir_ior(&c->b, r, byte) : byte;
++      }
++      if (!r)
++         return air_error(c, "intrinsic: %s", name);
++      air_set(c, &in->base, air_val_ssa(c, r));
++      return true;
++   }
+    if (!strncmp(name, "llvm.fabs.", 10)) {
+       nir_def *a = air_get_ssa(c, in->operands[1]);
+       if (!a)
+@@ -1400,6 +1496,53 @@
     return true;
  }
  
@@ -155,7 +222,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1693,16 +1783,24 @@
+@@ -1693,16 +1836,24 @@
        nir_def *value = air_get_ssa(c, in->operands[arg++]);
        if (!value)
           return false;

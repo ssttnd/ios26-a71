@@ -599,3 +599,9 @@
   unorm/snorm 4x8 and 2x16 and unpack snorm4x8, unorm/snorm2x16 (NIR opcodes) to the levels patch.
   Owner: same problems (black wallpaper, glass vanishing).
   Commit 61fddec, Metal CI `44695495470`. Next TWRP: this bundle + drawlog flag in one package with the 2120 delayed image; boot 1 traces the glass (old bundle loaded), boot 2 runs the new bundle for Mercury.
+- Instead of one refusal per build: listed every air./llvm. function in Mercury's default.metallib and
+  VideoToolbox's default.metallib (both from the reference root, in ignored `research/mercury/`) and checked each
+  against the frontend. Missing were only: llvm.smax (Mercury, i16), llvm.bswap (VideoToolbox), air.fast_sincos;
+  plus the pack family already added. Added sincos (pointer or struct result), llvm.smax/smin/umin, llvm.bswap.
+  Cancelled 44695495470 (lacked these). Caveat: this checks names only; an argument shape the frontend does not
+  take can still be refused.
