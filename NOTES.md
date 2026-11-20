@@ -1013,3 +1013,20 @@ Next:
   nonzero lanes through 96- and 128-bit NIR loads and the static initializer byte reader, including the bounds
   check. CI `44814681485` is building `ef3a733`. Phone still runs the verified `4431bc2` bundle and boot image
   `f6679f41...c8b0`; capture `logs/usb-ios26-metal-mercury-drawable.txt`.
+- CI `44814681485` succeeded; artifact `14668654726` verified 6/6 files. The existing boot image still matched
+  `f6679f41...c8b0` in TWRP. Wrote and verified bundle-only package `build/a71-ios26-metal-wide-constants.payload`,
+  SHA-256 `98db2cd1a3ed1d101aee20d65fed1a8f6753da875e40f20e306155695f8e04c9`. iOS booted, package installed 9/9
+  with errno=0, Metal published. Capturing `logs/usb-ios26-metal-wide-constants.txt` while the owner retests the
+  same preview.
+- In the retest the previous constant and ABI errors were absent. Mercury issued actual draw calls (one
+  window: 8 commands, 14 draws), but the owner still saw a black preview. The remaining recurring failure was
+  `path_distance-kba6pa7jbmhia3`: a pointer phi rejected because an incoming operand had not yet been translated.
+
+## 2026-11-21 — path-distance pointer loop
+
+- Reproduced the same refusal offline in `path_distance_vertex` from local `0180.metallib`. Its loop advances
+  a pointer within one bound buffer and a second phi carries the resulting offset to the exit.
+- `e124390` lowers pending buffer pointer phis to 32-bit byte offsets and validates the buffer identity on all
+  reachable incoming edges once translated. Pointers that change buffer bindings still fail. Offline the vertex
+  now translates (775 NIR instructions) with constants set to zero and to ones; the fragment still translates.
+  Pushed the commit and dispatched iOS 26 CI `44815994187`. Real GPU output is unverified.
