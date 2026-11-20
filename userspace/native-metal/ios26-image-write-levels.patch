@@ -51,10 +51,31 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 --- a/tools/mesa/air/air_intrinsics.c
 +++ b/tools/mesa/air/air_intrinsics.c
-@@ -554,6 +554,28 @@
+@@ -554,6 +554,49 @@
         */
        r = nir_b2iN(&c->b, nir_ine_imm(&c->b, a[0], 0),
                     air_nir_bit_size(c, in->base.type));
++   } else if (!strcmp(op, "pack") && n->num >= 2 &&
++              (!strcmp(n->part[1], "unorm4x8") || !strcmp(n->part[1], "snorm4x8") ||
++               !strcmp(n->part[1], "unorm2x16") || !strcmp(n->part[1], "snorm2x16"))) {
++      /* Metal's pack_float_to_{u,s}norm{4x8,2x16}: GLSL's packUnorm4x8 and friends,
++       * component 0 in the low bits, which is what NIR's opcodes define */
++      nir_def *v = nir_f2f32(&c->b, a[0]);
++      const char *k = n->part[1];
++      r = !strcmp(k, "unorm4x8") ? nir_pack_unorm_4x8(&c->b, v) :
++          !strcmp(k, "snorm4x8") ? nir_pack_snorm_4x8(&c->b, v) :
++          !strcmp(k, "unorm2x16") ? nir_pack_unorm_2x16(&c->b, v) :
++                                    nir_pack_snorm_2x16(&c->b, v);
++   } else if (!strcmp(op, "unpack") && n->num >= 2 &&
++              (!strcmp(n->part[1], "snorm4x8") || !strcmp(n->part[1], "unorm2x16") ||
++               !strcmp(n->part[1], "snorm2x16"))) {
++      nir_def *w = nir_u2u32(&c->b, a[0]);
++      const char *k = n->part[1];
++      r = !strcmp(k, "snorm4x8") ? nir_unpack_snorm_4x8(&c->b, w) :
++          !strcmp(k, "unorm2x16") ? nir_unpack_unorm_2x16(&c->b, w) :
++                                    nir_unpack_snorm_2x16(&c->b, w);
++      if (air_nir_bit_size(c, in->base.type) == 16)
++         r = nir_f2f16(&c->b, r);
 +   } else if ((!strcmp(op, "pack") || !strcmp(op, "unpack")) && n->num >= 3 &&
 +              !strcmp(n->part[1], "unorm") && !strcmp(n->part[2], "rgb10a2")) {
 +      if (!strcmp(op, "pack")) {
@@ -80,7 +101,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
     } else if (!strcmp(op, "unpack") && n->num >= 2 &&
                !strcmp(n->part[1], "unorm4x8")) {
        /* four unsigned bytes of a word, each divided by 255. Component 0 is the
-@@ -1400,6 +1422,53 @@
+@@ -1400,6 +1443,53 @@
     return true;
  }
  
@@ -134,7 +155,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1693,16 +1762,24 @@
+@@ -1693,16 +1783,24 @@
        nir_def *value = air_get_ssa(c, in->operands[arg++]);
        if (!value)
           return false;

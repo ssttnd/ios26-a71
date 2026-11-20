@@ -593,3 +593,8 @@
   `f1f759c1f6817164c6429a3db6bbe9b36472f166497bb3f959a9b0b5d204f06b`, and `build/a71-ios26-drawlog-on.payload`
   (text /var/local/sweet-native-drawlog=1500) `7585fd0dc658353d2ff458d2845030e8eee8506b69c9ef1e52c2f4d6e58b7be8`.
   Order: first install the rgb10a2 Metal normally, then this.
+- Metal CI `44694428663` (5973a66, + rgb10a2) succeeded, 6/6 match. `build/a71-ios26-metal-rgb10a2.payload`
+  `b426046a9d485f9492ccfa62e93c3707cec23c3470ce81df33d23ceff250ca2e` written in TWRP; boot still mercuryonly (23eebb59).
+- rgb10a2 boot: payload 9/9; rgb10a2 refusal gone. Next: `intrinsic: air.pack.unorm4x8.v4f32`. Added pack
+  unorm/snorm 4x8 and 2x16 and unpack snorm4x8, unorm/snorm2x16 (NIR opcodes) to the levels patch.
+  Owner: same problems (black wallpaper, glass vanishing).
