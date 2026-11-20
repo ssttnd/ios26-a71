@@ -1070,3 +1070,8 @@ Next:
 
 - `c904f4f` handles specialized optional inputs/outputs, aggregate phis, computed byte offsets in helper calls, and narrow helper returns. The actual `uber_fragment` translated offline (16,092 NIR instructions). Prior boot linked accumulator_color; owner still saw black.
 - CI `44819830656` passed, artifact `14672630199` verified 6/6. At owner's request installed the bundle-only package from TWRP. Verified existing boot `f6679f41...c8b0`, left it in place, and verified package readback `0c3bd315c9cc031d9a83bfd282c65121ec6dc52faab142fe24d679b349f4bc9a`. Requested system reboot. Visual preview not verified.
+
+## 2026-11-21 — Uber on-device retest
+
+- CI 44819830656 bundle applied on the next boot (USB log `logs/usb-ios26-metal-framebuffer-target.txt`, line 50608, payload 9/9 errno=0). Owner confirmed wallpaper still absent.
+- Uber vertex/fragment pipeline links, but preview draws repeatedly fail with `uber_fragment reads texture 0 and 0 textures were bound`. Mercury also logs `unable to create heap: 0` and unsuccessful look snapshots. The device frontend's `newHeapWithDescriptor:` currently returns nil. Next isolate whether the failed heap allocation leaves the preview texture unbound, or whether the shader resource list still retains a disabled texture. The causal link is not verified. No new code or device changes in this check.
