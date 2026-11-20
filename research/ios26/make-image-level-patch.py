@@ -251,11 +251,63 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
 };
 #define PTR_PHI_KEY(in) ((const void *)((const char *)(in) + 1))
 
+/* The resolved places a pointer operand may name: itself, or every leaf of a pointer
+ * chosen at run time (a select, or an earlier phi of this kind), each place once. */
+static bool
+ptr_phi_leaves(struct air_val *v, struct air_val **out, unsigned *n, unsigned max)
+{
+   if (!v)
+      return false;
+   if (v->kind == AIR_VAL_PTR) {
+      for (unsigned j = 0; j < *n; j++)
+         if (same_ptr(&out[j]->ptr, &v->ptr))
+            return true;
+      if (*n == max)
+         return false;
+      out[(*n)++] = v;
+      return true;
+   }
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2)
+      return ptr_phi_leaves(v->elems[0], out, n, max) &&
+             ptr_phi_leaves(v->elems[1], out, n, max);
+   return false;
+}
+
+/* Which of the phi's places an operand brings, as a value: a constant for a resolved
+ * pointer, a bcsel on the choice's own condition for one chosen at run time. Built at the
+ * end of the predecessor, where that condition is defined. */
+static nir_def *
+ptr_phi_index(struct air_ctx *c, const struct air_ptr_phi *pp, struct air_val *v)
+{
+   if (!v)
+      return NULL;
+   if (v->kind == AIR_VAL_PTR) {
+      for (unsigned j = 0; j < pp->n; j++)
+         if (same_ptr(&pp->v[j]->ptr, &v->ptr))
+            return nir_imm_int(&c->b, (int)j);
+      return NULL;
+   }
+   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
+      nir_def *a = ptr_phi_index(c, pp, v->elems[0]);
+      nir_def *b = ptr_phi_index(c, pp, v->elems[1]);
+      return a && b ? nir_bcsel(&c->b, v->def, a, b) : NULL;
+   }
+   return NULL;
+}
+
 static bool
 resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                     const struct air_edges *edges)
-{'''),
-     ('''      if (!first)
+{
+   struct air_val *leaves[8];
+   unsigned n = 0;'''),
+     ('''      struct air_val *v = e->data;
+      if (!v || v->kind != AIR_VAL_PTR)
+         return air_error(c, "instruction: a phi of pointers one of whose operands is "
+                             "%s", v && v->kind == AIR_VAL_PTR_SELECT
+                                      ? "itself a pointer chosen at run time"
+                                      : "not a resolved pointer");
+      if (!first)
          first = v;
       else if (!same_ptr(&first->ptr, &v->ptr))
          return air_error(c, "instruction: a phi between pointers that name different "
@@ -266,52 +318,32 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
    air_set(c, &in->base, first);
    return true;
 }''',
-      '''      if (!first)
-         first = v;
-      if (!same_ptr(&first->ptr, &v->ptr)) {
-         struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
-         struct air_ptr_phi *pp = pe ? pe->data : NULL;
-         /* buffers are loaded on both sides and selected; a texture or sampler is
-          * split per place by texture_op (air_intrinsics.c); an argument-buffer member
-          * has neither */
-         bool loadable = v->ptr.class != AIR_PTR_ARGBUF && first->ptr.class != AIR_PTR_ARGBUF;
-         if (!pp || !loadable)
-            return air_error(c, "instruction: a phi between pointers that name different "
-                                "places, which would have to be chosen at run time");
-      }
+      '''      struct air_val *v = e->data;
+      if (!ptr_phi_leaves(v, leaves, &n, ARRAY_SIZE(leaves)))
+         return air_error(c, "instruction: a phi of pointers one of whose operands is %s",
+                          n == ARRAY_SIZE(leaves) ? "one of more than eight places"
+                                                  : "not a resolved pointer");
+      if (!first)
+         first = leaves[0];
    }
    if (!first)
       return air_error(c, "instruction: a phi of pointers with no reachable operand");
-   /* the distinct places, in the order the edges bring them */
    struct hash_entry *pe = _mesa_hash_table_search(c->phi_regs, PTR_PHI_KEY(in));
    struct air_ptr_phi *pp = pe ? pe->data : NULL;
-   if (pp) {
-      pp->n = 0;
-      for (unsigned k = 0; k < in->num_operands; k++) {
-         if (!in->targets[k] ||
-             !edge_possible(edges, in->targets[k]->index, in->parent->index))
-            continue;
-         struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
-         struct air_val *v = e ? e->data : NULL;
-         if (!v)
-            continue;
-         bool seen = false;
-         for (unsigned j = 0; j < pp->n; j++)
-            seen |= same_ptr(&pp->v[j]->ptr, &v->ptr);
-         if (!seen) {
-            if (pp->n == ARRAY_SIZE(pp->v))
-               return air_error(c, "instruction: a phi between more than %u different "
-                                   "pointers", (unsigned)ARRAY_SIZE(pp->v));
-            pp->v[pp->n++] = v;
-         }
-      }
-   }
-   if (!pp || pp->n < 2) {
+   if (n < 2) {
       if (pp)
          pp->n = 0;
       air_set(c, &in->base, first);
       return true;
    }
+   /* buffers are loaded on both sides and selected; a texture or sampler is split per
+    * place by texture_op (air_intrinsics.c); an argument-buffer member has neither */
+   for (unsigned j = 0; j < n; j++)
+      if (!pp || leaves[j]->ptr.class == AIR_PTR_ARGBUF)
+         return air_error(c, "instruction: a phi between pointers that name different "
+                             "places, which would have to be chosen at run time");
+   pp->n = n;
+   memcpy(pp->v, leaves, n * sizeof(leaves[0]));
    nir_def *sel = nir_load_reg(&c->b, pp->reg);
    struct air_val *r = pp->v[pp->n - 1];
    for (int j = (int)pp->n - 2; j >= 0; j--)
@@ -343,14 +375,12 @@ resolve_pointer_phi(struct air_ctx *c, const struct air_inst *in,
                   continue;
                struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
                struct air_val *v = e ? e->data : NULL;
-               unsigned j = 0;
-               while (v && j < pp->n && !same_ptr(&pp->v[j]->ptr, &v->ptr))
-                  j++;
-               if (!v || j == pp->n)
+               c->b.cursor = *(nir_cursor *)ce->data;
+               nir_def *idx = ptr_phi_index(c, pp, v);
+               if (!idx)
                   return air_error(c, "instruction: a phi of pointers whose operand is not "
                                       "one of the places it was resolved to");
-               c->b.cursor = *(nir_cursor *)ce->data;
-               nir_store_reg(&c->b, nir_imm_int(&c->b, (int)j), pp->reg);
+               nir_store_reg(&c->b, idx, pp->reg);
                *(nir_cursor *)ce->data = c->b.cursor;
             }
             continue;
