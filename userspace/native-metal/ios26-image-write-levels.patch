@@ -752,7 +752,18 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
     {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
     {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
-@@ -1579,6 +1613,8 @@
+@@ -1333,6 +1367,10 @@
+    }
+    if (depth_stencil)
+       write = false;
++   if (import && !write && !multisample && !depth_stencil &&
++       device->screen->is_format_supported(device->screen, fmt->pipe, target, 0, 0,
++                                           PIPE_BIND_SHADER_IMAGE))
++      write = true;
+ 
+    unsigned bind = (read ? PIPE_BIND_SAMPLER_VIEW : 0) |
+                    (write ? PIPE_BIND_SHADER_IMAGE : 0) |
+@@ -1579,6 +1617,8 @@
      * below is about.
      */
     pipe_sampler_view_reference(&texture->view, NULL);
@@ -761,7 +772,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe_surface_reference(&texture->native_surface, NULL);
     pipe_resource_reference(&texture->res, NULL);
     free(texture);
-@@ -1658,7 +1694,7 @@
+@@ -1658,7 +1698,7 @@
                size_t *out, char *why, size_t why_size)
  {
     unsigned texel = util_format_get_blocksize(texture->res->format);
@@ -770,7 +781,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1670,6 +1706,54 @@
+@@ -1670,6 +1710,54 @@
     }
     *out = stride;
     return true;
@@ -825,7 +836,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  }
  
  int
-@@ -1775,7 +1859,8 @@
+@@ -1775,7 +1863,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -835,7 +846,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3717,6 +3802,62 @@
+@@ -3717,6 +3806,62 @@
     d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
  }
  
@@ -898,7 +909,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  static int
  bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
             const struct air_shader_info *info, void **own_sampler,
-@@ -3903,12 +4044,27 @@
+@@ -3903,12 +4048,27 @@
                 return -1;
              }
           }
@@ -928,7 +939,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4074,14 @@
+@@ -3918,12 +4078,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -945,7 +956,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -7201,6 +7359,10 @@
+@@ -7201,6 +7363,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -956,7 +967,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7294,6 +7456,7 @@
+@@ -7294,6 +7460,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);

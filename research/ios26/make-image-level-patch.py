@@ -695,6 +695,20 @@ edit('tools/mesa/air/air_metal.c',
             .u.tex.first_layer = 0,'''),
      ('         num_images = MAX2(num_images, r->index + 1);',
       '         num_images = MAX2(num_images, r->image_slot + 1);'),
+     # VideoToolbox's VTMTSComputeFunction1x1 (Mercury) writes a CVMetalTextureCache texture of
+     # an IOSurface that was made without MTLTextureUsageShaderWrite; Apple's driver does not
+     # enforce the usage there. An imported surface is offered as writable when the GPU can bind
+     # its format as an image.
+     ('''   if (depth_stencil)
+      write = false;
+''',
+      '''   if (depth_stencil)
+      write = false;
+   if (import && !write && !multisample && !depth_stencil &&
+       device->screen->is_format_supported(device->screen, fmt->pipe, target, 0, 0,
+                                           PIPE_BIND_SHADER_IMAGE))
+      write = true;
+'''),
      # ASTC (Mercury's albedo-a.ktx is astc_6x6_srgb); the A618 samples ASTC LDR itself
      ('#include "util/u_inlines.h"\n',
       '#include "util/u_inlines.h"\n#include "util/u_gen_mipmap.h"\n'),
