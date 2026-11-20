@@ -7,6 +7,10 @@ Needs a boot image with sweetusb=3. Waits for the phone's serial port
 (VID 1209 PID 0002, CDC-ACM, driven by Windows' own usbser), prints the console
 and appends it to OUTPUT (default logs/usb-TIMESTAMP.txt). It reconnects when the
 phone reboots. Stop with Ctrl+C. The port is found by USB ID, not by COM number.
+
+Commands to the phone (xnu 2122): while this runs, write a line to logs/usb-command.txt, e.g.
+"a71:recovery" (reboot into TWRP), "a71:reboot" or "a71:bootloader". It is sent once and the
+file is deleted.
 """
 import ctypes, ctypes.wintypes as wt, datetime, os, re, subprocess, sys, time
 
@@ -16,6 +20,8 @@ k32.CreateFileW.restype = wt.HANDLE
 k32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, ctypes.c_void_p, wt.DWORD, wt.DWORD, wt.HANDLE]
 k32.ReadFile.argtypes = [wt.HANDLE, ctypes.c_void_p, wt.DWORD, ctypes.POINTER(wt.DWORD), ctypes.c_void_p]
 k32.CloseHandle.argtypes = [wt.HANDLE]
+k32.WriteFile.argtypes = [wt.HANDLE, ctypes.c_void_p, wt.DWORD, ctypes.POINTER(wt.DWORD), ctypes.c_void_p]
+CMD_FILE = os.path.join("logs", "usb-command.txt")
 INVALID = wt.HANDLE(-1).value
 
 
@@ -32,8 +38,25 @@ def find_port():
     return m.group(1) if m else None
 
 
+def send_command(h):
+    """xnu 2122: a line in logs/usb-command.txt goes to the phone once."""
+    try:
+        with open(CMD_FILE, "rb") as f:
+            cmd = f.read().strip()
+        os.remove(CMD_FILE)
+    except OSError:
+        return
+    if not cmd:
+        return
+    data = cmd + b"\n"
+    put = wt.DWORD()
+    ok = k32.WriteFile(h, data, len(data), ctypes.byref(put), None)
+    print(f"\n[sent {cmd.decode('ascii', 'replace')!r}: {'ok' if ok else 'error %d' % ctypes.get_last_error()}]",
+          flush=True)
+
+
 def read_port(port, log):
-    h = k32.CreateFileW("\\\\.\\" + port, 0x80000000, 0, None, 3, 0, None)
+    h = k32.CreateFileW("\\\\.\\" + port, 0xC0000000, 0, None, 3, 0, None)   # read + write
     if h == INVALID or h is None:
         print(f"[cannot open {port}: error {ctypes.get_last_error()}]", flush=True)
         return
@@ -45,6 +68,7 @@ def read_port(port, log):
         buf = ctypes.create_string_buffer(65536)
         got = wt.DWORD()
         while k32.ReadFile(h, buf, len(buf), ctypes.byref(got), None):
+            send_command(h)
             if got.value:
                 data = buf.raw[:got.value]
                 log.write(data)
