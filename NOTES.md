@@ -958,3 +958,33 @@ Next:
   NIR reuse across independent pipelines, a miss for a different group size, rejection above the device limit,
   survival after eviction while still referenced, and exactly one deletion per created state. It did not
   execute GPU work. Device installation requires confirmation because the bundle is on the iOS root.
+- CI `44811566296` succeeded for `e8aa89a`. Artifact `14668201081`: all six bundle hashes matched
+  `build.json`, and the backend contains the reuse diagnostic. Owner authorized replacing the bundle.
+  TWRP verified `build/a71-ios26-2123.img` on `boot` at
+  `f6679f41d1c0906084c11cecd818c6ca14563a7fa32db4db266bd6f1eb4ec8b0`; the image enables install at mount.
+  Wrote `build/a71-ios26-metal-compute-cache.payload` (9 entries, bundle only) and verified readback at
+  `54778591432f53c461df3a987177e716a2faee2a7c3b848b81b2f7b39f2c2f15`. Requested system reboot and
+  captured USB in `logs/usb-ios26-metal-compute-cache.txt`.
+- Phone booted on the first attempt; payload `finished 9/9 errno=0 sync=0 clear=0`, then Metal published.
+  Mercury's first encode took 17.78 s. Its next VideoToolbox pipeline logged a cache hit on
+  `VTMTSComputeFunction1x1 (1024x1x1)` and encoded in 0.100 s, with 0.005 s finish time. Draws were still zero
+  in both windows. The owner initially saw black after two lock/unlock cycles, then reported that wallpaper
+  appeared but did not look like the iOS 26 wallpaper.
+
+## 2026-11-21 — Mercury 10-bit drawable and cold compile fixes
+
+- The cache boot exposed 18 `no drawable` refusals for Metal format 94 with IOSurface `0x6c313072` (`l10r`),
+  followed by frame drops. `6e98f6d` adds that exact drawable pair, mapping BGR10A2Unorm to
+  `PIPE_FORMAT_B10G10R10A2_UNORM`. The existing pitch, dimensional and import checks still apply.
+- Offline `air2nir` reproduced the failed static initializer in VideoToolbox's `VTMTSComputeFunction1x1`.
+  The evaluator lacked the unsigned-boolean-to-float AIR intrinsic and constant `switch` support.
+  `4431bc2` adds both and reuses the translator's switch case selection. Local pinned VideoToolbox AIR:
+  VTMTS fell from 49,134 NIR instructions to 4,264 with constants set to zero, and 7,114 with ones.
+  All 10 functions translate in the baseline and both new runs. Actual cold GPU compile time is unverified.
+- Both commits are pushed. Verified the complete patch order on the donor. CI `44813311915` builds both fixes
+  on `4431bc2`; requested cancellation of superseded drawable-only run `44813058465`. The phone still runs
+  the cache build from `44811566296`. The same approved bundle installation is needed to test the combined build.
+- The cache boot selected at least one `space::` pipeline. The log has no evidence that the stock `fluidity::`
+  wallpaper was selected during the test. Also observed four fragment specialization failures in the look
+  preview (`uber-*` and `plane_color-*`, `unsupported constant type or value ABI`). The current diagnostic
+  combines unsupported types and method ABI failures, so the specific mismatch remains unknown.
