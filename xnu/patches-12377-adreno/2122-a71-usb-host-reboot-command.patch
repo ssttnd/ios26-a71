@@ -28,8 +28,8 @@ index dbea036..d4c5793 100644
 +sweet_reboot_set_mode(int mode)
 +{
 +	sr_override = mode == 2 ? SR_RECOVERY : mode == 1 ? SR_BOOTLOADER : SR_NORMAL;
-+	printf("SWEET REBOOT: next reboot mode set to %s (kernel)
-+", sr_name(sr_override));
++	printf("SWEET REBOOT: next reboot mode set to %s (kernel)"
++	    "\n", sr_name(sr_override));
 +}
 +
  /* Called by SweetPlatformExpert::haltRestart for panic notifications. */
@@ -80,8 +80,8 @@ index 799bad2..099f0f8 100644
 +			continue;
 +		}
 +		ud_cmd = 0;
-+		printf("SWEET USB: host asked for a reboot into %s
-+",
++		printf("SWEET USB: host asked for a reboot into %s"
++		    "\n",
 +		    cmd == 2 ? "recovery" : cmd == 3 ? "bootloader" : "normal");
 +		sweet_reboot_set_mode(cmd == 2 ? 2 : cmd == 3 ? 1 : 0);
 +		(void)reboot_kernel(0 /* RB_AUTOBOOT */, (char *)"USB host command");
