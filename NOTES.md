@@ -650,3 +650,12 @@
   replaceRegion path. Also blitCommandEncoderWithDescriptor:. Cancelled 44700658186 (glass only).
   Commit 6a0e11f, Metal CI `44701198795` (glass copy + blit encoder).
 - Metal CI `44701198795` 6/6 match. TWRP: `build/a71-ios26-metal-blit-glass.payload` VERIFY OK `36aaf7b7...edeb`, boot mercuryonly (23eebb59). Rebooted.
+- **Two panics in a row after writing blit-glass** (owner saw "exit code 5"). TWRP ring (`logs/ios26-blit-panic.txt`):
+  root mounts (dirty, non-journaled), then 43x `hfs_swap_BTNode: offset #0 invalid (0x0000) (blockSize 0x2000
+  numRecords 98)` `node=28370 fileID=4` (catalog), tzinit `force_system_dataset() failed: Input/output error`,
+  `pid 18 exited ... exit 5`. Payload area still holds blit-glass (not applied): not the new Metal.
+  Raw read in TWRP: catalog node 28370 (fs blocks 3851251-3851252, catalog extent 7) is valid on disk: kind -1,
+  height 1, num 98, offsets 14,106,184..., sha256 aaf024b9... Volume not journaled. So iOS's kernel gets the
+  node's second 4 KiB as zeros while Linux reads it fine. Guess: our UFS driver mishandles that LBA (e.g. a read
+  with recovered-error sense), not proven. Proposed: rewrite those two blocks with the identical bytes (auto
+  mode refused without explicit owner OK); asked the owner.
