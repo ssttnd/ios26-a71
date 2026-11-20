@@ -798,3 +798,16 @@ Open:
   `copyFromTexture:sourceSlice:sourceLevel:toTexture:destinationSlice:destinationLevel:sliceCount:levelCount:`.
   fa83a3d: resolve queued at render -endEncoding as a GPU pipe->blit (rwa_texture_resolve, in order at commit), and
   the slice/level-count copy. Applies; not compiled locally. Metal CI `44796529125`.
+- Glass trace boot (`logs/usb-ios26-glasstrace.txt`, 5 windows; rejoin `|backboardd|` pieces before parsing): every
+  window has 55-95 glass_background draws; each samples (slot 3, source_texture) a blur texture that
+  variable_blur_downsample rendered just before; no draw failed. Some of those blur textures report
+  mipmapLevelCount 0 (texture made with 1 level). Which window was the vanished state is unknown (no marker).
+- Resolve build CI `44796529125` OK, installed (`build/a71-ios26-metal-resolve.payload` `1328dc41...c6ee`), boot
+  mercuryonly; payload 9/9, log `logs/usb-ios26-resolve.txt`. Resolve/blit messages gone. Owner: still no wallpaper,
+  glass still vanishes (no volume-key markers in the log).
+- Wallpaper cause now: Mercury never draws (no GLASSSTAT line from it): `no drawable: interface: Metal format 53 /
+  IOSurface 0x42475241 (207x448 pitch 832) is not a supported linear import` (redwooddrawable.m). 9869ff6 lets
+  R32Uint/Sint/Float view a 4-byte BGRA/RGBA IOSurface, and logs textures created with mipmapLevelCount 0 (first 16,
+  with descriptor class). Metal CI `44798290743`.
+- Marker protocol for the next glass test: Volume Up when glass is gone, Volume Down when visible (`SWEET KEYS:
+  key=` lines land in the same USB log as the 30 s draw-trace windows).
