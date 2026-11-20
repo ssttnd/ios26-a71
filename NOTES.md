@@ -649,3 +649,4 @@
   not done (logged), unknown selectors swallowed (logged once). Copies run at encode time through the
   replaceRegion path. Also blitCommandEncoderWithDescriptor:. Cancelled 44700658186 (glass only).
   Commit 6a0e11f, Metal CI `44701198795` (glass copy + blit encoder).
+- Metal CI `44701198795` 6/6 match. TWRP: `build/a71-ios26-metal-blit-glass.payload` VERIFY OK `36aaf7b7...edeb`, boot mercuryonly (23eebb59). Rebooted.
