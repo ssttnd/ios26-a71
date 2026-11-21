@@ -1190,3 +1190,25 @@ Next:
 - `7d454cf`: inline samplers with the same state word share a slot (uber 17 -> 8). Offline: nothing lost (13 libs,
   zero/all-bits); every function of rb/mercury/qc/vt/ci/0064/0015 scanned for texture/image/sampler slot >= 16: none
   (old translator flags uber). Metal CI `44883726021` building.
+
+## 2026-11-21 13:20 — session end: state and next steps
+
+- Final install: CI `44883726021` (7d454cf) artifact `14699335850` 6/6, `build/a71-ios26-metal-sampslot.payload` VERIFY OK
+  `2a27dcc9...`, boot unchanged `f6679f41...c8b0` (2123, payload at mount). Booted first try, 9/9 errno=0, Metal up.
+- Observed in that boot: no Metal errors at all (no `command buffer error`, no `draw failed`, no `MESA: error`, no
+  refusals). Only crashes: MessagesBlastDoor sig 5 (pre-existing, every boot). Owner: wallpaper still empty.
+- Mercury: space:: pipelines link, VTMTS compute runs, `frontend ... commands=2 draws=0` and `commands=1 draws=0`; the
+  Space renderer never encodes a draw. RenderBox uber did not run in this boot (it draws the lock-screen labels/clock).
+  So the remaining cause is not a driver refusal; it is upstream of Metal draws (guess, unverified: Space's
+  CADisplayLink-driven render loop never asks for a frame, or a capability query other than supportsFamily makes it
+  skip rendering).
+- Phone root state now: `/var/local/sweet-mtl-families` = "MercuryPosterExtension 1002 1003 1004 1005 1006 3002 3003
+  5001" (Apple6 etc. for Mercury only); `/var/local/sweet-native-drawlog-every` = "10 1500 MercuryPosterExtension"
+  (original "10 800 backboardd" saved in research/wall/heap/drawlog-every.orig). USB logger still appending to
+  `logs/usb-ios26-metal-heap.txt` (background process of this session).
+- Next: (1) sample Mercury stacks right after wake (`--sample MercuryPosterExt`, image 2123-mercury-stack b9ff188c...)
+  while the owner looks at the lock screen, to see whether its display-link callback runs; (2) log CADisplayLink /
+  CAMetalLayer nextDrawable calls in the frontend; (3) try a simpler poster (Gradient/Photo) to separate "Mercury
+  Space" from "any poster". Not fixed: other Mercury posters (Ajisai/Jurin/shippou/tori/Flocon), RenderBox custom fn.
+- Commits this session (all pushed, codex/a71-settings): fafafd0 heap, 925da4b layer readback, 0abc4b7 supportsFamily,
+  28993d8 function tables + trace, 7339f5d gradients/rgb565, eefd2b4 zero texel + i1 widening, 7d454cf sampler slots.
