@@ -1134,3 +1134,14 @@ Next:
   `91add23d...`, installed 11/11. Log: Mercury asks supportsFamily 1001, 1002, **1006 (Apple6)** - previously NO, now YES
   by override; backboardd asks 1001-1009 and still gets only Apple1. No Mercury draws yet right after boot; owner's
   wake/preview test pending.
+- Owner on the Apple6 override: lock screen and preview still black. Log (Mercury PID 397): GLASSSTAT 88 draws
+  (first Mercury draws in these boots), RenderBox `uber` pipeline now refused 10x: `interface: input
+  air.function_constant`. Offline (VM air2nir, RenderBox `0180.metallib`): uber_fragment has constants
+  `has_function_table`, `has_coverage`, `floating_point_color`, `extended_color` packed in `_shader_state` (uint4);
+  with all 128 bits set the input is `air.visible_function_table` (custom_fn), which the translator had no case for.
+  VM-only hack: `AIR2NIR_FC_ALLBITS=1` (with `AIR2NIR_FC_ONES=1`) sets bits and bits_hi to all ones.
+- `28993d8`: function-table input = empty resource, `air.get_function_pointer*` = null, call through a pointer =
+  zero result (notes logged). Offline uber_fragment all-bits: translate ok, 17,642 NIR instrs (was "a pointer where
+  a number belongs"). RenderBox 51 ok / 31 fail and PencilKit 34/0 unchanged. `*_custom_fragment` still fail
+  (`custom_fn.MTL_VISIBLE_FN_REF`, a linked visible function, different mechanism). Draw trace: periodic mode arms
+  on the first draw; TEXSTAT also reads full-screen colour targets (>= 600x1200). Metal CI `44881050326` building.
