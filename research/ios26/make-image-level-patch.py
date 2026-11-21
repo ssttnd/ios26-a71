@@ -2097,6 +2097,20 @@ native_drawlog_texstat(unsigned seq, id t)
 	        tx[0] ? tx : "-");
 	if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
 		native_drawlog_texstat(seq, textures[3]);
+	/* A full-screen image layer (the wallpaper a poster extension rendered into its own
+	 * IOSurface): read what the compositor is about to sample, so a black wallpaper can be
+	 * told apart from one that is never composited. */
+	else if (ntextures > 3 && textures[3] != nil && [textures[3] width] >= 600 &&
+	         [textures[3] height] >= 1200) {
+		static unsigned big_told;
+		if (big_told++ < 24) {
+			id t = textures[3];
+			void *surf = [t respondsToSelector:@selector(iosurface)] ? (void *)[t iosurface] : NULL;
+			fprintf(stderr, "SweetNativeMetal: TEXSTAT %u full-screen layer %s tex %p surface %p\\n",
+			        seq, nm.label, t, surf);
+			native_drawlog_texstat(seq, t);
+		}
+	}
 }'''),
      # Periodic arming: the touch-a-file trigger needs a file to change AFTER the process
      # started, which only a delayed package could do, and a delayed package corrupted the
