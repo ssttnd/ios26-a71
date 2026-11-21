@@ -1128,3 +1128,9 @@ Next:
   Apple1/Common1 only; iOS 16 showed metal_profile=3/5 abort backboardd. `0abc4b7`: `-supportsFamily:` logs each family
   per process and `/var/local/sweet-mtl-families` ("PROCESS FAMILY..." lines) answers YES for that process only.
   Metal CI `44879831350` building. Phone is on boot `b9ff188c...` (stack image); return to `f6679f41...` for packages.
+- CI `44879831350` succeeded on `0abc4b7`; artifact `14697497138` 6/6. TWRP: restored boot `build/a71-ios26-2123.img`
+  (VERIFY OK f6679f41...), wrote `build/a71-ios26-metal-family.payload` (bundle + `/var/local/sweet-mtl-families` =
+  "MercuryPosterExtension 1002 1003 1004 1005 1006 3002 3003 5001", iPhone 11 / A13 truthful set), VERIFY OK
+  `91add23d...`, installed 11/11. Log: Mercury asks supportsFamily 1001, 1002, **1006 (Apple6)** - previously NO, now YES
+  by override; backboardd asks 1001-1009 and still gets only Apple1. No Mercury draws yet right after boot; owner's
+  wake/preview test pending.
