@@ -477,7 +477,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!fn)
        return false;   /* translate_callee has said why */
  
-@@ -3565,56 +3715,198 @@
+@@ -3565,56 +3715,209 @@
     return true;
  }
  
@@ -623,6 +623,17 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +       * predecessors have been translated.
 +       */
 +      struct air_ptr place = first->ptr;
++      if (pp && place.class == AIR_PTR_NONE) {
++         /* a pointer into nothing (a buffer the constants left unbound): advancing it is
++          * still nothing. The back edges are checked to stay nothing with the phi stores. */
++         for (unsigned j = 0; j < n; j++)
++            if (leaves[j]->ptr.class != AIR_PTR_NONE)
++               return air_error(c, "instruction: a loop-carried pointer phi mixes an unbound "
++                                   "pointer with a buffer");
++         pp->offset_base = first;
++         air_set(c, &in->base, air_val_ptr(c, place));
++         return true;
++      }
 +      if (!pp || (place.class != AIR_PTR_UBO && place.class != AIR_PTR_SSBO))
 +         return air_error(c, "instruction: a loop-carried pointer phi without a buffer base");
 +      for (unsigned j = 0; j < n; j++)
@@ -711,7 +722,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3927,14 @@
+@@ -3635,8 +3938,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -727,7 +738,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3646,11 +3944,13 @@
+@@ -3646,11 +3955,13 @@
            * "a returned struct that was never built" -- true of the module, and
            * not what is wrong with it.
            */
@@ -746,7 +757,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           nir_def *reg = nir_decl_reg(&entry, air_nir_components(in->base.type),
                                       air_nir_bit_size(c, in->base.type), 0);
           _mesa_hash_table_insert(c->phi_regs, in, reg);
-@@ -3702,8 +4002,10 @@
+@@ -3702,8 +4013,10 @@
              continue;
           }
           struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);
@@ -759,7 +770,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
  
        for (unsigned i = 0; i < blk->num_insts; i++) {
-@@ -3842,9 +4144,31 @@
+@@ -3842,9 +4155,37 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -774,6 +785,12 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +                  continue;
 +               struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
 +               struct air_val *v = e ? e->data : NULL;
++               if (pp->offset_base && pp->offset_base->ptr.class == AIR_PTR_NONE) {
++                  if (!v || v->kind != AIR_VAL_PTR || v->ptr.class != AIR_PTR_NONE)
++                     return air_error(c, "instruction: a loop-carried pointer phi starts unbound "
++                                         "and is advanced into a buffer");
++                  continue;
++               }
 +               c->b.cursor = *(nir_cursor *)ce->data;
 +               nir_def *incoming = pp->offset_base ? ptr_phi_offset(c, &pp->offset_base->ptr, v) :
 +                                                     ptr_phi_index(c, pp, v);
@@ -792,7 +809,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -3852,10 +4176,16 @@
+@@ -3852,10 +4193,16 @@
              if (!edge_possible(&edges, in->targets[k]->index, bi))
                 continue; /* an edge the function constants rule out */
              c->b.cursor = *(nir_cursor *)ce->data;
@@ -813,7 +830,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
              /* later stores into the same block go after this one */
              *(nir_cursor *)ce->data = c->b.cursor;
           }
-@@ -3922,14 +4252,21 @@
+@@ -3922,14 +4269,21 @@
  }
  
  static void
@@ -839,7 +856,13 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
        /* llvm.compiler.used and llvm.global_ctors are lists for the linker,
         * not memory the shader reads
-@@ -3948,7 +4285,7 @@
+@@ -3943,12 +4297,12 @@
+          int idx = function_constant_index(c, g);
+          if (idx < 0) {
+             air_error(c, "interface: an externally initialized variable that is not a "
+-                         "function constant");
++                         "function constant (%s)", name);
+             return;
           }
           pl->class = AIR_PTR_FUNCTION_CONSTANT;
           pl->binding = idx;
@@ -848,7 +871,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A sampler the shader declares itself. It needs a real index, not a
            * sentinel: the Adreno's texture instruction holds the sampler in a
            * four-bit field, and ~0u there asserts in ir3's encoder. The index
-@@ -4025,8 +4362,48 @@
+@@ -4025,8 +4379,48 @@
           c->scratch_size += air_type_alloc_size(c->m, g->value_type);
        }
     }
@@ -898,7 +921,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  }
  
  /* Build the globals as values of the function being translated now. Called for
-@@ -4093,7 +4470,7 @@
+@@ -4093,7 +4487,7 @@
            * also why this could not be reached before the reader learnt to read
            * one.
            */
@@ -907,7 +930,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           if (!fn)
              return;   /* translate_callee has said why */
           nir_builder_instr_insert(&c->b, &nir_call_instr_create(c->nir, fn)->instr);
-@@ -4257,7 +4634,9 @@
+@@ -4257,7 +4651,9 @@
     }
  
     if (!c.error[0])
@@ -918,7 +941,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c.error[0])
        materialise_globals(&c);
     if (!c.error[0]) {
-@@ -4305,8 +4684,8 @@
+@@ -4305,8 +4701,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -929,7 +952,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4712,8 @@
+@@ -4333,6 +4729,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {
@@ -984,7 +1007,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
        return true;
     }
  
-@@ -554,6 +579,49 @@
+@@ -554,6 +579,72 @@
         */
        r = nir_b2iN(&c->b, nir_ine_imm(&c->b, a[0], 0),
                     air_nir_bit_size(c, in->base.type));
@@ -1031,10 +1054,33 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 +         if (air_nir_bit_size(c, in->base.type) == 16)
 +            r = nir_f2f16(&c->b, r);
 +      }
++   } else if ((!strcmp(op, "pack") || !strcmp(op, "unpack")) && n->num >= 3 &&
++              !strcmp(n->part[1], "unorm") && !strcmp(n->part[2], "rgb565")) {
++      /* the same order as rgb10a2 above: component 0 in the low bits, 5/6/5 */
++      if (!strcmp(op, "pack")) {
++         nir_def *v = nir_fsat(&c->b, nir_f2f32(&c->b, a[0]));
++         nir_def *q = nir_f2u32(&c->b, nir_fround_even(&c->b,
++                          nir_fmul(&c->b, v, nir_imm_vec3(&c->b, 31.0, 63.0, 31.0))));
++         r = nir_ior(&c->b, nir_ior(&c->b, nir_channel(&c->b, q, 0),
++                                    nir_ishl_imm(&c->b, nir_channel(&c->b, q, 1), 5)),
++                     nir_ishl_imm(&c->b, nir_channel(&c->b, q, 2), 11));
++         r = nir_u2uN(&c->b, r, air_nir_bit_size(c, in->base.type));
++      } else {
++         nir_def *w = nir_u2u32(&c->b, a[0]);
++         nir_def *ch[3];
++         static const unsigned at[3] = { 0, 5, 11 }, bits[3] = { 5, 6, 5 };
++         for (unsigned i = 0; i < 3; i++)
++            ch[i] = nir_u2f32(&c->b, nir_ubitfield_extract(&c->b, w, nir_imm_int(&c->b, at[i]),
++                                                           nir_imm_int(&c->b, bits[i])));
++         r = nir_fmul(&c->b, nir_vec(&c->b, ch, 3),
++                      nir_imm_vec3(&c->b, 1.0 / 31.0, 1.0 / 63.0, 1.0 / 31.0));
++         if (air_nir_bit_size(c, in->base.type) == 16)
++            r = nir_f2f16(&c->b, r);
++      }
     } else if (!strcmp(op, "unpack") && n->num >= 2 &&
                !strcmp(n->part[1], "unorm4x8")) {
        /* four unsigned bytes of a word, each divided by 255. Component 0 is the
-@@ -1163,6 +1231,34 @@
+@@ -1163,6 +1254,34 @@
        air_set(c, &in->base, air_val_ssa(c, nir_ffma(&c->b, a, b, d)));
        return true;
     }
@@ -1069,7 +1115,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
     if (!strncmp(name, "llvm.fabs.", 10)) {
        nir_def *a = air_get_ssa(c, in->operands[1]);
        if (!a)
-@@ -1400,6 +1496,53 @@
+@@ -1400,6 +1519,53 @@
     return true;
  }
  
@@ -1123,7 +1169,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1563,6 +1706,48 @@
+@@ -1563,6 +1729,48 @@
     return coord;
  }
  
@@ -1172,7 +1218,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  static bool
  texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
  {
-@@ -1574,6 +1759,48 @@
+@@ -1574,6 +1782,48 @@
     if (!strncmp(n->part[0], "get_null_", 9) && in->base.type->kind == AIR_TYPE_POINTER) {
        struct air_ptr p = { .class = AIR_PTR_NONE };
        air_set(c, &in->base, air_val_ptr(c, p));
@@ -1221,7 +1267,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
        return true;
     }
     struct air_tex_name t;
-@@ -1693,16 +1920,24 @@
+@@ -1693,16 +1943,24 @@
        nir_def *value = air_get_ssa(c, in->operands[arg++]);
        if (!value)
           return false;
@@ -1253,7 +1299,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
                        nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                        nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                        nir_imm_int(&c->b, 0),
-@@ -1981,6 +2216,18 @@
+@@ -1981,6 +2239,18 @@
  
     if (!strcmp(n.part[0], "is_function_constant_defined"))
        return fc_defined_op(c, in);

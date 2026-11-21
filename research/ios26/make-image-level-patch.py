@@ -872,6 +872,40 @@ translate_body(struct air_ctx *c)
          air_note(c, "a call through a function pointer returns zero (no function pointers)");
          return true;
       }
+'''),
+     # loop pointer phi from an unbound buffer (RenderBox gradients)
+     (r'''      struct air_ptr place = first->ptr;
+      if (!pp || (place.class != AIR_PTR_UBO && place.class != AIR_PTR_SSBO))''',
+      r'''      struct air_ptr place = first->ptr;
+      if (pp && place.class == AIR_PTR_NONE) {
+         /* a pointer into nothing (a buffer the constants left unbound): advancing it is
+          * still nothing. The back edges are checked to stay nothing with the phi stores. */
+         for (unsigned j = 0; j < n; j++)
+            if (leaves[j]->ptr.class != AIR_PTR_NONE)
+               return air_error(c, "instruction: a loop-carried pointer phi mixes an unbound "
+                                   "pointer with a buffer");
+         pp->offset_base = first;
+         air_set(c, &in->base, air_val_ptr(c, place));
+         return true;
+      }
+      if (!pp || (place.class != AIR_PTR_UBO && place.class != AIR_PTR_SSBO))'''),
+     # loop pointer phi from an unbound buffer (RenderBox gradients)
+     (r'''               c->b.cursor = *(nir_cursor *)ce->data;
+               nir_def *incoming = pp->offset_base ? ptr_phi_offset(c, &pp->offset_base->ptr, v) :''',
+      r'''               if (pp->offset_base && pp->offset_base->ptr.class == AIR_PTR_NONE) {
+                  if (!v || v->kind != AIR_VAL_PTR || v->ptr.class != AIR_PTR_NONE)
+                     return air_error(c, "instruction: a loop-carried pointer phi starts unbound "
+                                         "and is advanced into a buffer");
+                  continue;
+               }
+               c->b.cursor = *(nir_cursor *)ce->data;
+               nir_def *incoming = pp->offset_base ? ptr_phi_offset(c, &pp->offset_base->ptr, v) :'''),
+     # name the global in the refusal
+     ('''            air_error(c, "interface: an externally initialized variable that is not a "
+                         "function constant");
+''',
+      '''            air_error(c, "interface: an externally initialized variable that is not a "
+                         "function constant (%s)", name);
 '''))
 
 edit('tools/mesa/air/air_private.h',
@@ -1187,7 +1221,35 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
       }
       return true;
    }
-   if (!strcmp(n.part[0], "get_read_sampler")) {'''))
+   if (!strcmp(n.part[0], "get_read_sampler")) {'''),
+     # air.pack/unpack.unorm.rgb565 (RenderBox resolve shaders)
+     (r'''   } else if (!strcmp(op, "unpack") && n->num >= 2 &&
+              !strcmp(n->part[1], "unorm4x8")) {''',
+      r'''   } else if ((!strcmp(op, "pack") || !strcmp(op, "unpack")) && n->num >= 3 &&
+              !strcmp(n->part[1], "unorm") && !strcmp(n->part[2], "rgb565")) {
+      /* the same order as rgb10a2 above: component 0 in the low bits, 5/6/5 */
+      if (!strcmp(op, "pack")) {
+         nir_def *v = nir_fsat(&c->b, nir_f2f32(&c->b, a[0]));
+         nir_def *q = nir_f2u32(&c->b, nir_fround_even(&c->b,
+                          nir_fmul(&c->b, v, nir_imm_vec3(&c->b, 31.0, 63.0, 31.0))));
+         r = nir_ior(&c->b, nir_ior(&c->b, nir_channel(&c->b, q, 0),
+                                    nir_ishl_imm(&c->b, nir_channel(&c->b, q, 1), 5)),
+                     nir_ishl_imm(&c->b, nir_channel(&c->b, q, 2), 11));
+         r = nir_u2uN(&c->b, r, air_nir_bit_size(c, in->base.type));
+      } else {
+         nir_def *w = nir_u2u32(&c->b, a[0]);
+         nir_def *ch[3];
+         static const unsigned at[3] = { 0, 5, 11 }, bits[3] = { 5, 6, 5 };
+         for (unsigned i = 0; i < 3; i++)
+            ch[i] = nir_u2f32(&c->b, nir_ubitfield_extract(&c->b, w, nir_imm_int(&c->b, at[i]),
+                                                           nir_imm_int(&c->b, bits[i])));
+         r = nir_fmul(&c->b, nir_vec(&c->b, ch, 3),
+                      nir_imm_vec3(&c->b, 1.0 / 31.0, 1.0 / 63.0, 1.0 / 31.0));
+         if (air_nir_bit_size(c, in->base.type) == 16)
+            r = nir_f2f16(&c->b, r);
+      }
+   } else if (!strcmp(op, "unpack") && n->num >= 2 &&
+              !strcmp(n->part[1], "unorm4x8")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
      ('#include "nir_builder.h"\n',
