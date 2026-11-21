@@ -1165,3 +1165,19 @@ Next:
 - Gradient phi with zero constants is still refused (it really moves from an unbound pointer into a buffer).
 - Not built yet: owner asked to wait. Next Metal CI must be dispatched on `7339f5d` or later; then install bundle
   (keeps `/var/local/sweet-mtl-families` Apple6 override for Mercury) and test lock screen + preview.
+
+## 2026-11-21 — sweep build on the phone; Mercury command buffers fail; fixes eefd2b4
+
+- CI `44881676138` (80a21c5) succeeded, artifact `14698049298` 6/6. TWRP: boot still `f6679f41...`; wrote
+  `build/a71-ios26-metal-sweep.payload` VERIFY OK `69bb3414...`. First boot after the write panicked early (nothing on
+  USB: the known first-boot fault); owner restarted once, booted, payload 9/9, Metal published.
+- Owner: wallpaper black everywhere (lock screen and home; preview is not the goal). Log: RenderBox `uber` now draws
+  (clock/labels, 567x197 etc.), Space poster still 0 draws. 56x `the draw failed: uber_fragment reads texture 0 and 0
+  textures were bound` -> 56x Mercury `command buffer error: N, 4, 4`. Also `MESA: error` NIR validation of
+  uber_fragment: `invalid src bit size: 1` at `u2u32` of a `flt` (extractelement indexed by a compare). Offline
+  sweeps missed both (other constant values; driver-side check).
+- `eefd2b4`: backend binds a shared 1x1 zero texture for a declared, unbound, read-only texture slot (logged, max 8)
+  instead of failing the draw; translator widens i1 extract/insert indices, shift amounts, GEP indices (now signed per
+  LLVM), i1 integer arithmetic and ordered compares. Old vs new: 13 libraries x 3 modes, nothing lost, no crashes.
+  air_metal.c gcc syntax check in the VM: no new errors (only the pre-existing environment DRM_FORMAT_MOD_LINEAR).
+- Metal CI `44882950660` building.
