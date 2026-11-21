@@ -982,7 +982,32 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A sampler the shader declares itself. It needs a real index, not a
            * sentinel: the Adreno's texture instruction holds the sampler in a
            * four-bit field, and ~0u there asserts in ir3's encoder. The index
-@@ -4025,8 +4413,48 @@
+@@ -3988,6 +4376,24 @@
+                   fprintf(stderr, "SweetNativeMetal: inline sampler %s second state word %#llx ignored (iOS 26 layout)\n",
+                           name, (unsigned long long)extra);
+             }
++         }
++         /* One sampler per distinct state: RenderBox's uber_fragment declares fifteen
++          * inline samplers next to its two API ones, seventeen slots where the GPU has
++          * sixteen, and most of them are the same state word. Same state, same slot.
++          */
++         {
++            bool shared = false;
++            for (unsigned k = 0; k < c->info->num_resources; k++) {
++               const struct air_resource *o = &c->info->resources[k];
++               if (o->kind == AIR_RESOURCE_SAMPLER && o->inline_sampler &&
++                   o->sampler_state == word) {
++                  pl->binding = o->index;
++                  shared = true;
++                  break;
++               }
++            }
++            if (shared)
++               continue;
+          }
+          struct air_shader_info *info = c->info;
+          info->resources = reralloc(c->mem_ctx, info->resources, struct air_resource,
+@@ -4025,8 +4431,48 @@
           c->scratch_size += air_type_alloc_size(c->m, g->value_type);
        }
     }
@@ -1032,7 +1057,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  }
  
  /* Build the globals as values of the function being translated now. Called for
-@@ -4093,7 +4521,7 @@
+@@ -4093,7 +4539,7 @@
            * also why this could not be reached before the reader learnt to read
            * one.
            */
@@ -1041,7 +1066,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           if (!fn)
              return;   /* translate_callee has said why */
           nir_builder_instr_insert(&c->b, &nir_call_instr_create(c->nir, fn)->instr);
-@@ -4257,7 +4685,9 @@
+@@ -4257,7 +4703,9 @@
     }
  
     if (!c.error[0])
@@ -1052,7 +1077,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c.error[0])
        materialise_globals(&c);
     if (!c.error[0]) {
-@@ -4305,8 +4735,8 @@
+@@ -4305,8 +4753,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -1063,7 +1088,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4763,8 @@
+@@ -4333,6 +4781,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {

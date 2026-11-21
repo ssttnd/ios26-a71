@@ -991,7 +991,32 @@ air_nir_bit_size(struct air_ctx *c, const struct air_type *t)
       r'''air_set(c, &in->base, air_val_ssa(c, nir_vector_extract(&c->b, v, air_int32(&c->b, i, false))));'''),
      # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
      (r'''air_val_ssa(c, nir_vector_insert(&c->b, v, x, nir_u2u32(&c->b, i))));''',
-      r'''air_val_ssa(c, nir_vector_insert(&c->b, v, x, air_int32(&c->b, i, false))));'''))
+      r'''air_val_ssa(c, nir_vector_insert(&c->b, v, x, air_int32(&c->b, i, false))));'''),
+     # inline samplers with the same state share a slot (uber_fragment: 17 slots > 16)
+     (r'''         struct air_shader_info *info = c->info;
+         info->resources = reralloc(c->mem_ctx, info->resources, struct air_resource,
+                                    info->num_resources + 1);''',
+      r'''         /* One sampler per distinct state: RenderBox's uber_fragment declares fifteen
+          * inline samplers next to its two API ones, seventeen slots where the GPU has
+          * sixteen, and most of them are the same state word. Same state, same slot.
+          */
+         {
+            bool shared = false;
+            for (unsigned k = 0; k < c->info->num_resources; k++) {
+               const struct air_resource *o = &c->info->resources[k];
+               if (o->kind == AIR_RESOURCE_SAMPLER && o->inline_sampler &&
+                   o->sampler_state == word) {
+                  pl->binding = o->index;
+                  shared = true;
+                  break;
+               }
+            }
+            if (shared)
+               continue;
+         }
+         struct air_shader_info *info = c->info;
+         info->resources = reralloc(c->mem_ctx, info->resources, struct air_resource,
+                                    info->num_resources + 1);'''))
 
 edit('tools/mesa/air/air_private.h',
      ('      unsigned index;         /* dual-source index */\n',
