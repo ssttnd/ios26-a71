@@ -1181,3 +1181,12 @@ Next:
   LLVM), i1 integer arithmetic and ordered compares. Old vs new: 13 libraries x 3 modes, nothing lost, no crashes.
   air_metal.c gcc syntax check in the VM: no new errors (only the pre-existing environment DRM_FORMAT_MOD_LINEAR).
 - Metal CI `44882950660` building.
+- CI `44882950660` (eefd2b4) artifact `14698643411` 6/6; payload `build/a71-ios26-metal-nulltex.payload` VERIFY OK
+  `7faa73af...`. Pitfall seen: the owner entered TWRP by hand while my `a71:recovery` was queued; the logger
+  delivered it on the next iOS boot, which went straight back to TWRP (payload had installed 9/9). Do not queue
+  `a71:recovery` when the owner may enter TWRP manually; check `adb devices` first.
+- Owner: still no wallpaper. Log: zero-texel fallback works (texture 0/1/3), but 11x `uber_fragment binds a sampler at
+  index 16, past the 16 slots` -> every Mercury command buffer still failed. uber declares 2 API + 15 inline samplers.
+- `7d454cf`: inline samplers with the same state word share a slot (uber 17 -> 8). Offline: nothing lost (13 libs,
+  zero/all-bits); every function of rb/mercury/qc/vt/ci/0064/0015 scanned for texture/image/sampler slot >= 16: none
+  (old translator flags uber). Metal CI `44883726021` building.
