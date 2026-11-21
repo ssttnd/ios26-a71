@@ -1096,3 +1096,16 @@ Next:
   12,582,912-byte heaps and allocated format-80 (BGRA8) textures from them (28x28 .. 80x38); no unanswered heap selector,
   no `unable to create heap` so far, no backboardd/SpringBoard crash. MessagesBlastDoor sig 5 crashes also existed on the
   previous boots (12 in framebuffer-target). Mercury preview not yet opened in this boot: the owner's visual test is pending.
+
+## 2026-11-21 — heap boot: big clock, still no wallpaper
+
+- Owner on the heap bundle: lock-screen clock now large (as intended), wallpaper still absent.
+- `logs/usb-ios26-metal-heap.txt`: Mercury (PID 300) selected the `space::` poster (pipelines rasterizeArc/Background/
+  Cylinder, compute updateCylinderVertexPositions, VariableBlurrer, VTMTS), imported its drawable IOSurface 24
+  (`&BGA` 828x1792), dispatched compute and took extended rendering assertions. No Mercury errors besides two
+  `scratch load stays` notes; no uber/heap errors (the look editor was not opened this time). No Mercury GLASSSTAT
+  line (it prints only on a draw after a 1 s window, so a single burst is not reported).
+- backboardd draw trace (`10 800 backboardd` already on the root) composites a full-screen `80:828x1792` texture
+  through `PBGRABsovXm_TimgA2Xhf_Isrc` (375 of 3657 traced draws). Guess: that is the wallpaper layer.
+- `925da4b`: draw trace reads back (TEXSTAT mean/clear %) any sampled texture >= 600x1200 (24 max per process),
+  with the texture's IOSurface pointer. Metal CI `44878166112` building.
