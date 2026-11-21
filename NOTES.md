@@ -1109,3 +1109,22 @@ Next:
   through `PBGRABsovXm_TimgA2Xhf_Isrc` (375 of 3657 traced draws). Guess: that is the wallpaper layer.
 - `925da4b`: draw trace reads back (TEXSTAT mean/clear %) any sampled texture >= 600x1200 (24 max per process),
   with the texture's IOSurface pointer. Metal CI `44878166112` building.
+
+## 2026-11-21 — wallpaper snapshot is black; Mercury encodes no draws
+
+- TWRP read (new `hfsls` walk, read-only) of Mercury config `2BF923B3...` `versions/1`: `RuntimeSnapshot-lock.atx`
+  16,392 bytes = one ATX `FILL` block of zeros; `RuntimeSnapshotColorStatisticsMetadata-lock.plist` averageColor
+  a=1 only (black), contrast/saturation 0; created 06:59:27Z in the heap boot. Copies in ignored `research/wall/heap/`.
+  So Mercury's own output is black; not a compositing problem. Owner: lock screen and preview both black.
+- Installed `build/a71-ios26-metal-layerstat.payload` (CI `44878166112` bundle + drawlog-every "10 1500
+  MercuryPosterExtension"; original "10 800 backboardd" saved in `research/wall/heap/drawlog-every.orig`),
+  VERIFY OK `e99656c0...`, 11/11 errno=0. Mercury: `frontend window_ms=193092 commands=2 draws=0` (two VTMTS compute
+  buffers), DRAWLOG never armed (no draw call at all), drawables 24-27/43 (`&BGA`) imported, 178x "We don't have a
+  location / guess at solar position" (frame loop alive), no driver refusals.
+- Flashed `build/a71-ios26-2123-mercury-stack.img` (b9ff188c..., VERIFY OK; no payload, no dtlog). 40 samples of
+  two Mercury PIDs (284, 300): every thread static; main thread idle in the UIKit run loop, others in cvwait or
+  workq. Not hung: nothing asked it to render during 90-290 s (screen state unknown).
+- Mercury binary (from the local root image) uses CADisplayLink, nextDrawable, supportsFamily. Profile 0 claims
+  Apple1/Common1 only; iOS 16 showed metal_profile=3/5 abort backboardd. `0abc4b7`: `-supportsFamily:` logs each family
+  per process and `/var/local/sweet-mtl-families` ("PROCESS FAMILY..." lines) answers YES for that process only.
+  Metal CI `44879831350` building. Phone is on boot `b9ff188c...` (stack image); return to `f6679f41...` for packages.
