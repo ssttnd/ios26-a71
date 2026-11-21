@@ -1145,3 +1145,23 @@ Next:
   a number belongs"). RenderBox 51 ok / 31 fail and PencilKit 34/0 unchanged. `*_custom_fragment` still fail
   (`custom_fn.MTL_VISIBLE_FN_REF`, a linked visible function, different mechanism). Draw trace: periodic mode arms
   on the first draw; TEXSTAT also reads full-screen colour targets (>= 600x1200). Metal CI `44881050326` building.
+
+## 2026-11-21 — offline sweep before the next Metal build (owner: fix what can be fixed first)
+
+- Cancelled superseded Metal CI `44881050326` (28993d8). VM `air2nir` now has a local-only `AIR2NIR_FC_ALLBITS=1`
+  (with `AIR2NIR_FC_ONES=1`): every constant's bits and bits_hi all ones. VM keeps `/tmp/air2nir_old` (sources before
+  today) and `/tmp/air2nir_new`, libraries in `/tmp/ml/` (lost on VM restart).
+- Mercury's `Space.metallib` is not AIR (binary archive); its `space::` shaders come from `default.metallib` and all
+  translate. No translator cause found for the black Space poster; `space::rasterizeBackgroundVertex` reads a 6-entry
+  i16 corner table by vertex_id through scratch (stores explicit, looks correct).
+- `7339f5d` (on top of `28993d8`): NONE-based loop pointer phis (RenderBox gradients) with a back-edge check, rgb565
+  pack/unpack, named global in the externally-initialised refusal. Old vs new over Mercury, RenderBox, VideoToolbox,
+  CoreImage, QuartzCore, PencilKit and poster extensions 0015/0016/0029/0233/0238/0240 in three constant modes: zero
+  lost; RenderBox +2 (zero/one) and +6 (all bits: uber_fragment, 3 gradients, 2 resolves).
+- Still refused (not fixed, other posters / bigger work): Mercury Ajisai/Jurin fragments use externally initialised
+  `TEXTURE__ColorRampLut*` globals; shippou compute kernels take a function by value ("function value used before
+  it is defined"); tori/Ajisai/Jurin vertex and Flocon fragments hit aggregate-as-number; RenderBox `*_custom_*`
+  call linked visible functions (`custom_fn.MTL_VISIBLE_FN_REF`) and `__RB::*` are air.visible library functions.
+- Gradient phi with zero constants is still refused (it really moves from an unbound pointer into a buffer).
+- Not built yet: owner asked to wait. Next Metal CI must be dispatched on `7339f5d` or later; then install bundle
+  (keeps `/var/local/sweet-mtl-families` Apple6 override for Mercury) and test lock screen + preview.
