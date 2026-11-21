@@ -1075,3 +1075,16 @@ Next:
 
 - CI 44819830656 bundle applied on the next boot (USB log `logs/usb-ios26-metal-framebuffer-target.txt`, line 50608, payload 9/9 errno=0). Owner confirmed wallpaper still absent.
 - Uber vertex/fragment pipeline links, but preview draws repeatedly fail with `uber_fragment reads texture 0 and 0 textures were bound`. Mercury also logs `unable to create heap: 0` and unsuccessful look snapshots. The device frontend's `newHeapWithDescriptor:` currently returns nil. Next isolate whether the failed heap allocation leaves the preview texture unbound, or whether the shader resource list still retains a disabled texture. The causal link is not verified. No new code or device changes in this check.
+
+## 2026-11-21 — MTLHeap for the Uber preview
+
+- Phone was found in TWRP (11:45 local). Pulled the ring: same boot as the Uber retest (ends 13:35 PST, no panic):
+  35× `uber_fragment reads texture 0 and 0 textures were bound`, 34× `unable to create heap: 0`, CRASH sig 6 in
+  ScreenshotServic, fileproviderd, Photos (not investigated). The donor frontend answered `newHeapWithDescriptor:`
+  with nil and both `heap*SizeAndAlign` queries with {0,0}.
+- `fafafd0` (generator `make-image-level-patch.py`, regenerated patch): `SweetNativeMetalHeap` hands out ordinary
+  device textures/buffers (no shared memory, aliasing is a no-op), conservative sizes (16 B/texel, mip chain,
+  64 KiB align; buffers 256), logs `newHeapWithDescriptor: size N -> ptr`, the first heap textures, and any
+  unanswered heap selector (returns zero instead of abort). Series verified on the pristine donor (local donor
+  copy already contains mip-views: reverse it first). Not compiled locally (needs the iOS SDK).
+- Metal CI `44877334898` dispatched on `fafafd0`. Guess, not verified: the unbound texture is the heap texture.
