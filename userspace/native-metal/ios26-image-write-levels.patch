@@ -112,7 +112,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_varying)
  {
     uint64_t param;
-@@ -1674,6 +1678,16 @@
+@@ -1674,6 +1678,30 @@
        return air_error(c, "interface: input for parameter %u of %u", (unsigned)param,
                         c->fn->num_args);
     const struct air_type *t = c->fn->args[param].type;
@@ -126,10 +126,24 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 +      }
 +      return true;
 +   }
++
++   if (md_key(node, "air.visible_function_table") >= 0 ||
++       md_key(node, "air.intersection_function_table") >= 0) {
++      air_note(c, "parameter %u is a function table: no function pointers on this GPU, so a "
++                  "call through it returns zero (custom effects draw nothing)", (unsigned)param);
++      if (t->kind == AIR_TYPE_POINTER) {
++         const struct air_ptr none = { .class = AIR_PTR_NONE, .pointee = t->elem };
++         c->params[param] = air_val_ptr(c, none);
++      } else {
++         c->params[param] = air_val_ssa(c, nir_undef(&c->b, air_nir_components(t),
++                                                     air_nir_bit_size(c, t)));
++      }
++      return true;
++   }
  
     /* resources */
     if (md_key(node, "air.buffer") >= 0) {
-@@ -1864,7 +1878,7 @@
+@@ -1864,7 +1892,7 @@
           return true;
        }
        uint64_t n = 0;
@@ -138,7 +152,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           return air_error(c, "interface: an air.render_target input without a target");
        if (n >= MAX_DRAW_BUFFERS)
           return air_error(c, "interface: air.render_target input %u", (unsigned)n);
-@@ -1983,13 +1997,22 @@
+@@ -1983,13 +2011,22 @@
  translate_output(struct air_ctx *c, const struct air_md *node, unsigned field,
                   const struct air_type *t, unsigned *next_varying)
  {
@@ -162,7 +176,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        md_int(node, rt + 2, &dual);
        location = FRAG_RESULT_DATA0 + n;
        index = dual;
-@@ -2345,6 +2368,8 @@
+@@ -2345,6 +2382,8 @@
           res = nir_unpack_32_2x16(&c->b, x);
        else if (sn == 2 && sb == 16 && dn == 1 && db == 32)
           res = nir_pack_32_2x16(&c->b, x);
@@ -171,7 +185,29 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        else
           return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
                               "which is a repacking this frontend does not do",
-@@ -2861,6 +2886,8 @@
+@@ -2781,7 +2820,20 @@
+    case AIR_OP_CALL: {
+       const struct air_value *callee = in->operands[0];
+       if (callee->kind != AIR_VALUE_FUNCTION || !callee->name)
+-         return air_error(c, "instruction: a call through a pointer");
++      {
++         /* a visible function: no function pointers here, the result is zero */
++         const struct air_type *rt = in->base.type;
++         if (rt && rt->kind != AIR_TYPE_VOID) {
++            struct air_constant z = { .base = { .kind = AIR_VALUE_CONSTANT, .type = rt },
++                                      .ckind = AIR_CONST_NULL };
++            struct air_val *zero = air_constant_val(c, &z);
++            if (!zero)
++               return false;
++            air_set(c, &in->base, zero);
++         }
++         air_note(c, "a call through a function pointer returns zero (no function pointers)");
++         return true;
++      }
+       return air_translate_call(c, in, callee->name);
+    }
+    case AIR_OP_RET:
+@@ -2861,6 +2913,8 @@
        if (v->kind != AIR_VAL_AGG || v->num_elems != rt->num_members)
           return air_error(c, "instruction: a returned struct that was never built");
        for (unsigned i = 0; i < v->num_elems; i++) {
@@ -180,7 +216,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           if (!c->outputs[i].var)
              return air_error(c, "interface: field %u of the result has no output", i);
           if (!v->elems[i] || v->elems[i]->kind != AIR_VAL_SSA)
-@@ -2872,6 +2899,8 @@
+@@ -2872,6 +2926,8 @@
     }
     if (v->kind != AIR_VAL_SSA)
        return air_error(c, "instruction: a returned value that is not a number");
@@ -189,7 +225,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c->num_outputs || !c->outputs[0].var)
        return air_error(c, "interface: a returned value with no output");
     nir_store_var(&c->b, c->outputs[0].var, v->def, BITFIELD_MASK(v->def->num_components));
-@@ -3049,7 +3078,7 @@
+@@ -3049,7 +3105,7 @@
   */
  static nir_function *
  translate_callee(struct air_ctx *c, const struct air_function *f,
@@ -198,7 +234,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  {
     /* A texture, sampler or buffer argument is not a value in this frontend: it
      * is resolved at translation time into a binding, and tex_handle wants an
-@@ -3058,9 +3087,8 @@
+@@ -3058,9 +3114,8 @@
      * callee to its call site -- so it is not cached. Each of the four modules
      * that needs this has exactly one call site, counted beforehand.
      *
@@ -210,7 +246,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
      */
     bool specialised = false;
     for (unsigned i = 0; i < f->num_args; i++) {
-@@ -3076,9 +3104,14 @@
+@@ -3076,9 +3131,14 @@
        uint64_t const_offset;
        if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&
            !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {
@@ -228,7 +264,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
        /* The same reason, for the two pointers that are values: a chosen
         * pointer's condition is a def of the CALLER's impl, and a slot's
-@@ -3168,6 +3201,8 @@
+@@ -3168,6 +3228,8 @@
        if (!is_param[i]) {
           if (arg_is_flat(f, argv, is_param, i))
              declare_leaves(fn, &idx, argv[i]);
@@ -237,7 +273,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           continue;
        }
        const struct air_type *at = f->args[i].type;
-@@ -3250,9 +3285,13 @@
+@@ -3250,9 +3312,13 @@
           if (a->kind == AIR_VAL_PTR && a->ptr.offset) {
              /* a constant byte offset is an immediate: rebuilt in this impl */
              struct air_ptr rp = a->ptr;
@@ -254,7 +290,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
              a = air_val_ptr(c, rp);
           }
           air_set(c, &f->args[i], a);   /* the caller's own resolution */
-@@ -3277,6 +3316,111 @@
+@@ -3277,6 +3343,111 @@
     return ok ? fn : NULL;
  }
  
@@ -366,7 +402,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  /* A call of a function this module defines. The callee is translated as a
   * nir_function (above) and the call becomes a nir_call, which
   * nir_inline_functions folds in after the whole shader is translated.
-@@ -3309,16 +3453,14 @@
+@@ -3309,16 +3480,14 @@
     /* resolved in the CALLER's value map, which is the live one here */
     struct air_val **argv = rzalloc_array(c->mem_ctx, struct air_val *,
                                           MAX2(f->num_args, 1));
@@ -387,7 +423,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
     bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
-@@ -3332,36 +3474,17 @@
+@@ -3332,36 +3501,17 @@
      */
     nir_variable **fields = ret_struct ?
        rzalloc_array(c->mem_ctx, nir_variable *, MAX2(rt->num_members, 1)) : NULL;
@@ -432,7 +468,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     if (ret_struct) {
        struct air_val *agg = air_val_agg(c, rt->num_members);
-@@ -3524,7 +3647,7 @@
+@@ -3524,7 +3674,7 @@
                 re->kind != AIR_TYPE_INT))
        return air_error(c, "library: the return value is neither a scalar nor a vector");
  
@@ -441,7 +477,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!fn)
        return false;   /* translate_callee has said why */
  
-@@ -3565,56 +3688,198 @@
+@@ -3565,56 +3715,198 @@
     return true;
  }
  
@@ -675,7 +711,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3900,14 @@
+@@ -3635,8 +3927,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -691,7 +727,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3646,11 +3917,13 @@
+@@ -3646,11 +3944,13 @@
            * "a returned struct that was never built" -- true of the module, and
            * not what is wrong with it.
            */
@@ -710,7 +746,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           nir_def *reg = nir_decl_reg(&entry, air_nir_components(in->base.type),
                                       air_nir_bit_size(c, in->base.type), 0);
           _mesa_hash_table_insert(c->phi_regs, in, reg);
-@@ -3702,8 +3975,10 @@
+@@ -3702,8 +4002,10 @@
              continue;
           }
           struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);
@@ -723,7 +759,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
  
        for (unsigned i = 0; i < blk->num_insts; i++) {
-@@ -3842,9 +4117,31 @@
+@@ -3842,9 +4144,31 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -756,7 +792,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -3852,10 +4149,16 @@
+@@ -3852,10 +4176,16 @@
              if (!edge_possible(&edges, in->targets[k]->index, bi))
                 continue; /* an edge the function constants rule out */
              c->b.cursor = *(nir_cursor *)ce->data;
@@ -777,7 +813,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
              /* later stores into the same block go after this one */
              *(nir_cursor *)ce->data = c->b.cursor;
           }
-@@ -3922,14 +4225,21 @@
+@@ -3922,14 +4252,21 @@
  }
  
  static void
@@ -803,7 +839,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
        /* llvm.compiler.used and llvm.global_ctors are lists for the linker,
         * not memory the shader reads
-@@ -3948,7 +4258,7 @@
+@@ -3948,7 +4285,7 @@
           }
           pl->class = AIR_PTR_FUNCTION_CONSTANT;
           pl->binding = idx;
@@ -812,7 +848,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A sampler the shader declares itself. It needs a real index, not a
            * sentinel: the Adreno's texture instruction holds the sampler in a
            * four-bit field, and ~0u there asserts in ir3's encoder. The index
-@@ -4025,8 +4335,48 @@
+@@ -4025,8 +4362,48 @@
           c->scratch_size += air_type_alloc_size(c->m, g->value_type);
        }
     }
@@ -862,7 +898,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  }
  
  /* Build the globals as values of the function being translated now. Called for
-@@ -4093,7 +4443,7 @@
+@@ -4093,7 +4470,7 @@
            * also why this could not be reached before the reader learnt to read
            * one.
            */
@@ -871,7 +907,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           if (!fn)
              return;   /* translate_callee has said why */
           nir_builder_instr_insert(&c->b, &nir_call_instr_create(c->nir, fn)->instr);
-@@ -4257,7 +4607,9 @@
+@@ -4257,7 +4634,9 @@
     }
  
     if (!c.error[0])
@@ -882,7 +918,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c.error[0])
        materialise_globals(&c);
     if (!c.error[0]) {
-@@ -4305,8 +4657,8 @@
+@@ -4305,8 +4684,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -893,7 +929,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4685,8 @@
+@@ -4333,6 +4712,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {
@@ -1217,6 +1253,25 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
                        nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                        nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                        nir_imm_int(&c->b, 0),
+@@ -1981,6 +2216,18 @@
+ 
+    if (!strcmp(n.part[0], "is_function_constant_defined"))
+       return fc_defined_op(c, in);
++   if (!strncmp(n.part[0], "get_function_pointer", 20)) {
++      /* no function pointers on this GPU: a null one, which the call through it reads as zero */
++      const struct air_type *rt = in->base.type;
++      if (rt && rt->kind == AIR_TYPE_POINTER) {
++         struct air_ptr none = { .class = AIR_PTR_NONE, .pointee = rt->elem };
++         air_set(c, &in->base, air_val_ptr(c, none));
++      } else if (rt && rt->kind != AIR_TYPE_VOID) {
++         air_set(c, &in->base, air_val_ssa(c, nir_imm_zero(&c->b, air_nir_components(rt),
++                                                           air_nir_bit_size(c, rt))));
++      }
++      return true;
++   }
+    if (!strcmp(n.part[0], "get_read_sampler")) {
+       /* a read takes no sampler state: a placeholder only read_texture_* skips */
+       struct air_ptr none = { .class = AIR_PTR_NONE };
 diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 --- a/tools/mesa/air/air_metal.c
 +++ b/tools/mesa/air/air_metal.c
@@ -2353,7 +2408,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +			}
 +			if (every_s) {
 +				every_n = every_n ? (every_n > 20000 ? 20000 : every_n) : 1500;
-+				every_next = ms + (uint64_t)every_s * 1000;
++				every_next = ms;   /* the first draw arms: a process that draws in one burst is still seen */
 +				fprintf(stderr, "SweetNativeMetal: DRAWLOG every %u s, %u draws\n", every_s, every_n);
 +			}
 +		}
@@ -2392,7 +2447,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +190,119 @@
+@@ -155,13 +190,129 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);
@@ -2422,6 +2477,16 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +			fprintf(stderr, "SweetNativeMetal: TEXSTAT %u full-screen layer %s tex %p surface %p\n",
 +			        seq, nm.label, t, surf);
 +			native_drawlog_texstat(seq, t);
++		}
++	}
++	/* what a full-screen target held before this draw: the previous frame's result, so a
++	 * wallpaper that renders black can be told from one that renders and is lost later */
++	if (ncolors > 0 && colors[0] != nil && [colors[0] width] >= 600 && [colors[0] height] >= 1200) {
++		static unsigned rt_told;
++		if (rt_told++ < 24) {
++			fprintf(stderr, "SweetNativeMetal: TEXSTAT %u full-screen target %s format %u\n", seq,
++			        nm.label, (unsigned)[colors[0] pixelFormat]);
++			native_drawlog_texstat(seq, colors[0]);
 +		}
 +	}
 +}

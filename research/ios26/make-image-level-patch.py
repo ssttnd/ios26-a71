@@ -835,7 +835,44 @@ translate_body(struct air_ctx *c)
          }
          struct hash_entry *re = _mesa_hash_table_search(c->phi_regs, in);
          if (!re)
-            continue; /* a phi in an unreachable block */'''))
+            continue; /* a phi in an unreachable block */'''),
+     # Visible function tables. RenderBox's uber_fragment takes one when its has_function_table
+     # constant is set (Mercury, once it is told Apple6), and the pipeline was refused outright
+     # ("interface: input air.function_constant"). No function pointers here: the table is an
+     # empty resource and a call through a pointer returns zero, so only custom effects are lost.
+     ('   /* resources */\n   if (md_key(node, "air.buffer") >= 0) {',
+      '''   if (md_key(node, "air.visible_function_table") >= 0 ||
+       md_key(node, "air.intersection_function_table") >= 0) {
+      air_note(c, "parameter %u is a function table: no function pointers on this GPU, so a "
+                  "call through it returns zero (custom effects draw nothing)", (unsigned)param);
+      if (t->kind == AIR_TYPE_POINTER) {
+         const struct air_ptr none = { .class = AIR_PTR_NONE, .pointee = t->elem };
+         c->params[param] = air_val_ptr(c, none);
+      } else {
+         c->params[param] = air_val_ssa(c, nir_undef(&c->b, air_nir_components(t),
+                                                     air_nir_bit_size(c, t)));
+      }
+      return true;
+   }
+
+   /* resources */
+   if (md_key(node, "air.buffer") >= 0) {'''),
+     ('         return air_error(c, "instruction: a call through a pointer");\n',
+      '''      {
+         /* a visible function: no function pointers here, the result is zero */
+         const struct air_type *rt = in->base.type;
+         if (rt && rt->kind != AIR_TYPE_VOID) {
+            struct air_constant z = { .base = { .kind = AIR_VALUE_CONSTANT, .type = rt },
+                                      .ckind = AIR_CONST_NULL };
+            struct air_val *zero = air_constant_val(c, &z);
+            if (!zero)
+               return false;
+            air_set(c, &in->base, zero);
+         }
+         air_note(c, "a call through a function pointer returns zero (no function pointers)");
+         return true;
+      }
+'''))
 
 edit('tools/mesa/air/air_private.h',
      ('      unsigned index;         /* dual-source index */\n',
@@ -1136,7 +1173,21 @@ select_tex_result(struct air_ctx *c, nir_def *cond, struct air_val *a, struct ai
 
 static bool
 texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
-{'''))
+{'''),
+     ('   if (!strcmp(n.part[0], "get_read_sampler")) {',
+      '''   if (!strncmp(n.part[0], "get_function_pointer", 20)) {
+      /* no function pointers on this GPU: a null one, which the call through it reads as zero */
+      const struct air_type *rt = in->base.type;
+      if (rt && rt->kind == AIR_TYPE_POINTER) {
+         struct air_ptr none = { .class = AIR_PTR_NONE, .pointee = rt->elem };
+         air_set(c, &in->base, air_val_ptr(c, none));
+      } else if (rt && rt->kind != AIR_TYPE_VOID) {
+         air_set(c, &in->base, air_val_ssa(c, nir_imm_zero(&c->b, air_nir_components(rt),
+                                                           air_nir_bit_size(c, rt))));
+      }
+      return true;
+   }
+   if (!strcmp(n.part[0], "get_read_sampler")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
      ('#include "nir_builder.h"\n',
@@ -2163,6 +2214,16 @@ native_drawlog_texstat(unsigned seq, id t)
 			native_drawlog_texstat(seq, t);
 		}
 	}
+	/* what a full-screen target held before this draw: the previous frame's result, so a
+	 * wallpaper that renders black can be told from one that renders and is lost later */
+	if (ncolors > 0 && colors[0] != nil && [colors[0] width] >= 600 && [colors[0] height] >= 1200) {
+		static unsigned rt_told;
+		if (rt_told++ < 24) {
+			fprintf(stderr, "SweetNativeMetal: TEXSTAT %u full-screen target %s format %u\\n", seq,
+			        nm.label, (unsigned)[colors[0] pixelFormat]);
+			native_drawlog_texstat(seq, colors[0]);
+		}
+	}
 }'''),
      # Periodic arming: the touch-a-file trigger needs a file to change AFTER the process
      # started, which only a delayed package could do, and a delayed package corrupted the
@@ -2187,7 +2248,7 @@ native_drawlog_texstat(unsigned seq, id t)
 \t\t\t}
 \t\t\tif (every_s) {
 \t\t\t\tevery_n = every_n ? (every_n > 20000 ? 20000 : every_n) : 1500;
-\t\t\t\tevery_next = ms + (uint64_t)every_s * 1000;
+\t\t\t\tevery_next = ms;   /* the first draw arms: a process that draws in one burst is still seen */
 \t\t\t\tfprintf(stderr, "SweetNativeMetal: DRAWLOG every %u s, %u draws\\n", every_s, every_n);
 \t\t\t}
 \t\t}
