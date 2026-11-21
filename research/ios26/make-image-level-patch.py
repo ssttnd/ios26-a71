@@ -2000,6 +2000,58 @@ static NSUInteger sweet_heap_texture_bytes(MTLTextureDescriptor *d)
 
 @implementation SweetNativeMetalDevice
 '''),
+     # supportsFamily: Mercury's wallpaper never encodes a draw although its frame loop runs; it
+     # asks -supportsFamily: and profile 0 claims Apple1/Common1 only. Raising metal_profile
+     # aborted backboardd on iOS 16, so instead: log every family each process asks about, and
+     # let /var/local/sweet-mtl-families ("PROCESS FAMILY [FAMILY...]" lines) answer YES for
+     # one process without touching anyone else.
+     ("/* Profile 0's own table says maxVertexAmplificationCount is 1, so anything above one is\n",
+      r"""static BOOL sweet_family_override(NSInteger family)
+{
+	static int loaded;
+	static NSInteger fams[16];
+	static unsigned nfams;
+	if (!loaded) {
+		loaded = 1;
+		FILE *f = fopen("/var/local/sweet-mtl-families", "r");
+		if (f != NULL) {
+			char line[256];
+			while (fgets(line, sizeof(line), f) != NULL) {
+				char *save = NULL, *tok = strtok_r(line, " \t\r\n", &save);
+				if (tok == NULL || strcmp(tok, getprogname()) != 0)
+					continue;
+				while ((tok = strtok_r(NULL, " \t\r\n", &save)) != NULL && nfams < 16)
+					fams[nfams++] = (NSInteger)strtol(tok, NULL, 10);
+			}
+			fclose(f);
+		}
+	}
+	for (unsigned i = 0; i < nfams; i++)
+		if (fams[i] == family)
+			return YES;
+	return NO;
+}
+
+- (BOOL)supportsFamily:(NSInteger)family
+{ NATIVE_OBJECT_LOCK;
+	struct objc_super sup = { self, class_getSuperclass([SweetNativeMetalDevice class]) };
+	BOOL r = ((BOOL (*)(struct objc_super *, SEL, NSInteger))objc_msgSendSuper)(&sup, _cmd, family);
+	BOOL o = !r && sweet_family_override(family);
+	static NSInteger told[32];
+	static unsigned ntold;
+	BOOL seen = NO;
+	for (unsigned i = 0; i < ntold; i++)
+		seen |= told[i] == family;
+	if (!seen && ntold < 32) {
+		told[ntold++] = family;
+		rw_print("supportsFamily %ld -> %s%s\n", (long)family, (r || o) ? "YES" : "NO",
+		         o ? " (sweet-mtl-families override)" : "");
+	}
+	return r || o;
+}
+
+/* Profile 0's own table says maxVertexAmplificationCount is 1, so anything above one is
+"""),
      ('- (id)newHeapWithDescriptor:(id)descriptor { NATIVE_OBJECT_LOCK;  (void)descriptor; return nil; }\n',
       r'''- (id)newHeapWithDescriptor:(id)descriptor
 { NATIVE_OBJECT_LOCK;
