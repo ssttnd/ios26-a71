@@ -1088,3 +1088,11 @@ Next:
   unanswered heap selector (returns zero instead of abort). Series verified on the pristine donor (local donor
   copy already contains mip-views: reverse it first). Not compiled locally (needs the iOS SDK).
 - Metal CI `44877334898` dispatched on `fafafd0`. Guess, not verified: the unbound texture is the heap texture.
+- CI `44877334898` succeeded on `fafafd0`; artifact `14696104346`, 6/6 hashes match `build.json`, frontend contains the
+  new heap log string. TWRP: `boot` still `f6679f41...c8b0` (kept). Wrote bundle-only
+  `build/a71-ios26-metal-heap.payload` (9 entries), VERIFY OK `1586fd89d2af460223e5c1fec963c9956fd7fd382b03306f1c6100172d6e8d9f`.
+  `twrp reboot system`; USB log `logs/usb-ios26-metal-heap.txt` (background logger).
+- Boot OK on the first try: payload `finished 9/9 errno=0`, Metal published. **backboardd** (not Mercury) created two
+  12,582,912-byte heaps and allocated format-80 (BGRA8) textures from them (28x28 .. 80x38); no unanswered heap selector,
+  no `unable to create heap` so far, no backboardd/SpringBoard crash. MessagesBlastDoor sig 5 crashes also existed on the
+  previous boots (12 in framebuffer-target). Mercury preview not yet opened in this boot: the owner's visual test is pending.
