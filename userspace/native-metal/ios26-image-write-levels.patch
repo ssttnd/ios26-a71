@@ -28,7 +28,27 @@ diff --git a/tools/mesa/air/nir_air.h b/tools/mesa/air/nir_air.h
 diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
 --- a/tools/mesa/air/air_to_nir.c
 +++ b/tools/mesa/air/air_to_nir.c
-@@ -188,7 +188,9 @@
+@@ -130,6 +130,19 @@
+ air_set(struct air_ctx *c, const struct air_value *v, struct air_val *val)
+ {
+    _mesa_hash_table_insert(c->values, v, val);
++}
++
++/* An LLVM integer of one bit is a NIR boolean, and NIR's integer conversions,
++ * arithmetic and ordered comparisons take no 1-bit operand ("invalid src bit
++ * size: 1" on the device, from an extractelement indexed by a compare in
++ * RenderBox's uber_fragment). Widen it the way LLVM extends it.
++ */
++static nir_def *
++air_int32(nir_builder *b, nir_def *x, bool sign)
++{
++   if (x->bit_size == 1)
++      return sign ? nir_ineg(b, nir_b2i32(b, x)) : nir_b2i32(b, x);
++   return sign ? nir_i2i32(b, x) : nir_u2u32(b, x);
+ }
+ 
+ unsigned
+@@ -188,7 +201,9 @@
  param_glsl_type(struct air_ctx *c, const struct air_type *t)
  {
     unsigned bits = air_nir_bit_size(c, t);
@@ -39,7 +59,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
                             bits == 64 ? GLSL_TYPE_UINT64 : GLSL_TYPE_UINT,
                             air_nir_components(t));
  }
-@@ -570,29 +572,20 @@
+@@ -570,29 +585,20 @@
           res = nir_imm_intN_t(&c->b, v->bits, as_bool ? 8 : bits);
           break;
        }
@@ -80,7 +100,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
        res = nir_vec(&c->b, fields, comps);
        break;
-@@ -687,6 +680,8 @@
+@@ -687,6 +693,8 @@
     return -1;
  }
  
@@ -89,7 +109,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  static bool
  md_key_int(const struct air_md *node, const char *key, uint64_t *out)
  {
-@@ -965,6 +960,7 @@
+@@ -965,6 +973,7 @@
        .raster_order_group = has_group ? (int)group : -1,
        /* a direct argument: Metal names it by .index and there is no set */
        .argbuf_set = ~0u, .argbuf_id = ~0u,
@@ -97,7 +117,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     };
     return &info->resources[info->num_resources++];
  }
-@@ -1665,6 +1661,14 @@
+@@ -1665,6 +1674,14 @@
  }
  
  static bool
@@ -112,7 +132,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_varying)
  {
     uint64_t param;
-@@ -1674,6 +1678,30 @@
+@@ -1674,6 +1691,30 @@
        return air_error(c, "interface: input for parameter %u of %u", (unsigned)param,
                         c->fn->num_args);
     const struct air_type *t = c->fn->args[param].type;
@@ -143,7 +163,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     /* resources */
     if (md_key(node, "air.buffer") >= 0) {
-@@ -1864,7 +1892,7 @@
+@@ -1864,7 +1905,7 @@
           return true;
        }
        uint64_t n = 0;
@@ -152,7 +172,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           return air_error(c, "interface: an air.render_target input without a target");
        if (n >= MAX_DRAW_BUFFERS)
           return air_error(c, "interface: air.render_target input %u", (unsigned)n);
-@@ -1983,13 +2011,22 @@
+@@ -1983,13 +2024,22 @@
  translate_output(struct air_ctx *c, const struct air_md *node, unsigned field,
                   const struct air_type *t, unsigned *next_varying)
  {
@@ -176,7 +196,64 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        md_int(node, rt + 2, &dual);
        location = FRAG_RESULT_DATA0 + n;
        index = dual;
-@@ -2345,6 +2382,8 @@
+@@ -2144,7 +2194,7 @@
+       nir_def *first = air_get_ssa(c, in->operands[1]);
+       if (!first)
+          return false;
+-      p = air_ptr_add(c, p, nir_imul_imm(&c->b, nir_u2u32(&c->b, first), stride));
++      p = air_ptr_add(c, p, nir_imul_imm(&c->b, air_int32(&c->b, first, true), stride));
+    }
+ 
+    for (unsigned i = 2; i < in->num_operands; i++) {
+@@ -2165,7 +2215,7 @@
+       } else if (t->kind == AIR_TYPE_ARRAY || t->kind == AIR_TYPE_VECTOR) {
+          uint64_t es = t->kind == AIR_TYPE_ARRAY ? air_type_alloc_size(c->m, t->elem)
+                                                  : MAX2(air_type_bit_size(t->elem) / 8, 1);
+-         p = air_ptr_add(c, p, nir_imul_imm(&c->b, nir_u2u32(&c->b, idx), es));
++         p = air_ptr_add(c, p, nir_imul_imm(&c->b, air_int32(&c->b, idx, true), es));
+          t = t->elem;
+       } else {
+          return air_error(c, "instruction: getelementptr into a scalar");
+@@ -2207,6 +2257,16 @@
+    if (is_float)
+       c->b.exact = !(in->flags & (AIR_FMF_UNSAFE_ALGEBRA | AIR_FMF_REASSOC));
+ 
++   /* i1 arithmetic other than the bitwise three: in 32 bits, then the low bit */
++   const bool narrow = !is_float && x->bit_size == 1 && in->sub != AIR_BINOP_AND &&
++                       in->sub != AIR_BINOP_OR && in->sub != AIR_BINOP_XOR;
++   if (narrow) {
++      const bool sign = in->sub == AIR_BINOP_SDIV || in->sub == AIR_BINOP_SREM ||
++                        in->sub == AIR_BINOP_ASHR;
++      x = air_int32(&c->b, x, sign);
++      y = air_int32(&c->b, y, sign);
++   }
++
+    switch (in->sub) {
+    case AIR_BINOP_ADD: res = is_float ? nir_fadd(&c->b, x, y) : nir_iadd(&c->b, x, y); break;
+    case AIR_BINOP_SUB: res = is_float ? nir_fsub(&c->b, x, y) : nir_isub(&c->b, x, y); break;
+@@ -2215,9 +2275,9 @@
+    case AIR_BINOP_SDIV: res = is_float ? nir_fdiv(&c->b, x, y) : nir_idiv(&c->b, x, y); break;
+    case AIR_BINOP_UREM: res = is_float ? nir_frem(&c->b, x, y) : nir_umod(&c->b, x, y); break;
+    case AIR_BINOP_SREM: res = is_float ? nir_frem(&c->b, x, y) : nir_irem(&c->b, x, y); break;
+-   case AIR_BINOP_SHL: res = nir_ishl(&c->b, x, nir_u2u32(&c->b, y)); break;
+-   case AIR_BINOP_LSHR: res = nir_ushr(&c->b, x, nir_u2u32(&c->b, y)); break;
+-   case AIR_BINOP_ASHR: res = nir_ishr(&c->b, x, nir_u2u32(&c->b, y)); break;
++   case AIR_BINOP_SHL: res = nir_ishl(&c->b, x, air_int32(&c->b, y, false)); break;
++   case AIR_BINOP_LSHR: res = nir_ushr(&c->b, x, air_int32(&c->b, y, false)); break;
++   case AIR_BINOP_ASHR: res = nir_ishr(&c->b, x, air_int32(&c->b, y, false)); break;
+    case AIR_BINOP_AND: res = nir_iand(&c->b, x, y); break;
+    case AIR_BINOP_OR: res = nir_ior(&c->b, x, y); break;
+    case AIR_BINOP_XOR: res = nir_ixor(&c->b, x, y); break;
+@@ -2225,6 +2285,8 @@
+       c->b.exact = was_exact;
+       return air_error(c, "instruction: binary operator %u", in->sub);
+    }
++   if (narrow)
++      res = nir_ine_imm(&c->b, nir_iand_imm(&c->b, res, 1), 0);
+    c->b.exact = was_exact;
+    air_set(c, &in->base, air_val_ssa(c, res));
+    return true;
+@@ -2345,6 +2407,8 @@
           res = nir_unpack_32_2x16(&c->b, x);
        else if (sn == 2 && sb == 16 && dn == 1 && db == 32)
           res = nir_pack_32_2x16(&c->b, x);
@@ -185,7 +262,41 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        else
           return air_error(c, "instruction: a bitcast from %u x %u bits to %u x %u bits, "
                               "which is a repacking this frontend does not do",
-@@ -2781,7 +2820,20 @@
+@@ -2366,6 +2430,15 @@
+    if (!x || !y)
+       return false;
+    nir_def *res;
++   if (x->bit_size == 1 && in->sub != AIR_ICMP_EQ && in->sub != AIR_ICMP_NE &&
++       (in->sub == AIR_ICMP_UGT || in->sub == AIR_ICMP_UGE || in->sub == AIR_ICMP_ULT ||
++        in->sub == AIR_ICMP_ULE || in->sub == AIR_ICMP_SGT || in->sub == AIR_ICMP_SGE ||
++        in->sub == AIR_ICMP_SLT || in->sub == AIR_ICMP_SLE)) {
++      const bool sign = in->sub == AIR_ICMP_SGT || in->sub == AIR_ICMP_SGE ||
++                        in->sub == AIR_ICMP_SLT || in->sub == AIR_ICMP_SLE;
++      x = air_int32(&c->b, x, sign);
++      y = air_int32(&c->b, y, sign);
++   }
+    switch (in->sub) {
+    /* NaN never appears in these shaders (nnan is set on every one), so the
+     * ordered and unordered forms of a comparison are the same comparison;
+@@ -2555,7 +2628,7 @@
+       nir_def *i = air_get_ssa(c, in->operands[1]);
+       if (!v || !i)
+          return false;
+-      air_set(c, &in->base, air_val_ssa(c, nir_vector_extract(&c->b, v, nir_u2u32(&c->b, i))));
++      air_set(c, &in->base, air_val_ssa(c, nir_vector_extract(&c->b, v, air_int32(&c->b, i, false))));
+       return true;
+    }
+    case AIR_OP_INSERTELT: {
+@@ -2567,7 +2640,7 @@
+       if (!nir_src_is_const(nir_src_for_ssa(i))) {
+          /* each component compared against the index and selected: exact */
+          air_set(c, &in->base,
+-                 air_val_ssa(c, nir_vector_insert(&c->b, v, x, nir_u2u32(&c->b, i))));
++                 air_val_ssa(c, nir_vector_insert(&c->b, v, x, air_int32(&c->b, i, false))));
+          return true;
+       }
+       air_set(c, &in->base,
+@@ -2781,7 +2854,20 @@
     case AIR_OP_CALL: {
        const struct air_value *callee = in->operands[0];
        if (callee->kind != AIR_VALUE_FUNCTION || !callee->name)
@@ -207,7 +318,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        return air_translate_call(c, in, callee->name);
     }
     case AIR_OP_RET:
-@@ -2861,6 +2913,8 @@
+@@ -2861,6 +2947,8 @@
        if (v->kind != AIR_VAL_AGG || v->num_elems != rt->num_members)
           return air_error(c, "instruction: a returned struct that was never built");
        for (unsigned i = 0; i < v->num_elems; i++) {
@@ -216,7 +327,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           if (!c->outputs[i].var)
              return air_error(c, "interface: field %u of the result has no output", i);
           if (!v->elems[i] || v->elems[i]->kind != AIR_VAL_SSA)
-@@ -2872,6 +2926,8 @@
+@@ -2872,6 +2960,8 @@
     }
     if (v->kind != AIR_VAL_SSA)
        return air_error(c, "instruction: a returned value that is not a number");
@@ -225,7 +336,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c->num_outputs || !c->outputs[0].var)
        return air_error(c, "interface: a returned value with no output");
     nir_store_var(&c->b, c->outputs[0].var, v->def, BITFIELD_MASK(v->def->num_components));
-@@ -3049,7 +3105,7 @@
+@@ -3049,7 +3139,7 @@
   */
  static nir_function *
  translate_callee(struct air_ctx *c, const struct air_function *f,
@@ -234,7 +345,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  {
     /* A texture, sampler or buffer argument is not a value in this frontend: it
      * is resolved at translation time into a binding, and tex_handle wants an
-@@ -3058,9 +3114,8 @@
+@@ -3058,9 +3148,8 @@
      * callee to its call site -- so it is not cached. Each of the four modules
      * that needs this has exactly one call site, counted beforehand.
      *
@@ -246,7 +357,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
      */
     bool specialised = false;
     for (unsigned i = 0; i < f->num_args; i++) {
-@@ -3076,9 +3131,14 @@
+@@ -3076,9 +3165,14 @@
        uint64_t const_offset;
        if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&
            !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {
@@ -264,7 +375,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
        /* The same reason, for the two pointers that are values: a chosen
         * pointer's condition is a def of the CALLER's impl, and a slot's
-@@ -3168,6 +3228,8 @@
+@@ -3168,6 +3262,8 @@
        if (!is_param[i]) {
           if (arg_is_flat(f, argv, is_param, i))
              declare_leaves(fn, &idx, argv[i]);
@@ -273,7 +384,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           continue;
        }
        const struct air_type *at = f->args[i].type;
-@@ -3250,9 +3312,13 @@
+@@ -3250,9 +3346,13 @@
           if (a->kind == AIR_VAL_PTR && a->ptr.offset) {
              /* a constant byte offset is an immediate: rebuilt in this impl */
              struct air_ptr rp = a->ptr;
@@ -290,7 +401,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
              a = air_val_ptr(c, rp);
           }
           air_set(c, &f->args[i], a);   /* the caller's own resolution */
-@@ -3277,6 +3343,111 @@
+@@ -3277,6 +3377,111 @@
     return ok ? fn : NULL;
  }
  
@@ -402,7 +513,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  /* A call of a function this module defines. The callee is translated as a
   * nir_function (above) and the call becomes a nir_call, which
   * nir_inline_functions folds in after the whole shader is translated.
-@@ -3309,16 +3480,14 @@
+@@ -3309,16 +3514,14 @@
     /* resolved in the CALLER's value map, which is the live one here */
     struct air_val **argv = rzalloc_array(c->mem_ctx, struct air_val *,
                                           MAX2(f->num_args, 1));
@@ -423,7 +534,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     const struct air_type *rt = f->fn_type->elem;   /* FUNCTION: the return type */
     bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
-@@ -3332,36 +3501,17 @@
+@@ -3332,36 +3535,17 @@
      */
     nir_variable **fields = ret_struct ?
        rzalloc_array(c->mem_ctx, nir_variable *, MAX2(rt->num_members, 1)) : NULL;
@@ -468,7 +579,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
     if (ret_struct) {
        struct air_val *agg = air_val_agg(c, rt->num_members);
-@@ -3524,7 +3674,7 @@
+@@ -3524,7 +3708,7 @@
                 re->kind != AIR_TYPE_INT))
        return air_error(c, "library: the return value is neither a scalar nor a vector");
  
@@ -477,7 +588,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!fn)
        return false;   /* translate_callee has said why */
  
-@@ -3565,56 +3715,209 @@
+@@ -3565,56 +3749,209 @@
     return true;
  }
  
@@ -722,7 +833,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     return true;
  }
  
-@@ -3635,8 +3938,14 @@
+@@ -3635,8 +3972,14 @@
        const struct air_block *blk = &f->blocks[bi];
        for (unsigned i = 0; i < blk->num_insts; i++) {
           const struct air_inst *in = blk->insts[i];
@@ -738,7 +849,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A phi of an AGGREGATE, named here rather than by whatever notices
            * the consequence further down. A struct is a tree of values in this
            * translator and never a NIR value, so there is no register to carry
-@@ -3646,11 +3955,13 @@
+@@ -3646,11 +3989,13 @@
            * "a returned struct that was never built" -- true of the module, and
            * not what is wrong with it.
            */
@@ -757,7 +868,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           nir_def *reg = nir_decl_reg(&entry, air_nir_components(in->base.type),
                                       air_nir_bit_size(c, in->base.type), 0);
           _mesa_hash_table_insert(c->phi_regs, in, reg);
-@@ -3702,8 +4013,10 @@
+@@ -3702,8 +4047,10 @@
              continue;
           }
           struct hash_entry *e = _mesa_hash_table_search(c->phi_regs, in);
@@ -770,7 +881,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
        }
  
        for (unsigned i = 0; i < blk->num_insts; i++) {
-@@ -3842,9 +4155,37 @@
+@@ -3842,9 +4189,37 @@
           const struct air_inst *in = blk->insts[i];
           if (in->op != AIR_OP_PHI)
              continue;
@@ -809,7 +920,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           for (unsigned k = 0; k < in->num_operands; k++) {
              struct hash_entry *ce = _mesa_hash_table_search(c->phi_cursors, in->targets[k]);
              if (!ce)
-@@ -3852,10 +4193,16 @@
+@@ -3852,10 +4227,16 @@
              if (!edge_possible(&edges, in->targets[k]->index, bi))
                 continue; /* an edge the function constants rule out */
              c->b.cursor = *(nir_cursor *)ce->data;
@@ -830,7 +941,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
              /* later stores into the same block go after this one */
              *(nir_cursor *)ce->data = c->b.cursor;
           }
-@@ -3922,14 +4269,21 @@
+@@ -3922,14 +4303,21 @@
  }
  
  static void
@@ -856,7 +967,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  
        /* llvm.compiler.used and llvm.global_ctors are lists for the linker,
         * not memory the shader reads
-@@ -3943,12 +4297,12 @@
+@@ -3943,12 +4331,12 @@
           int idx = function_constant_index(c, g);
           if (idx < 0) {
              air_error(c, "interface: an externally initialized variable that is not a "
@@ -871,7 +982,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           /* A sampler the shader declares itself. It needs a real index, not a
            * sentinel: the Adreno's texture instruction holds the sampler in a
            * four-bit field, and ~0u there asserts in ir3's encoder. The index
-@@ -4025,8 +4379,48 @@
+@@ -4025,8 +4413,48 @@
           c->scratch_size += air_type_alloc_size(c->m, g->value_type);
        }
     }
@@ -921,7 +1032,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
  }
  
  /* Build the globals as values of the function being translated now. Called for
-@@ -4093,7 +4487,7 @@
+@@ -4093,7 +4521,7 @@
            * also why this could not be reached before the reader learnt to read
            * one.
            */
@@ -930,7 +1041,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           if (!fn)
              return;   /* translate_callee has said why */
           nir_builder_instr_insert(&c->b, &nir_call_instr_create(c->nir, fn)->instr);
-@@ -4257,7 +4651,9 @@
+@@ -4257,7 +4685,9 @@
     }
  
     if (!c.error[0])
@@ -941,7 +1052,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c.error[0])
        materialise_globals(&c);
     if (!c.error[0]) {
-@@ -4305,8 +4701,8 @@
+@@ -4305,8 +4735,8 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -952,7 +1063,7 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4729,8 @@
+@@ -4333,6 +4763,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {
@@ -1365,7 +1476,17 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     /* NIR's options for this screen, asked once: the translator needs them to know what
      * the consumer can be handed (what it may leave for the backend to lower).
-@@ -219,6 +239,8 @@
+@@ -100,6 +120,9 @@
+     * sampler, but softpipe dereferences the state of every unit a shader touches.
+     */
+    void *default_sampler;
++   /* the view an unbound texture slot reads: one zero texel (see null_texture_view) */
++   struct pipe_resource *null_texture;
++   struct pipe_sampler_view *null_texture_view;
+ 
+    /* Whether this is the rasterizer in plain C rather than the Adreno. Kept because one
+     * refusal has to name it: a software screen HAS a resource_from_handle, and it is the
+@@ -219,6 +242,8 @@
     struct rwa_device *device;
     struct pipe_resource *res;
     struct pipe_sampler_view *view;  /* made when a dispatch first samples it, then kept */
@@ -1374,7 +1495,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_surface *native_surface;
     struct rwa_texture_shape shape;
     const char *format_name;         /* the MTLPixelFormat, spelled out */
-@@ -311,12 +333,8 @@
+@@ -311,12 +336,8 @@
      */
     bool compare_sampler[RWA_MAX_TEXTURES];
  
@@ -1389,7 +1510,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     unsigned cso_block[3];
  };
  
-@@ -613,6 +631,8 @@
+@@ -613,6 +634,8 @@
     return NULL;
  }
  
@@ -1398,7 +1519,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  void
  rwa_device_close(struct rwa_device *device)
  {
-@@ -622,6 +642,8 @@
+@@ -622,6 +645,8 @@
        return;
     if (device->default_sampler)
        device->pipe->delete_sampler_state(device->pipe, device->default_sampler);
@@ -1407,7 +1528,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     device->pipe->destroy(device->pipe);
     device->screen->destroy(device->screen);
     free(device);
-@@ -782,7 +804,8 @@
+@@ -782,7 +807,8 @@
   * so the translation is the identity on memory and there is nothing in it to get subtly
   * wrong.
   *
@@ -1417,7 +1538,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
   * RG11B10Float, RGB9E5, the XR formats. Those names order their channels by one
   * convention and Gallium's by another, and a mistake there does not fail: it shifts a
   * channel by two bits in a texture that still looks like a texture. docs/air.md has
-@@ -868,6 +891,34 @@
+@@ -868,6 +894,34 @@
     {  55, "MTLPixelFormatR32Float",        PIPE_FORMAT_R32_FLOAT },
     {  60, "MTLPixelFormatRG16Unorm",       PIPE_FORMAT_R16G16_UNORM },
     {  62, "MTLPixelFormatRG16Snorm",       PIPE_FORMAT_R16G16_SNORM },
@@ -1452,7 +1573,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  63, "MTLPixelFormatRG16Uint",        PIPE_FORMAT_R16G16_UINT },
     {  64, "MTLPixelFormatRG16Sint",        PIPE_FORMAT_R16G16_SINT },
     {  65, "MTLPixelFormatRG16Float",       PIPE_FORMAT_R16G16_FLOAT },
-@@ -878,6 +929,7 @@
+@@ -878,6 +932,7 @@
     {  74, "MTLPixelFormatRGBA8Sint",       PIPE_FORMAT_R8G8B8A8_SINT },
     {  80, "MTLPixelFormatBGRA8Unorm",      PIPE_FORMAT_B8G8R8A8_UNORM },
     {  81, "MTLPixelFormatBGRA8Unorm_sRGB", PIPE_FORMAT_B8G8R8A8_SRGB },
@@ -1460,7 +1581,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     { 103, "MTLPixelFormatRG32Uint",        PIPE_FORMAT_R32G32_UINT },
     { 104, "MTLPixelFormatRG32Sint",        PIPE_FORMAT_R32G32_SINT },
     { 105, "MTLPixelFormatRG32Float",       PIPE_FORMAT_R32G32_FLOAT },
-@@ -1012,9 +1064,9 @@
+@@ -1012,9 +1067,9 @@
        return "MTLPixelFormatBGRA4Unorm, which Metal.framework's own enumeration carries at "
               "44 and this device's MTLPixelFormat.h does not declare at all: a format no "
               "public header names is one whose layout nothing here can read";
@@ -1473,7 +1594,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
               "two bits in a channel is a picture, not a failure";
     if (f >= 130 && f <= 153)
        return "one of the BC compressed formats, whose texels come in blocks this library "
-@@ -1333,6 +1385,10 @@
+@@ -1333,6 +1388,10 @@
     }
     if (depth_stencil)
        write = false;
@@ -1484,7 +1605,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     unsigned bind = (read ? PIPE_BIND_SAMPLER_VIEW : 0) |
                     (write ? PIPE_BIND_SHADER_IMAGE : 0) |
-@@ -1579,6 +1635,8 @@
+@@ -1579,6 +1638,8 @@
      * below is about.
      */
     pipe_sampler_view_reference(&texture->view, NULL);
@@ -1493,7 +1614,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe_surface_reference(&texture->native_surface, NULL);
     pipe_resource_reference(&texture->res, NULL);
     free(texture);
-@@ -1658,7 +1716,7 @@
+@@ -1658,7 +1719,7 @@
                size_t *out, char *why, size_t why_size)
  {
     unsigned texel = util_format_get_blocksize(texture->res->format);
@@ -1502,7 +1623,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1670,6 +1728,54 @@
+@@ -1670,6 +1731,54 @@
     }
     *out = stride;
     return true;
@@ -1557,7 +1678,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  }
  
  int
-@@ -1775,7 +1881,8 @@
+@@ -1775,7 +1884,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -1567,7 +1688,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3081,13 +3188,22 @@
+@@ -3081,13 +3191,22 @@
     device->pipe->delete_compute_state(device->pipe, cso);
  }
  
@@ -1592,7 +1713,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* and the states built for the samplers the shader declared itself. Nothing is
      * unbound first, for the reason rwa_sampler_destroy gives: a dispatch leaves
      * nothing of its own bound.
-@@ -3121,14 +3237,9 @@
+@@ -3121,14 +3240,9 @@
  {
     struct rwa_device *device = compute->device;
  
@@ -1609,7 +1730,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     nir_shader *cs = nir_shader_clone(NULL, compute->nir);
     if (!cs) {
-@@ -3140,7 +3251,41 @@
+@@ -3140,7 +3254,41 @@
     cs->info.workgroup_size[2] = block[2];
     cs->info.workgroup_size_variable = false;
  
@@ -1652,7 +1773,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     void *cso = device->pipe->create_compute_state(device->pipe,
        &(struct pipe_compute_state){
-@@ -3151,6 +3296,7 @@
+@@ -3151,6 +3299,7 @@
         * it already, and neither of the two drivers in this build can reach this at all
         * (both return a state object and report a bad shader later, at launch).
         */
@@ -1660,7 +1781,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        say(why, why_size, "%s would not make a compute pipeline of %s",
            device->screen->get_name(device->screen),
            compute->info.entry_point ? compute->info.entry_point : "the shader");
-@@ -3172,14 +3318,34 @@
+@@ -3172,14 +3321,34 @@
                              "compiled shader takes at most %u: it uses too many "
                              "registers for a group that large", threads, si.max_threads);
           delete_compute_state(device, cso);
@@ -1699,12 +1820,63 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return cso;
  }
  
-@@ -3715,6 +3881,62 @@
-    d->pipe->set_constant_buffer(d->pipe,stage,slot,false,cb);
-    d->native_cb_ns+=native_now_ns()-began;
-    d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
+@@ -3457,6 +3626,37 @@
+ }
+ 
+ /*
++ * A shader that DECLARES a texture it does not read on this path, and an application that
++ * therefore binds nothing there, is legal Metal: RenderBox's uber_fragment declares texture 0
++ * for every draw and binds one only when its state says it samples. Refusing the draw made
++ * the whole command buffer fail ("command buffer error" in Mercury), so the clock and the
++ * wallpaper never reached the screen. The slot gets one transparent black texel instead,
++ * which is also what a read would return on hardware that tolerates an empty slot.
++ */
++static struct pipe_sampler_view *
++null_texture_view(struct rwa_device *device)
++{
++   if (!device->null_texture_view) {
++      struct pipe_resource tmpl = {
++         .target = PIPE_TEXTURE_2D, .format = PIPE_FORMAT_R8G8B8A8_UNORM,
++         .width0 = 1, .height0 = 1, .depth0 = 1, .array_size = 1,
++         .bind = PIPE_BIND_SAMPLER_VIEW, .usage = PIPE_USAGE_DEFAULT,
++      };
++      device->null_texture = device->screen->resource_create(device->screen, &tmpl);
++      if (!device->null_texture)
++         return NULL;
++      static const uint8_t zero[4];
++      struct pipe_box box = { .width = 1, .height = 1, .depth = 1 };
++      device->pipe->texture_subdata(device->pipe, device->null_texture, 0, 0, &box, zero, 4, 4);
++      struct pipe_sampler_view vt;
++      u_sampler_view_default_template(&vt, device->null_texture, device->null_texture->format);
++      device->null_texture_view = device->pipe->create_sampler_view(device->pipe,
++                                                                    device->null_texture, &vt);
++   }
++   return device->null_texture_view;
 +}
 +
++/*
+  * Which Metal buffer indices a module declares ARGUMENT BUFFERS at, one bit each, and a
+  * refusal when one is past the 32 a mask holds.
+  *
+@@ -3580,6 +3780,14 @@
+             say(why, why_size, "%s binds a texture at index %u, past the %u slots this "
+                                "library fills", name, r->index, RWA_MAX_TEXTURES);
+             return -1;
++         }
++         if (!member && !stored && (r->index >= bindings->texture_count ||
++                                    !bindings->textures[r->index])) {
++            static unsigned told;
++            if (told++ < 8)
++               fprintf(stderr, "SweetNativeMetal: %s reads texture %u and nothing is bound "
++                               "there: a zero texel is bound instead\n", name, r->index);
++            break;
+          }
+          if (!member && (r->index >= bindings->texture_count ||
+                          !bindings->textures[r->index])) {
+@@ -3717,6 +3925,62 @@
+    d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
+ }
+ 
 +/* The view a draw samples when the texture is also one of its colour targets: a copy of
 + * every level of it, made by the GPU in submission order before the draw, kept with the
 + * texture and refreshed at each such draw. NULL if the copy could not be made.
@@ -1759,10 +1931,39 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +              "it reads a copy made just before it\n", res->width0, res->height0, t->level_count);
 +   }
 +   return t->hazard_view;
- }
- 
++}
++
  static int
-@@ -3903,12 +4125,27 @@
+ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
+            const struct air_shader_info *info, void **own_sampler,
+@@ -3776,7 +4040,7 @@
+             break;
+          case AIR_RESOURCE_TEXTURE:
+          case AIR_RESOURCE_IMAGE:
+-            t = bindings->textures[r->index];
++            t = r->index < bindings->texture_count ? bindings->textures[r->index] : NULL;
+             break;
+          case AIR_RESOURCE_SAMPLER:
+             if (!r->inline_sampler)
+@@ -3885,6 +4149,17 @@
+       }
+ 
+       case AIR_RESOURCE_TEXTURE:
++         if (!t) {
++            /* declared, unbound and not read on this path (check_bindings let it through) */
++            views[r->index] = null_texture_view(device);
++            if (!views[r->index]) {
++               say(why, why_size, "%s would not make the zero texture for unbound texture %u",
++                   rwa_device_name(device), r->index);
++               return -1;
++            }
++            num_views = MAX2(num_views, r->index + 1);
++            break;
++         }
+          /* The view is made once and kept with the texture: a device has one context,
+           * so a view of this texture is a view for every pipeline that will sample it.
+           */
+@@ -3903,12 +4178,27 @@
                 return -1;
              }
           }
@@ -1792,7 +1993,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4155,14 @@
+@@ -3918,12 +4208,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -1809,7 +2010,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -7201,6 +7440,10 @@
+@@ -7201,6 +7493,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -1820,7 +2021,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7294,6 +7537,7 @@
+@@ -7294,6 +7590,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);

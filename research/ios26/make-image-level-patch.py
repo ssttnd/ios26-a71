@@ -906,7 +906,92 @@ translate_body(struct air_ctx *c)
 ''',
       '''            air_error(c, "interface: an externally initialized variable that is not a "
                          "function constant (%s)", name);
-'''))
+'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''unsigned
+air_nir_bit_size(struct air_ctx *c, const struct air_type *t)
+{''',
+      r'''/* An LLVM integer of one bit is a NIR boolean, and NIR's integer conversions,
+ * arithmetic and ordered comparisons take no 1-bit operand ("invalid src bit
+ * size: 1" on the device, from an extractelement indexed by a compare in
+ * RenderBox's uber_fragment). Widen it the way LLVM extends it.
+ */
+static nir_def *
+air_int32(nir_builder *b, nir_def *x, bool sign)
+{
+   if (x->bit_size == 1)
+      return sign ? nir_ineg(b, nir_b2i32(b, x)) : nir_b2i32(b, x);
+   return sign ? nir_i2i32(b, x) : nir_u2u32(b, x);
+}
+
+unsigned
+air_nir_bit_size(struct air_ctx *c, const struct air_type *t)
+{'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''p = air_ptr_add(c, p, nir_imul_imm(&c->b, nir_u2u32(&c->b, first), stride));''',
+      r'''p = air_ptr_add(c, p, nir_imul_imm(&c->b, air_int32(&c->b, first, true), stride));'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''p = air_ptr_add(c, p, nir_imul_imm(&c->b, nir_u2u32(&c->b, idx), es));''',
+      r'''p = air_ptr_add(c, p, nir_imul_imm(&c->b, air_int32(&c->b, idx, true), es));'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''   if (is_float)
+      c->b.exact = !(in->flags & (AIR_FMF_UNSAFE_ALGEBRA | AIR_FMF_REASSOC));
+
+   switch (in->sub) {
+   case AIR_BINOP_ADD:''',
+      r'''   if (is_float)
+      c->b.exact = !(in->flags & (AIR_FMF_UNSAFE_ALGEBRA | AIR_FMF_REASSOC));
+
+   /* i1 arithmetic other than the bitwise three: in 32 bits, then the low bit */
+   const bool narrow = !is_float && x->bit_size == 1 && in->sub != AIR_BINOP_AND &&
+                       in->sub != AIR_BINOP_OR && in->sub != AIR_BINOP_XOR;
+   if (narrow) {
+      const bool sign = in->sub == AIR_BINOP_SDIV || in->sub == AIR_BINOP_SREM ||
+                        in->sub == AIR_BINOP_ASHR;
+      x = air_int32(&c->b, x, sign);
+      y = air_int32(&c->b, y, sign);
+   }
+
+   switch (in->sub) {
+   case AIR_BINOP_ADD:'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''   case AIR_BINOP_SHL: res = nir_ishl(&c->b, x, nir_u2u32(&c->b, y)); break;
+   case AIR_BINOP_LSHR: res = nir_ushr(&c->b, x, nir_u2u32(&c->b, y)); break;
+   case AIR_BINOP_ASHR: res = nir_ishr(&c->b, x, nir_u2u32(&c->b, y)); break;''',
+      r'''   case AIR_BINOP_SHL: res = nir_ishl(&c->b, x, air_int32(&c->b, y, false)); break;
+   case AIR_BINOP_LSHR: res = nir_ushr(&c->b, x, air_int32(&c->b, y, false)); break;
+   case AIR_BINOP_ASHR: res = nir_ishr(&c->b, x, air_int32(&c->b, y, false)); break;'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''      return air_error(c, "instruction: binary operator %u", in->sub);
+   }
+   c->b.exact = was_exact;''',
+      r'''      return air_error(c, "instruction: binary operator %u", in->sub);
+   }
+   if (narrow)
+      res = nir_ine_imm(&c->b, nir_iand_imm(&c->b, res, 1), 0);
+   c->b.exact = was_exact;'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''   nir_def *res;
+   switch (in->sub) {
+   /* NaN never appears in these shaders''',
+      r'''   nir_def *res;
+   if (x->bit_size == 1 && in->sub != AIR_ICMP_EQ && in->sub != AIR_ICMP_NE &&
+       (in->sub == AIR_ICMP_UGT || in->sub == AIR_ICMP_UGE || in->sub == AIR_ICMP_ULT ||
+        in->sub == AIR_ICMP_ULE || in->sub == AIR_ICMP_SGT || in->sub == AIR_ICMP_SGE ||
+        in->sub == AIR_ICMP_SLT || in->sub == AIR_ICMP_SLE)) {
+      const bool sign = in->sub == AIR_ICMP_SGT || in->sub == AIR_ICMP_SGE ||
+                        in->sub == AIR_ICMP_SLT || in->sub == AIR_ICMP_SLE;
+      x = air_int32(&c->b, x, sign);
+      y = air_int32(&c->b, y, sign);
+   }
+   switch (in->sub) {
+   /* NaN never appears in these shaders'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''air_set(c, &in->base, air_val_ssa(c, nir_vector_extract(&c->b, v, nir_u2u32(&c->b, i))));''',
+      r'''air_set(c, &in->base, air_val_ssa(c, nir_vector_extract(&c->b, v, air_int32(&c->b, i, false))));'''),
+     # i1 as an index or integer operand (uber_fragment: invalid src bit size: 1)
+     (r'''air_val_ssa(c, nir_vector_insert(&c->b, v, x, nir_u2u32(&c->b, i))));''',
+      r'''air_val_ssa(c, nir_vector_insert(&c->b, v, x, air_int32(&c->b, i, false))));'''))
 
 edit('tools/mesa/air/air_private.h',
      ('      unsigned index;         /* dual-source index */\n',
@@ -1617,7 +1702,93 @@ bind_stage(struct rwa_device *device, enum pipe_shader_type stage,'''),
          device->hazard_targets[device->hazard_count++] = draw->color[i]->res;
 '''),
      ('unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n',
-      'unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n   device->hazard_count = 0;\n'))
+      'unbind:\n   native_draw_checkpoint(device,&native_phase_at,3);\n   device->hazard_count = 0;\n'),
+     # an unbound texture a shader declares but does not read: a zero texel, not a failed command buffer
+     (r'''   void *default_sampler;
+''',
+      r'''   void *default_sampler;
+   /* the view an unbound texture slot reads: one zero texel (see null_texture_view) */
+   struct pipe_resource *null_texture;
+   struct pipe_sampler_view *null_texture_view;
+'''),
+     # an unbound texture a shader declares but does not read: a zero texel, not a failed command buffer
+     (r'''   return device->default_sampler;
+}
+''',
+      r'''   return device->default_sampler;
+}
+
+/*
+ * A shader that DECLARES a texture it does not read on this path, and an application that
+ * therefore binds nothing there, is legal Metal: RenderBox's uber_fragment declares texture 0
+ * for every draw and binds one only when its state says it samples. Refusing the draw made
+ * the whole command buffer fail ("command buffer error" in Mercury), so the clock and the
+ * wallpaper never reached the screen. The slot gets one transparent black texel instead,
+ * which is also what a read would return on hardware that tolerates an empty slot.
+ */
+static struct pipe_sampler_view *
+null_texture_view(struct rwa_device *device)
+{
+   if (!device->null_texture_view) {
+      struct pipe_resource tmpl = {
+         .target = PIPE_TEXTURE_2D, .format = PIPE_FORMAT_R8G8B8A8_UNORM,
+         .width0 = 1, .height0 = 1, .depth0 = 1, .array_size = 1,
+         .bind = PIPE_BIND_SAMPLER_VIEW, .usage = PIPE_USAGE_DEFAULT,
+      };
+      device->null_texture = device->screen->resource_create(device->screen, &tmpl);
+      if (!device->null_texture)
+         return NULL;
+      static const uint8_t zero[4];
+      struct pipe_box box = { .width = 1, .height = 1, .depth = 1 };
+      device->pipe->texture_subdata(device->pipe, device->null_texture, 0, 0, &box, zero, 4, 4);
+      struct pipe_sampler_view vt;
+      u_sampler_view_default_template(&vt, device->null_texture, device->null_texture->format);
+      device->null_texture_view = device->pipe->create_sampler_view(device->pipe,
+                                                                    device->null_texture, &vt);
+   }
+   return device->null_texture_view;
+}
+'''),
+     # an unbound texture a shader declares but does not read: a zero texel, not a failed command buffer
+     (r'''         if (!member && (r->index >= bindings->texture_count ||
+                         !bindings->textures[r->index])) {
+            say(why, why_size,''',
+      r'''         if (!member && !stored && (r->index >= bindings->texture_count ||
+                                    !bindings->textures[r->index])) {
+            static unsigned told;
+            if (told++ < 8)
+               fprintf(stderr, "SweetNativeMetal: %s reads texture %u and nothing is bound "
+                               "there: a zero texel is bound instead\n", name, r->index);
+            break;
+         }
+         if (!member && (r->index >= bindings->texture_count ||
+                         !bindings->textures[r->index])) {
+            say(why, why_size,'''),
+     # an unbound texture a shader declares but does not read: a zero texel, not a failed command buffer
+     (r'''         case AIR_RESOURCE_TEXTURE:
+         case AIR_RESOURCE_IMAGE:
+            t = bindings->textures[r->index];
+            break;''',
+      r'''         case AIR_RESOURCE_TEXTURE:
+         case AIR_RESOURCE_IMAGE:
+            t = r->index < bindings->texture_count ? bindings->textures[r->index] : NULL;
+            break;'''),
+     # an unbound texture a shader declares but does not read: a zero texel, not a failed command buffer
+     (r'''      case AIR_RESOURCE_TEXTURE:
+         /* The view is made once and kept with the texture: a device has one context,''',
+      r'''      case AIR_RESOURCE_TEXTURE:
+         if (!t) {
+            /* declared, unbound and not read on this path (check_bindings let it through) */
+            views[r->index] = null_texture_view(device);
+            if (!views[r->index]) {
+               say(why, why_size, "%s would not make the zero texture for unbound texture %u",
+                   rwa_device_name(device), r->index);
+               return -1;
+            }
+            num_views = MAX2(num_views, r->index + 1);
+            break;
+         }
+         /* The view is made once and kept with the texture: a device has one context,'''))
 
 # newBufferWithBytesNoCopy: Mercury's KTX loader makes its staging buffer this way and the
 # driver answered nil ("Failed to create staging buffer"). The GPU cannot map the caller's
