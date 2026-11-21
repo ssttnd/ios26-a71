@@ -1873,7 +1873,148 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
 '''),
      # GLASSSTAT: every draw is counted by kind (SweetNativeDrawLog.inc)
      ('\tconst unsigned dl = native_drawlog_next();\n',
-      '\tnative_glassstat([work->render render]);\n\tconst unsigned dl = native_drawlog_next();\n'))
+      '\tnative_glassstat([work->render render]);\n\tconst unsigned dl = native_drawlog_next();\n'),
+     # MTLHeap: Mercury's look preview allocates its textures from a heap. The device answered
+     # nil (and a zero size-and-align), Mercury logged "unable to create heap: 0", and
+     # uber_fragment then ran with no texture bound. A heap here is bookkeeping: each resource
+     # it hands out is an ordinary allocation of the device's, so aliasing never shares memory
+     # (contents of an aliased resource are undefined in Metal anyway).
+     ('@implementation SweetNativeMetalDevice\n',
+      r'''@interface SweetNativeMetalHeap : NSObject {
+	id _device;
+	NSString *_label;
+	NSUInteger _size, _used, _storageMode, _cpuCacheMode, _hazardTrackingMode, _type, _options;
+}
+- (instancetype)initWithDevice:(id)device descriptor:(MTLHeapDescriptor *)descriptor;
+@end
+
+static NSUInteger sweet_heap_texture_bytes(MTLTextureDescriptor *d)
+{
+	NSUInteger w = MAX([d width], (NSUInteger)1), h = MAX([d height], (NSUInteger)1);
+	NSUInteger z = MAX([d depth], (NSUInteger)1), levels = MAX([d mipmapLevelCount], (NSUInteger)1);
+	NSUInteger layers = MAX([d arrayLength], (NSUInteger)1) * MAX([d sampleCount], (NSUInteger)1);
+	NSUInteger type = [d textureType], total = 0;
+
+	if (type == 5 || type == 6)   /* Cube, CubeArray */
+		layers *= 6;
+	for (NSUInteger l = 0; l < levels && l < 16; l++) {
+		total += w * h * z;
+		w = MAX(w / 2, (NSUInteger)1); h = MAX(h / 2, (NSUInteger)1); z = MAX(z / 2, (NSUInteger)1);
+	}
+	/* 16 bytes a texel is the widest format: an over-estimate costs nothing, the heap is not
+	 * one allocation here. */
+	total = total * layers * 16;
+	return (total + 0xffff) & ~(NSUInteger)0xffff;
+}
+
+@implementation SweetNativeMetalHeap
++ (void)load
+{
+	Protocol *p = objc_getProtocol("MTLHeap");
+
+	if (p != NULL && !class_conformsToProtocol(self, p) && !class_addProtocol(self, p))
+		rw_print("class_addProtocol(MTLHeap) refused\n");
+}
+- (instancetype)initWithDevice:(id)device descriptor:(MTLHeapDescriptor *)descriptor
+{
+	self = [super init];
+	if (self != nil) {
+		_device = [device retain];
+		_size = [descriptor size];
+		_storageMode = [descriptor storageMode];
+		_cpuCacheMode = [descriptor cpuCacheMode];
+		_hazardTrackingMode = [descriptor hazardTrackingMode];
+		_type = [descriptor type];
+		_options = [descriptor resourceOptions];
+	}
+	return self;
+}
+- (void)dealloc { [_device release]; [_label release]; [super dealloc]; }
+- (id)device                        { return _device; }
+- (NSString *)label                 { NATIVE_OBJECT_LOCK; return _label; }
+- (void)setLabel:(NSString *)label  { NATIVE_OBJECT_LOCK; [_label release]; _label = [label copy]; }
+- (NSUInteger)storageMode           { return _storageMode; }
+- (NSUInteger)cpuCacheMode          { return _cpuCacheMode; }
+- (NSUInteger)hazardTrackingMode    { return _hazardTrackingMode; }
+- (NSUInteger)resourceOptions       { return _options; }
+- (NSUInteger)type                  { return _type; }
+- (NSUInteger)size                  { return _size; }
+- (NSUInteger)usedSize              { NATIVE_OBJECT_LOCK; return MIN(_used, _size); }
+- (NSUInteger)currentAllocatedSize  { return _size; }
+- (NSUInteger)maxAvailableSizeWithAlignment:(NSUInteger)alignment
+{
+	(void)alignment;
+	return _size;   /* nothing is carved out of it, so all of it stays available */
+}
+- (NSUInteger)setPurgeableState:(NSUInteger)state { (void)state; return 2; }
+- (id)newBufferWithLength:(NSUInteger)length options:(NSUInteger)options
+{ NATIVE_OBJECT_LOCK;
+	id buffer = [_device newBufferWithLength:length options:options];
+	if (buffer != nil)
+		_used += length;
+	return buffer;
+}
+- (id)newBufferWithLength:(NSUInteger)length options:(NSUInteger)options offset:(NSUInteger)offset
+{
+	(void)offset;
+	return [self newBufferWithLength:length options:options];
+}
+- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor
+{ NATIVE_OBJECT_LOCK;
+	id texture = [_device newTextureWithDescriptor:descriptor];
+	static unsigned told;
+	if (told++ < 8)
+		rw_print("heap %p (%lu bytes): texture format %lu %lux%lu levels %lu -> %p\n", self,
+		         (unsigned long)_size, (unsigned long)[descriptor pixelFormat],
+		         (unsigned long)[descriptor width], (unsigned long)[descriptor height],
+		         (unsigned long)[descriptor mipmapLevelCount], texture);
+	if (texture != nil)
+		_used += sweet_heap_texture_bytes(descriptor);
+	return texture;
+}
+- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor offset:(NSUInteger)offset
+{
+	(void)offset;
+	return [self newTextureWithDescriptor:descriptor];
+}
+- (id)newAccelerationStructureWithSize:(NSUInteger)size { (void)size; return nil; }
+- (id)newAccelerationStructureWithSize:(NSUInteger)size offset:(NSUInteger)offset
+{ (void)size; (void)offset; return nil; }
+- (id)newAccelerationStructureWithDescriptor:(id)descriptor { (void)descriptor; return nil; }
+- (id)newAccelerationStructureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
+{ (void)descriptor; (void)offset; return nil; }
+/* Anything else a caller sends is logged and answered with zero instead of terminate(), so
+ * the next missing selector is a log line and not a dead wallpaper extension. */
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel
+{
+	NSMethodSignature *s = [super methodSignatureForSelector:sel];
+	return s != nil ? s : [NSMethodSignature signatureWithObjCTypes:"@@:"];
+}
+- (void)forwardInvocation:(NSInvocation *)invocation
+{
+	static unsigned told;
+	if (told++ < 16)
+		rw_print("heap: unanswered selector %s, returning zero\n", sel_getName([invocation selector]));
+}
+@end
+
+@implementation SweetNativeMetalDevice
+'''),
+     ('- (id)newHeapWithDescriptor:(id)descriptor { NATIVE_OBJECT_LOCK;  (void)descriptor; return nil; }\n',
+      r'''- (id)newHeapWithDescriptor:(id)descriptor
+{ NATIVE_OBJECT_LOCK;
+	NSUInteger size = descriptor != nil ? [(MTLHeapDescriptor *)descriptor size] : 0;
+	id heap = size != 0 ? [[SweetNativeMetalHeap alloc] initWithDevice:self descriptor:descriptor] : nil;
+	static unsigned told;
+	if (told++ < 8)
+		rw_print("newHeapWithDescriptor: size %lu -> %p\n", (unsigned long)size, heap);
+	return heap;
+}
+'''),
+     ('\t(void)length; (void)options;\n\treturn (MTLSizeAndAlign){ 0, 0 };\n',
+      '\t(void)options;\n\treturn (MTLSizeAndAlign){ (length + 255) & ~(NSUInteger)255, 256 };\n'),
+     ('\t(void)descriptor;\n\treturn (MTLSizeAndAlign){ 0, 0 };\n',
+      '\treturn (MTLSizeAndAlign){ sweet_heap_texture_bytes(descriptor), 0x10000 };\n'))
 
 # Draw log: which texture object (a view names its parent) and which level, so a pass that
 # samples the texture it renders into can be told from one that ping-pongs.
