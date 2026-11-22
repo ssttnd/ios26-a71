@@ -2094,7 +2094,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7438,48 @@
+@@ -7137,7 +7438,47 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2127,10 +2127,9 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +         if (!render->rast_var[k]) {
 +            struct pipe_rasterizer_state s = render->rast_state;
 +            s.cull_face = cull == 1 ? PIPE_FACE_FRONT : cull == 2 ? PIPE_FACE_BACK : PIPE_FACE_NONE;
-+            /* Metal's winding is the one seen on screen (NDC y up). This viewport's y scale is
-+             * negative, which mirrors Gallium's window space, so Metal clockwise (0) is Gallium
-+             * counter-clockwise: front_ccw = 1. */
-+            s.front_ccw = winding ? 0 : 1;
++            /* Marble's mirrored CoreAnimation layers on A618 confirm that Metal clockwise
++             * (0) maps to Gallium front_ccw = 0 on this path. */
++            s.front_ccw = winding ? 1 : 0;
 +            s.fill_front = s.fill_back = fill ? PIPE_POLYGON_MODE_LINE : PIPE_POLYGON_MODE_FILL;
 +            render->rast_var[k] = pipe->create_rasterizer_state(pipe, &s);
 +            fprintf(stderr, "SweetNativeMetal: rasterizer variant cull %u winding %u fill %u -> front_ccw %u: %p\n",
@@ -2144,7 +2143,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7556,10 @@
+@@ -7214,6 +7555,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2155,7 +2154,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7653,7 @@
+@@ -7307,6 +7652,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);

@@ -1862,10 +1862,9 @@ null_texture_view(struct rwa_device *device)
          if (!render->rast_var[k]) {
             struct pipe_rasterizer_state s = render->rast_state;
             s.cull_face = cull == 1 ? PIPE_FACE_FRONT : cull == 2 ? PIPE_FACE_BACK : PIPE_FACE_NONE;
-            /* Metal's winding is the one seen on screen (NDC y up). This viewport's y scale is
-             * negative, which mirrors Gallium's window space, so Metal clockwise (0) is Gallium
-             * counter-clockwise: front_ccw = 1. */
-            s.front_ccw = winding ? 0 : 1;
+            /* Marble's mirrored CoreAnimation layers on A618 confirm that Metal clockwise
+             * (0) maps to Gallium front_ccw = 0 on this path. */
+            s.front_ccw = winding ? 1 : 0;
             s.fill_front = s.fill_back = fill ? PIPE_POLYGON_MODE_LINE : PIPE_POLYGON_MODE_FILL;
             render->rast_var[k] = pipe->create_rasterizer_state(pipe, &s);
             fprintf(stderr, "SweetNativeMetal: rasterizer variant cull %u winding %u fill %u -> front_ccw %u: %p\n",
