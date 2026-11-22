@@ -3332,7 +3332,40 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      }
      [super endEncoding];
  }
-@@ -5629,9 +6229,20 @@
+@@ -5618,6 +6218,32 @@
+ 	work->size[1] = (unsigned)size.height;
+ 	work->size[2] = (unsigned)size.depth;
+ 	work->threadgroupBytes = (unsigned)_threadgroupLength;
++	if (sweet_trace_enabled()) {
++		static int dleft = 160;
++		if (__atomic_sub_fetch(&dleft, 1, __ATOMIC_RELAXED) >= 0) {
++			char tx[2][96] = { "-", "-" };
++			for (unsigned i = 0; i < 2 && i < _highestTexture; i++) {
++				id t = _textures[i];
++				if (t != nil)
++					snprintf(tx[i], sizeof tx[i], "%lux%lu fmt %lu levels %lu usage %#lx",
++					         (unsigned long)[t width], (unsigned long)[t height],
++					         (unsigned long)[t pixelFormat], (unsigned long)[t mipmapLevelCount],
++					         (unsigned long)[t usage]);
++			}
++			int16_t b0[4] = { 0 };
++			if (_highest > 0 && _buffers[0] != nil && [_buffers[0] length] >= (NSUInteger)_offsets[0] + 8) {
++				const uint8_t *c = (const uint8_t *)[_buffers[0] contents];
++				if (c != NULL)
++					memcpy(b0, c + _offsets[0], sizeof b0);
++			}
++			const char *pl = [_pipeline respondsToSelector:@selector(label)] && [_pipeline label] != nil ?
++			                 [[_pipeline label] UTF8String] : "?";
++			fprintf(stderr, "SweetNativeMetal[%s %d] DISPATCH %s groups %ux%ux%u of %ux%ux%u tex0 %s tex1 %s "
++			        "b0 %d %d %d %d same %d\n", getprogname(), getpid(), pl, work->groups[0], work->groups[1],
++			        work->groups[2], work->size[0], work->size[1], work->size[2], tx[0], tx[1],
++			        b0[0], b0[1], b0[2], b0[3], _highestTexture > 1 && _textures[0] == _textures[1]);
++		}
++	}
+ 	[_commandBuffer recordWork:work];
+ 	[work release];
+ }
+@@ -5629,9 +6255,20 @@
  { NATIVE_OBJECT_LOCK; 
  	MTLSize groups;
  
@@ -3356,7 +3389,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		rw_print("%lux%lux%lu threads do not divide into groups of "
  		         "%lux%lux%lu, and this driver does not have the partial-group support "
  		         "that would need\n", (unsigned long)threads.width,
-@@ -5813,6 +6424,7 @@
+@@ -5813,6 +6450,7 @@
   * this half is the same fix made before it is measured, not after. */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 

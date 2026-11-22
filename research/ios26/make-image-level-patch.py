@@ -2190,6 +2190,42 @@ edit('tools/mesa/air/air_run.c',
    for (unsigned i = 0; i < info.num_resources; i++) {'''))
 
 edit('userland/src/redwoodmetal.m',
+     # DISPATCH trace (processes in /var/local/sweet-mtl-trace, own budget of 160 lines): the
+     # grid, the first two textures and the first 8 bytes of buffer 0. Mercury's VariableBlurrer
+     # pyramid had levels 2-8 left unwritten (identical means at every level, 2026-11-23);
+     # buffer 0 of its downsample holds the source LOD and the target level.
+     ('\twork->threadgroupBytes = (unsigned)_threadgroupLength;\n\t[_commandBuffer recordWork:work];\n\t[work release];\n}\n',
+      '''\twork->threadgroupBytes = (unsigned)_threadgroupLength;
+\tif (sweet_trace_enabled()) {
+\t\tstatic int dleft = 160;
+\t\tif (__atomic_sub_fetch(&dleft, 1, __ATOMIC_RELAXED) >= 0) {
+\t\t\tchar tx[2][96] = { "-", "-" };
+\t\t\tfor (unsigned i = 0; i < 2 && i < _highestTexture; i++) {
+\t\t\t\tid t = _textures[i];
+\t\t\t\tif (t != nil)
+\t\t\t\t\tsnprintf(tx[i], sizeof tx[i], "%lux%lu fmt %lu levels %lu usage %#lx",
+\t\t\t\t\t         (unsigned long)[t width], (unsigned long)[t height],
+\t\t\t\t\t         (unsigned long)[t pixelFormat], (unsigned long)[t mipmapLevelCount],
+\t\t\t\t\t         (unsigned long)[t usage]);
+\t\t\t}
+\t\t\tint16_t b0[4] = { 0 };
+\t\t\tif (_highest > 0 && _buffers[0] != nil && [_buffers[0] length] >= (NSUInteger)_offsets[0] + 8) {
+\t\t\t\tconst uint8_t *c = (const uint8_t *)[_buffers[0] contents];
+\t\t\t\tif (c != NULL)
+\t\t\t\t\tmemcpy(b0, c + _offsets[0], sizeof b0);
+\t\t\t}
+\t\t\tconst char *pl = [_pipeline respondsToSelector:@selector(label)] && [_pipeline label] != nil ?
+\t\t\t                 [[_pipeline label] UTF8String] : "?";
+\t\t\tfprintf(stderr, "SweetNativeMetal[%s %d] DISPATCH %s groups %ux%ux%u of %ux%ux%u tex0 %s tex1 %s "
+\t\t\t        "b0 %d %d %d %d same %d\\n", getprogname(), getpid(), pl, work->groups[0], work->groups[1],
+\t\t\t        work->groups[2], work->size[0], work->size[1], work->size[2], tx[0], tx[1],
+\t\t\t        b0[0], b0[1], b0[2], b0[3], _highestTexture > 1 && _textures[0] == _textures[1]);
+\t\t}
+\t}
+\t[_commandBuffer recordWork:work];
+\t[work release];
+}
+'''),
      # MTLTextureSwizzleChannels on views and on IOSurface descriptors (air_metal.c keeps it
      # with the texture). A view that would be the same object is copied by re-import only
      # for IOSurfaces; for others the swizzle is logged and dropped as before.

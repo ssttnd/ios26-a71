@@ -1,0 +1,183 @@
+Copy mode: a frame shown unfinished is copied again once its GPU work completes.
+
+The gate in front of the panel copy waits for the GPU fence of a swap for at most 100 ms and then
+copies the frame as it is (gpu_hold_timeouts). When that frame was the last before a static screen,
+the half-drawn picture stayed: Liquid Glass (dock, search pill, Control Center platters) vanished
+after a home-page swipe or a tap and came back only with the next full redraw (owner video
+2026-11-23; 22 gate timeouts in that boot). Such a frame now keeps its surfaces held and is queued
+again when its fence passes, unless a newer swap arrives first. sweetfb_recopy=0 turns it off; the
+FB stats gain recopies=N.
+
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index ea1941d..27ce752 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -406,7 +406,18 @@ public:
+ 	uint32_t      fOldFence;
+ 	uint64_t      fOldAbs;
+ 	bool          fOldValid;
++	/*
++	 * 2125 (A71): a frame the gate showed unfinished after its 100 ms cap is copied again once its GPU work completes,
++	 * unless a newer swap came first. A static screen otherwise kept the half-drawn frame: Liquid Glass (the dock,
++	 * Control Center platters) vanished after a swipe until the next full redraw (owner video 2026-11-23; 22
++	 * gpu_hold_timeouts in that boot). Copy mode only; sweetfb_recopy=0 turns it off.
++	 */
++	uint8_t       fRecopyRec[SWEET_FB_SWAP_REC_SIZE];
++	SweetSurface *fRecopyHold[4];
++	uint32_t      fRecopyFence;
++	bool          fRecopy;
+ 	bool          takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped, uint64_t now, bool ungated);
++	void          armRecopy(const uint8_t *rec, SweetSurface *const *taken, uint32_t fence);
+ 	void          putBack(const uint8_t *rec, SweetSurface **taken, SweetSurface **dropped);
+ 	uint32_t      fSwapDepth;       /* sweetfb_swapdepth: 1 = SwapWait(N) waits until N latched, 2 (default) = until N-1 latched */
+ 	bool          fWatching;        /* a frame is queued: the swap timer polls for its latch every 500 us */
+@@ -436,6 +447,7 @@ public:
+ 		uint64_t swapWaits, swapWaitAbs, swapWaitTimeouts;      /* SwapWait calls that had to wait, their time, those that gave up */
+ 		uint64_t gpuHolds, gpuHoldTimeouts;                     /* 0229: pending swaps held for the GPU, held past 50 ms */
+ 		uint64_t gpuOld;                                        /* sweet 2009: frames shown from the older slot */
++		uint64_t recopies;                                      /* 2125: timed-out frames copied again when finished */
+ 		uint64_t replaceWaits, replaceTimeouts;                 /* 0220: frames that waited for the previous one's latch / gave up */
+ 		uint64_t emptySwaps, emptyKept;                         /* 0233: swaps with no layer / of those, the ones that kept the frame */
+ 		uint64_t scanCopies, scanCopyAbs, scanCopyMaxAbs;       /* 0235: frames copied to a scan-out buffer, their time */
+@@ -1219,6 +1231,17 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		sender->setTimeoutUS(nextUS);
+ 		return;
+ 	}
++	if (!fb->fDirty && fb->fRecopy && sweet_gpu_fence_passed(fb->fRecopyFence)) {
++		/* 2125: the frame shown unfinished is complete now: show it again */
++		memcpy(fb->fPending, fb->fRecopyRec, SWEET_FB_SWAP_REC_SIZE);
++		memcpy(fb->fPendHold, fb->fRecopyHold, sizeof(fb->fPendHold));
++		bzero(fb->fRecopyHold, sizeof(fb->fRecopyHold));
++		fb->fPendFence = 0;
++		fb->fPendAbs = mach_absolute_time();
++		fb->fDirty = true;
++		fb->fRecopy = false;
++		fb->fSt.recopies++;
++	}
+ 	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0;
+ 	uint8_t *rec = NULL;
+ 	SweetSurface *taken[4] = {}, *vdropped[4] = {};
+@@ -1294,6 +1317,8 @@ AppleCLCD::takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped,
+ 	}
+ 	bool newest = ungated || sweet_gpu_fence_passed(fPendFence);
+ 	bool old = !newest && fOldValid && sweet_gpu_fence_passed(fOldFence);
++	bool unfinished = false;
++	uint32_t unfinishedFence = 0;
+ 	if (!newest && !old) {
+ 		uint64_t cap;
+ 		nanoseconds_to_absolutetime(100 * NSEC_PER_MSEC, &cap);
+@@ -1302,10 +1327,13 @@ AppleCLCD::takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped,
+ 			return false;
+ 		}
+ 		fSt.gpuHoldTimeouts++;
++		unfinished = true;
+ 		if (fOldValid) {
+ 			old = true;
++			unfinishedFence = fOldFence;
+ 		} else {
+ 			newest = true;
++			unfinishedFence = fPendFence;
+ 			fPendFence = 0;
+ 		}
+ 	}
+@@ -1315,10 +1343,16 @@ AppleCLCD::takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped,
+ 		bzero(fOldHold, sizeof(fOldHold));
+ 		fOldValid = false;
+ 		fSt.gpuOld++;
++		if (unfinished) {
++			armRecopy(rec, taken, unfinishedFence);
++		}
+ 		return true;
+ 	}
+ 	memcpy(rec, fPending, SWEET_FB_SWAP_REC_SIZE);
+ 	memcpy(taken, fPendHold, sizeof(fPendHold));
++	if (unfinished) {
++		armRecopy(rec, taken, unfinishedFence);
++	}
+ 	bzero(fPendHold, sizeof(fPendHold));
+ 	fDirty = false;
+ 	if (fOldValid) {
+@@ -1459,7 +1493,7 @@ AppleCLCD::statsTick(uint64_t now)
+ 	    "latch_waits=%llu latch_wait_us=%u.%02u latch_timeouts=%llu vsync_s=%u.%02u "
+ 	    "pool_used=%u pool_total=%u pool_surfaces=%llu pool_fallbacks=%llu "
+ 	    "swapsync=%d swap_waits=%llu swap_wait_us=%u.%02u swap_wait_timeouts=%llu replace_waits=%llu replace_timeouts=%llu "
+-	    "gpu_holds=%llu gpu_hold_timeouts=%llu gpu_old=%llu empty_swaps=%llu empty_kept=%llu "
++	    "gpu_holds=%llu gpu_hold_timeouts=%llu gpu_old=%llu recopies=%llu empty_swaps=%llu empty_kept=%llu "
+ 	    "scancopy=%d scan_copies=%llu scan_copy_us=%u.%02u scan_copy_us_max=%llu scan_gpu=%d scan_gpu_copies=%llu scan_gpu_fallbacks=%llu "
+ 	    "scan_gpu_submit_fails=%llu scan_gpu_late=%llu scan_gpu_wait_us_max=%llu\n",
+ 	    mode, hz, fFlushTicks, fHw ? 1 : 0, fFlip ? 1 : 0, smmu, fZcCleanMode == 0 ? "never" : (fZcCleanMode == 1 ? "always" : (fZcCleanMode == 2 ? "auto" : "tracked")),
+@@ -1470,7 +1504,7 @@ AppleCLCD::statsTick(uint64_t now)
+ 	    c.latchWaits, SW_F2(lwAvg), c.latchTimeouts, SW_F2(PER_S(dTicks)),
+ 	    used, total, pallocs, pfails,
+ 	    fSwapSync ? 1 : 0, c.swapWaits, SW_F2(swAvg), c.swapWaitTimeouts, c.replaceWaits, c.replaceTimeouts,
+-	    c.gpuHolds, c.gpuHoldTimeouts, c.gpuOld, c.emptySwaps, c.emptyKept,
++	    c.gpuHolds, c.gpuHoldTimeouts, c.gpuOld, c.recopies, c.emptySwaps, c.emptyKept,
+ 	    fScanCopy && !fScanFailed ? 1 : 0, c.scanCopies, SW_F2(scAvg), sweet_abs_us(c.scanCopyMaxAbs),
+ 	    fScanGpu && !fScanGpuOff ? (fScanGpuRest ? 2 : 1) : 0, c.scanGpuCopies, c.scanGpuFallbacks,
+ 	    c.scanGpuSubmitFails, c.scanGpuLate, sweet_abs_us(c.scanGpuWaitMaxAbs));
+@@ -1555,6 +1589,41 @@ sweet_hold_release(SweetSurface **set)
+ 	}
+ }
+ 
++/*
++ * 2125: keep a frame the gate took unfinished (after its 100 ms cap) for a second copy once its GPU work completes. Its
++ * surfaces get their own hold, so CoreAnimation does not draw into them before that copy; a newer swap cancels it.
++ * fLock held.
++ */
++void
++AppleCLCD::armRecopy(const uint8_t *rec, SweetSurface *const *taken, uint32_t fence)
++{
++	static int on = -1;
++	if (on < 0) {
++		int v = 1;
++		PE_parse_boot_argn("sweetfb_recopy", &v, sizeof(v));
++		on = v != 0;
++		IOLog("SWEET FB: frames shown unfinished are %s (sweetfb_recopy)
++",
++		    on ? "copied again when their GPU work completes" : "left as shown");
++	}
++	if (!on || fEarly) {
++		return;
++	}
++	if (fRecopy) {
++		sweet_hold_release(fRecopyHold);
++	}
++	memcpy(fRecopyRec, rec, SWEET_FB_SWAP_REC_SIZE);
++	for (uint32_t i = 0; i < 4; i++) {
++		fRecopyHold[i] = taken[i];
++		if (taken[i] != NULL) {
++			taken[i]->retain();
++			sweet_hold(taken[i], true);
++		}
++	}
++	fRecopyFence = fence;
++	fRecopy = true;
++}
++
+ void
+ AppleCLCD::swap(const uint8_t *rec)
+ {
+@@ -1566,8 +1635,15 @@ AppleCLCD::swap(const uint8_t *rec)
+ 			sweet_hold(held[i], true);
+ 		}
+ 	}
++	SweetSurface *recopyDrop[4] = {};
+ 	IOLockLock(fLock);
+ 	fSt.swaps++;
++	if (fRecopy) {
++		/* 2125: a newer frame replaces the one waiting for its second copy */
++		memcpy(recopyDrop, fRecopyHold, sizeof(recopyDrop));
++		bzero(fRecopyHold, sizeof(fRecopyHold));
++		fRecopy = false;
++	}
+ 	/*
+ 	 * Sweet 2009: a swap replacing an unshown frame moves that frame to the older slot (unless one is already there:
+ 	 * then the replaced one, newer than it, is dropped), so the gate can show it as soon as its GPU work completes
+@@ -1600,6 +1676,7 @@ AppleCLCD::swap(const uint8_t *rec)
+ 	memcpy(fPendHold, held, sizeof(held));
+ 	IOLockUnlock(fLock);
+ 	sweet_hold_release(dropped);
++	sweet_hold_release(recopyDrop);
+ 	if (fEarly && !fPowerOff) {
+ 		fSwapTimer->setTimeoutUS(1);    /* scan it now: the MDP latches at its next vsync */
+ 	}
