@@ -1639,3 +1639,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   `e7c0c925...`: bundle, drawlog-every moved to `.a71-bbtrace-1122`, /var/local/sweet-mtl-opaque-resolve =
   MercuryPosterExtension. 12/12; Mercury logs "external resolves written with alpha 1". USB from byte 79377913.
   Visual result pending. To undo: move that flag file aside (no rebuild).
+- 2026-11-23 ~00:00: luma boost. backboardd runs QuartzCore `luma_boost_lph` (LLVM dump in VM: out.rgb = d0.rgb +
+  u.scale*u.edr*LUT(dot(d0.rgb, Rec.709)*u.inv_edr), framebuffer fetch, LumaBoostUniforms {scale, inv_edr, edr}) over
+  the frame. `a0653d1`: /var/local/sweet-mtl-skip-luma-boost present = skip those draws. Metal CI `45053717824`, artifact
+  `14766473790` six ok. Island tweak `4898c11` (CI `45053876062`): black iPhone 11 corners (CornerRadius 41.5) above all
+  SpringBoard windows, status bar exclusion rect separate (ShapeTop 8.5, ShapeHeight 36; pill stays 5/34), stale
+  PosterBoard SIGTERM. Package `a71-ios26-lumaboost-corners.payload` `757abcdd...` 19/19; backboardd logs
+  "luma_boost draws skipped". USB from byte 82413857. Visual results pending.
+- Glass research (other ports): Bergamota A630 found CA itself sets glass blur radius/gate 0 every frame
+  (GlassBackgroundUniforms fields 14/25) while building the pyramid; cause not found there. IOS-26-Hot-raphael
+  docs/prior-art.md lists UniXNU kernel 0242 "GPU cache invalidate before every submit", 0244 "drawables released 3
+  vsyncs after the flip", AdrenoMetal 51b7003 "supportsTileShaders NO -> QuartzCore non-tile path". Same-GPU port:
+  marnov999/ios26-sweet (SM7150, A618), README only.
