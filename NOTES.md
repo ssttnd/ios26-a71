@@ -1253,3 +1253,12 @@ Next:
   before); the backend makes rasterizer variants (Metal clockwise -> Gallium `front_ccw=1`, because the viewport y scale
   is negative; guess, reasoned not measured). `/var/local/sweet-mtl-cull` = `none` (ignore culling) or `flip` (invert
   winding) for checking on the phone. `failWith:` logs its reason (16/process). Metal CI `45029584119` building.
+- 79c3dfb failed in CI (`patch failed: redwoodmetal.m:830`): the local `donor` has mip-views but not blur-attachments,
+  and the new hunks sat next to blur lines. `64e5f1c`: the generator diffs against `research/ios26/native-glass-src/
+  base-mip-blur` (LF copy of donor userland+tools with the blur patch applied; ignored, rebuild per WORKFLOW). Series
+  checked on donor with mip-views reversed. CI `45029807843` succeeded, artifact `14757342902` 6/6.
+- Installed `build/a71-ios26-metal-cull.payload` VERIFY OK `84c70c72...` (boot unchanged `82d6ca2f...`, trace file kept),
+  9/9. **Observed:** `setCullMode: 1 honoured`, variant `cull 1 winding 0 -> front_ccw 1`; Mercury commits now arrive
+  with status 1 and `space::rasterizeBackground*` draws execute into the 414x896 target. Next failure, now logged:
+  `the shader's own sampler at index 0 asks for filter::bicubic` fails the command buffer.
+- `6fd5fdb`: inline bicubic sampled as linear (logged once). Metal CI `45030566816` building.
