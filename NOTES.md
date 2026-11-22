@@ -1228,3 +1228,13 @@ Next:
   `[self commandBuffer]` and logs calls 1-3 and every 1024th. Metal CI `45026843334` building.
 - Phone booted again at about 18:17 local on the unchanged boot `f6679f41...c8b0`; new USB log `logs/usb-ios26-1122.txt`
   (background logger of this session).
+- CI `45026843334` succeeded, artifact `14756615484` 6/6. Sent the phone to TWRP from the PC (`a71:recovery`), boot still
+  `f6679f41...`, wrote `build/a71-ios26-metal-cbdesc.payload` VERIFY OK `69f616e3...`. First boot after the write hung
+  (no USB, known fault); owner restarted, booted, payload 9/9 errno=0, Metal published.
+- Result: owner — still no wallpaper. **Guess refuted:** no `commandBufferWithDescriptor:` line at all; Mercury again
+  does one `updateCylinderVertexPositions` dispatch and `commands=2 draws=0`. The completion stats show `handlers=0`
+  (its two command buffers had no completed handlers). `commands` counts committed command buffers.
+- `17b7296`: per-process trace (`/var/local/sweet-mtl-trace` lists process names, 600 lines, thread ids): command buffer
+  request/grant (slot wait), render pass target (color0 size/format/load/store), compute encoder, endEncoding with
+  draw-call count and clear mask, presentDrawable, addCompletedHandler, waits, commit. Metal CI `45028576809` building.
+  Plan: package = bundle + `text:/var/local/sweet-mtl-trace=MercuryPosterExtension`, then wake the lock screen.
