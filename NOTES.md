@@ -1426,3 +1426,60 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   iPad), where the disc wallpaper may live. A first extension-list diff failed: `7z l -ba -slt img "System/Library/
   ExtensionKit/Extensions/*"` listed nothing (path filter/separator issue), so no conclusion from it. Next: full `7z l -slt`
   listing of the iPhone 17 image to a file, diff against the iPhone 11 catalog (hfsread walk), grep for wallpaper/poster names.
+
+## 2026-11-22 — A618 winding, stock wallpaper identification, publication test
+
+- Commit `39cb2e1` makes the A618 winding mapping used by the successful Marble `flip` test the default.
+  All three Metal patches applied in CI order against an LF donor copy. Pushed and verified on `codex/a71-settings`.
+  Metal Actions `45040888105` started for this commit. The phone still runs the earlier bundle `45031476531`.
+  When installing the new bundle, move the existing `sweet-mtl-cull` flag to a backup in the same mount-time
+  package, so it does not invert the corrected default again.
+- **Stock wallpaper identified directly from the iPhone12,1 23G90 root.** MercuryPosterExtension's English
+  `Localizable.loctable` names `SPACE_DISPLAY_NAME_IPHONE` as `iOS 26`: `space.one` Shadow, `space.two` Sky,
+  `space.three` Halo, `space.four` Dusk. `FLUIDITY_DISPLAY_NAME_IPHONE` is `iOS 18`. The root already contains
+  `Space.metallib` (2,880,432 bytes). Earlier black `space.dynamic` runs were attempts to render the wanted
+  stock wallpaper. Try `space.two` (Sky) as a fixed variant once the UI is stable and verify the screen.
+  Full 7-Zip vs HFS catalog diff is ignored under `research/ios26/iphone18-3/poster-catalog-diff.txt`.
+- On A71, TWRP readback confirmed boot `a71-ios26-2124.img` SHA-256
+  `1d33fe0fd37e3dd3294cf398d8259223d48e2553b14d7a84ce095138a57ea810`. With that boot image and old bundle,
+  installed `a71-ios26-strict-publish.payload` SHA-256 `6d303a88b7fafda379315ca882a844bad4750e30e672fdf28462f623c8776e8d`.
+  Readback matched; iOS booted, payload 3/3, and backboardd printed `strict IOSurface publication`.
+  **Owner observed continued flicker and icons disappearing.** Staged the rollback package
+  `a71-ios26-strict-publish-rollback.payload` SHA-256 `2683331ac5db3b7a360674a9328e06f79f0177775fe94fc613dea2e933f47993`.
+  TWRP readback matched and system reboot requested. Rollback moves the test flag to
+  `/var/local/sweet-native-strict-publish.a71-test-1122`; USB verification starts at byte 49570630.
+  USB confirmed rollback 1/1 and backboardd reverted to publication without GPU drain. Owner still saw flicker.
+- Tested only `always-clean` using `a71-ios26-always-clean-only.payload` SHA-256
+  `e544a3c13cccdfd57c4dd63d6c32ffbe78c6d58104d55fcf1a9893efc07a49bf`. TWRP readback verified,
+  payload 3/3, and the backboardd banner confirmed always-clean was enabled with strict-publish disabled.
+  Owner reported worse flicker. Reverted always-clean in the bundle update, preserving its marker with
+  the `.a71-test-1122` suffix outside the active path.
+- CI `45040888105` succeeded. Verified all six files in artifact `14760864296` against `build.json`.
+  TWRP readback for `a71-ios26-metal-winding-rollback-clean.payload` matched SHA-256
+  `290d1741fabd194d85d810553e4c5828888f1506ef09eb32af451be4da8c0a8a`.
+  iOS booted on 2124, applied 11/11, backboardd confirmed both publication tests disabled and the old
+  `sweet-mtl-cull` flag absent. Owner still saw Marble flicker and intermittent missing icons.
+- Owner wants the iOS 26 stock wallpaper instead of Marble. `a71-ios26-stock-sky-preserve.payload`
+  moves the previous `/var/local/poster.want` to `.a71-marble-1122` and requests `space.two` (Sky).
+  TWRP readback matched `98cd939c6f2a5e0ef126c03508736e24aeedaa15defe17107bf1291134fdcbd3`.
+  USB from byte 53589506 confirms 4/4 and normal boot. The owner first looked while Marble was still
+  active. Once the delayed job ran, PosterBoard created and made `space.two` the active LockScreen
+  configuration and notified observers for both active paths (`al` and `ah`). Mercury compiled `space::`
+  shaders. Visual confirmation of the lock and home screens is pending. The repo's poster script now
+  defaults to `space.dynamic` if there is no explicit poster.want override.
+
+### Dynamic Island follow-up
+
+- Confirmed in 23G90 local disassembly: `SBSystemApertureViewController._frameForSensorRegionInBounds:`
+  takes `sensorRegionSize` and `minimumScreenEdgeInsets` from `SBUISystemApertureLayoutMetrics`, centers
+  the frame in the display, and rounds to display scale. `sensorRegionSize` is a built-in size selected
+  by screen-pixel-width parity. The minimum inset uses `SBFEffectiveArtworkSubtype`.
+- `SBFEffectiveArtworkSubtype` reads MobileGestalt `ArtworkDeviceSubType` and can also read a positive
+  `FBSEmulatedArtworkSubtype` from `com.apple.frontboardservices.device_emulation` when
+  `FBSEnableDeviceEmulation` is enabled. The same domain controls `FBSEmulatedDisplayWidth` and
+  `FBSEmulatedDisplayHeight`. The built-in emulation path changes more than the aperture metrics.
+  No new MobileGestalt change or emulation preferences were installed.
+- UIKit's phone status-bar provider uses `UIScreen._exclusionArea` via `_displayInfoProvider` and checks
+  the exclusion rectangle before choosing the DynamicSplit provider. Trace construction of that object and
+  SpringBoard's activation gate. The red bar from the earlier full subtype change coincided with different
+  screen and artwork metrics; the geometry reads traced here did not query a physical camera.

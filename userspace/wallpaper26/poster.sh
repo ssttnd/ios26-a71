@@ -15,7 +15,7 @@ for prov in com.apple.MercuryPoster com.apple.WallpaperKit.CollectionsPoster com
 	echo "== descriptors $prov"
 	$P --descriptors $prov
 done
-want="com.apple.MercuryPoster fluidity.dynamic"
+want="com.apple.MercuryPoster space.dynamic"
 [ -f /var/local/poster.want ] && want=$($T cat /var/local/poster.want)
 n=0
 while [ $n -lt 4 ]; do
