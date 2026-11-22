@@ -1629,3 +1629,13 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   (mean A 119), so whatever is beneath (placeholder fill, maybe a stale snapshot) is added. Also seen: a full-screen
   `luma_boost_lph` pass with a 128x1 R8 LUT (not investigated). Test `1bb7cc4`: file /var/local/sweet-mtl-opaque-resolve
   (process list or "*") makes external resolves blit with alpha forced to 1. Metal CI `45052627600` building.
+- Owner: the permanent pill is visible. SpringBoard restarted once in the pill boot: cause is backboardd[206] SIGSEGV
+  (far 0x18, pc in libSweetNativeBackend +0x2593ec) after 93 "GPU driver would not allocate" refusals, which began after
+  794 backboardd TEXSTAT readbacks of my draw trace (no refusals in the 4 earlier boots without it). Don't leave the
+  backboardd drawlog on; readbacks appear to exhaust GPU allocations (leak not located).
+- a71island.log (TWRP): all 5 hooks, screen type 7 (iPhone 11 own), shape {{132,5},{150,34}}, pill {{144.5,5},{125,34}} at
+  level -1 under SBSystemApertureWindow.
+- Metal CI `45052627600` (1bb7cc4) succeeded, artifact `14766143447` six hashes ok. `a71-ios26-metal-opaque.payload`
+  `e7c0c925...`: bundle, drawlog-every moved to `.a71-bbtrace-1122`, /var/local/sweet-mtl-opaque-resolve =
+  MercuryPosterExtension. 12/12; Mercury logs "external resolves written with alpha 1". USB from byte 79377913.
+  Visual result pending. To undo: move that flag file aside (no rebuild).
