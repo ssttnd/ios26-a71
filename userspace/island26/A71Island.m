@@ -100,8 +100,9 @@ static void IInstall(void) {
 - (BOOL)canBecomeKeyWindow { return NO; }
 @end
 
-static A71PillWindow *IPill;
+static A71PillWindow *IPill, *ICorners;
 static BOOL IAlwaysPill = YES;
+static double ICornerR = 41.5;     // iPhone 11 display corner radius in points; preference CornerRadius, 0 = off
 
 static NSArray *IAllWindows(void) {
     SEL s = NSSelectorFromString(@"allWindowsIncludingInternalWindows:onlyVisibleWindows:");
@@ -126,6 +127,26 @@ static void IShowPill(int attempt) {
         }
         return;
     }
+    CGRect sb = aperture.windowScene.coordinateSpace.bounds;
+    if (ICornerR > 0 && !ICorners) {
+        // iPhone screen corners: everything outside a rounded rectangle of the screen is drawn black, above
+        // every SpringBoard window (apps included), so the A71's squarer panel corners read as an iPhone's.
+        ICorners = [[A71PillWindow alloc] initWithWindowScene:aperture.windowScene];
+        ICorners.userInteractionEnabled = NO;
+        ICorners.backgroundColor = UIColor.clearColor;
+        ICorners.frame = sb;
+        CAShapeLayer *mask = [CAShapeLayer layer];
+        UIBezierPath *path = [UIBezierPath bezierPathWithRect:sb];
+        [path appendPath:[UIBezierPath bezierPathWithRoundedRect:sb cornerRadius:ICornerR]];
+        mask.path = path.CGPath;
+        mask.fillRule = kCAFillRuleEvenOdd;
+        mask.fillColor = UIColor.blackColor.CGColor;
+        [ICorners.layer addSublayer:mask];
+        ICorners.windowLevel = aperture.windowLevel + 100;
+        ICorners.hidden = NO;
+        ILOG("corners: radius %.2f on %@ at level %.0f", ICornerR, NSStringFromCGRect(sb), ICorners.windowLevel);
+    }
+    if (!IAlwaysPill) return;
     if (!IPill) {
         IPill = [[A71PillWindow alloc] initWithWindowScene:aperture.windowScene];
         IPill.userInteractionEnabled = NO;
@@ -192,7 +213,8 @@ __attribute__((constructor)) static void IInit(void) {
         IHomeType = (long)INum(p, @"HomeScreenType", IHomeType);
         if (!p[@"RestartStalePosterBoard"] || [p[@"RestartStalePosterBoard"] boolValue]) IRestartStalePosterBoard();
         if (p[@"AlwaysPill"]) IAlwaysPill = [p[@"AlwaysPill"] boolValue];
-        if (IAlwaysPill) {
+        ICornerR = INum(p, @"CornerRadius", ICornerR);
+        if (IAlwaysPill || ICornerR > 0) {
             [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification object:nil
                                                                queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ IShowPill(0); });
