@@ -2230,8 +2230,21 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
             work->nativeBlit = [^{
                 if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl) != 0)
                     RW_ONCE("a multisample resolve failed\\n");
-                else
+                else {
                     sweet_trace("resolve %p -> %p level %u slice %u blitted", src, dst, lvl, sl);
+                    /* Read the single-sample result, since getBytes rejects the MSAA attachment. */
+                    if (sweet_trace_enabled() && lvl == 0 && sl == 0 &&
+                        [src sampleCount] > 1 && [dst sampleCount] == 1) {
+                        void *surface = [dst respondsToSelector:@selector(iosurface)] ? (void *)[dst iosurface] : NULL;
+                        static unsigned logged[2];
+                        unsigned index = surface != NULL;
+                        if (logged[index] < 2) {
+                            unsigned seq = ++logged[index] + (index ? 9002 : 9000);
+                            rw_print("TEXSTAT %u resolved color %p surface %p\\n", seq, dst, surface);
+                            native_drawlog_texstat(seq, dst);
+                        }
+                    }
+                }
             } copy];
             [_commandBuffer recordWork:work];
             [work release];
@@ -2663,7 +2676,7 @@ edit('userland/src/SweetNativeDrawLog.inc',
       '''static void
 native_drawlog_texstat(unsigned seq, id t)
 {
-	if (t == nil)
+	if (t == nil || [t sampleCount] > 1)
 		return;
 	const unsigned fmt = (unsigned)[t pixelFormat];
 	if (fmt != 80 && fmt != 81 && fmt != 70 && fmt != 71) {
@@ -2725,7 +2738,8 @@ native_drawlog_texstat(unsigned seq, id t)
 	}
 	/* what a full-screen target held before this draw: the previous frame's result, so a
 	 * wallpaper that renders black can be told from one that renders and is lost later */
-	if (ncolors > 0 && colors[0] != nil && [colors[0] width] >= 600 && [colors[0] height] >= 1200) {
+	if (ncolors > 0 && colors[0] != nil && [colors[0] sampleCount] == 1 &&
+	    [colors[0] width] >= 600 && [colors[0] height] >= 1200) {
 		static unsigned rt_told;
 		if (rt_told++ < 24) {
 			fprintf(stderr, "SweetNativeMetal: TEXSTAT %u full-screen target %s format %u\\n", seq,
