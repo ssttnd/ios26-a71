@@ -2398,7 +2398,109 @@ static NSUInteger sweet_heap_texture_bytes(MTLTextureDescriptor *d)
 		         n, descriptor);
 	return [self commandBuffer];
 }
-'''))
+'''),
+     # Command-buffer life trace for the processes named in /var/local/sweet-mtl-trace
+     # (getprogname() names, whitespace separated), 600 lines per process. Mercury's Space
+     # poster takes a drawable every frame and commits nothing after setup, without any
+     # refusal in the log: this says where a frame stops (slot wait, encoder, draws, commit).
+     ('@interface SweetNativeNoCopyRelease : NSObject {\n',
+      r'''static int sweet_trace_enabled(void)
+{
+	static int on;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		FILE *f = fopen("/var/local/sweet-mtl-trace", "r");
+		char word[128];
+		if (f == NULL)
+			return;
+		while (fscanf(f, "%127s", word) == 1)
+			if (strcmp(word, getprogname()) == 0)
+				on = 1;
+		fclose(f);
+		if (on)
+			fprintf(stderr, "SweetNativeMetal[%s %d] TRACE on (/var/local/sweet-mtl-trace), 600 lines\n",
+			        getprogname(), getpid());
+	});
+	return on;
+}
+
+static void sweet_trace(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void sweet_trace(const char *fmt, ...)
+{
+	static int left = 600;
+	char line[512];
+	uint64_t tid = 0;
+	va_list ap;
+
+	if (!sweet_trace_enabled() || __atomic_sub_fetch(&left, 1, __ATOMIC_RELAXED) < 0)
+		return;
+	pthread_threadid_np(NULL, &tid);
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof line, fmt, ap);
+	va_end(ap);
+	fprintf(stderr, "SweetNativeMetal[%s %d] TRACE t%llu: %s\n", getprogname(), getpid(),
+	        (unsigned long long)tid, line);
+}
+
+@interface SweetNativeNoCopyRelease : NSObject {
+'''),
+     ('- (id)commandBuffer\n{\n\treturn [[[SweetNativeMetalCommandBuffer alloc] initWithRedwoodQueue:self] autorelease];\n}\n',
+      r'''- (id)commandBuffer
+{
+	sweet_trace("queue %p commandBuffer: asking (waits here while every slot is held)", self);
+	id cb = [[[SweetNativeMetalCommandBuffer alloc] initWithRedwoodQueue:self] autorelease];
+	sweet_trace("queue %p commandBuffer -> %p", self, cb);
+	return cb;
+}
+'''),
+     ('- (void)commit\n{ NATIVE_OBJECT_LOCK; \n\tchar why[512] = { 0 };\n',
+      '- (void)commit\n{ NATIVE_OBJECT_LOCK; \n\tchar why[512] = { 0 };\n'
+      '\tsweet_trace("cb %p commit: %lu works, status %lu", self, (unsigned long)[_work count], (unsigned long)_status);\n'),
+     ('- (void)addCompletedHandler:(void (^)(id))handler\n{ NATIVE_OBJECT_LOCK; \n',
+      '- (void)addCompletedHandler:(void (^)(id))handler\n{ NATIVE_OBJECT_LOCK; \n'
+      '\tsweet_trace("cb %p addCompletedHandler (status %lu)", self, (unsigned long)_status);\n'),
+     ('- (void)waitUntilScheduled { NATIVE_OBJECT_LOCK;  }\n',
+      '- (void)waitUntilScheduled { NATIVE_OBJECT_LOCK;  sweet_trace("cb %p waitUntilScheduled", self); }\n'),
+     ('    atomic_fetch_add(&native_wait_until_completed,1);\n',
+      '    atomic_fetch_add(&native_wait_until_completed,1);\n'
+      '\tsweet_trace("cb %p waitUntilCompleted (status %lu)", self, (unsigned long)_status);\n'),
+     ('- (id)computeCommandEncoder\n{ NATIVE_OBJECT_LOCK; \n',
+      r'''- (void)presentDrawable:(id)drawable
+{
+	sweet_trace("cb %p presentDrawable: %p", self, drawable);
+	struct objc_super sup = { self, [SweetNativeMetalCommandBuffer superclass] };
+	((void (*)(struct objc_super *, SEL, id))objc_msgSendSuper)(&sup, _cmd, drawable);
+}
+
+- (id)computeCommandEncoder
+{ NATIVE_OBJECT_LOCK;
+	sweet_trace("cb %p computeCommandEncoder", self);
+'''),
+     ('- (id)renderCommandEncoderWithDescriptor:(id)descriptor\n{ NATIVE_OBJECT_LOCK; \n',
+      r'''- (id)renderCommandEncoderWithDescriptor:(id)descriptor
+{ NATIVE_OBJECT_LOCK;
+	if (sweet_trace_enabled()) {
+		MTLRenderPassColorAttachmentDescriptor *a0 =
+		    [[(MTLRenderPassDescriptor *)descriptor colorAttachments] objectAtIndexedSubscript:0];
+		id<MTLTexture> t = [a0 texture];
+		sweet_trace("cb %p renderCommandEncoder: color0 %p %lux%lu fmt %lu load %lu store %lu depth %p",
+		            self, t, (unsigned long)(t ? [t width] : 0), (unsigned long)(t ? [t height] : 0),
+		            (unsigned long)(t ? [t pixelFormat] : 0), (unsigned long)[a0 loadAction],
+		            (unsigned long)[a0 storeAction],
+		            [[(MTLRenderPassDescriptor *)descriptor depthAttachment] texture]);
+	}
+'''),
+     ('\tid _resolve[8];\n', '\tid _resolve[8];\n\tunsigned _sweetTraceDraws;\n'),
+     ('      baseInstance:(NSUInteger)baseInstance\n{ NATIVE_OBJECT_LOCK; \n\tSweetNativeMetalWork *work = [[SweetNativeMetalWork alloc] init];\n',
+      '      baseInstance:(NSUInteger)baseInstance\n{ NATIVE_OBJECT_LOCK; \n\tSweetNativeMetalWork *work = [[SweetNativeMetalWork alloc] init];\n'
+      '\t_sweetTraceDraws++;\n'),
+     ('- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n    if(_nativeClearMask',
+      '- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n'
+      '    sweet_trace("render encoder %p endEncoding: %u draw calls, clear mask %#x, pipeline %p", self, _sweetTraceDraws,\n'
+      '                _nativeClearMask, _pipeline);\n'
+      '    if(_nativeClearMask'),
+     ('- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n\t[super endEncoding];\n}',
+      '- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n\tsweet_trace("compute encoder %p endEncoding", self);\n\t[super endEncoding];\n}'))
 
 # Draw log: which texture object (a view names its parent) and which level, so a pass that
 # samples the texture it renders into can be told from one that ping-pongs.
