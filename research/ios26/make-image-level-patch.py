@@ -9,7 +9,8 @@ the level. Applies after ios26-mip-views.patch and ios26-blur-attachments.patch.
 from pathlib import Path
 from difflib import unified_diff
 
-r = Path('research/ios26/native-glass-src/donor')
+# Base = donor (has ios26-mip-views applied) + ios26-blur-attachments, LF: CI applies this patch on top of both.
+r = Path('research/ios26/native-glass-src/base-mip-blur')
 changes = []
 
 _astc = []
