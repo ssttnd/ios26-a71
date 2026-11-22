@@ -1419,3 +1419,10 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   surface seed is unchanged"). First tests, no rebuild needed: touch /var/local/sweet-native-strict-publish, then
   /var/local/sweet-native-always-clean (each restores the conservative behaviour; package `text:` items), and watch for the
   1.6 s period (likely the wallpaper's own animation/parallax cycle loading the GPU enough to expose the race).
+- **Owner: Marble is NOT the wallpaper they want.** Their reference (official iOS 26 stock picture: two large overlapping discs,
+  blue and green, grainy surface; a purple variant exists) differs from Marble (petal/fan shapes in iPhone 17 colours). The
+  iPhone18,3 image's /Library/Wallpaper has only Marble beyond the iPhone 11 set. Not yet searched: the rest of that image
+  (posters/appexes, Mercury resources, CollectionsPoster bundle) and the other iOS 26 IPSWs (iPhone18,1/18,2 Pro, 18,4 Air,
+  iPad), where the disc wallpaper may live. A first extension-list diff failed: `7z l -ba -slt img "System/Library/
+  ExtensionKit/Extensions/*"` listed nothing (path filter/separator issue), so no conclusion from it. Next: full `7z l -slt`
+  listing of the iPhone 17 image to a file, diff against the iPhone 11 catalog (hfsread walk), grep for wallpaper/poster names.
