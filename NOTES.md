@@ -1560,3 +1560,24 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
 Handoff: combined AIR image typing and runtime texture-presence commit `697ccfd` is on GitHub.
 Metal CI `45045408902` was running when work stopped. The superseded type-only run `45045101450`
 was sent a cancellation request. Neither combined build nor hardware behavior has been verified.
+
+## 2026-11-22 ~22:30 — combined AIR bundle on the phone; MSAA resolves were dropped (storage samples)
+
+- Metal CI `45045408902` (697ccfd: AIR image-store typing + runtime texture presence) succeeded; artifact
+  `14763343353` matched all six `build.json` hashes. Sent the phone to TWRP from the PC (`a71:recovery`, TWRP ADB in
+  30 s), confirmed boot `1d33fe0f...` (2124), wrote `build/a71-ios26-metal-air-null.payload` (9 entries) VERIFY OK
+  `38929e9ab816dc4166cf54b6a9448dda62c45c4464b3d83e6368a06721c89c0f`. iOS booted: `finished 9/9 errno=0`, Metal
+  published on A618. USB from byte 64038271 of `logs/usb-ios26-1122.txt` (copy in ignored `research/air-null-boot.txt`).
+- Observed: texture presence works (`reads texture 3 and nothing is bound there: a zero texel`). The 414x896 Space
+  pass reads color (`TEXSTAT 9001 mean 132,138,135,145`), but the 828x1792 4x pass's **private** resolve stage reads
+  `mean 0,0,0,0 clear 100%` (TEXSTAT 9003/9004). So the full-size output is empty before any IOSurface; CPU coherency
+  is not the cause. No GPU fault/hang lines.
+- Cause (from Mesa 25.0.7 source): `fd6 can_do_blit` refuses `src nr_samples > 1`; the fallback
+  `util_blitter_is_blit_supported` calls `is_format_supported(nr_samples=4, nr_storage_samples=0)` and fd6_screen
+  refuses `MAX2(1,4) != MAX2(1,0)`, so `pipe->blit` (void) drops every MSAA resolve silently. `air_metal.c` never set
+  `nr_storage_samples`. Bergamota NOTES line 122 records the same bug on A630; their wallpaper showed after fixing it.
+  Not explained: where the 414x896 resolve target's color comes from if its resolve is also dropped (guess: other
+  writes to that 10-level texture).
+- Fix `9252b8c`: template sets `.nr_storage_samples = query_samples` (generator `make-image-level-patch.py`,
+  patch regenerated; the three-patch series applies in CI order on an LF donor copy). Metal CI `45050202196` building.
+  Next: verify six hashes, install, expect nonzero TEXSTAT 9003+ and a visible Sky (`space.two` still active).
