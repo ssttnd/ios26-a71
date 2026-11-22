@@ -1238,3 +1238,18 @@ Next:
   request/grant (slot wait), render pass target (color0 size/format/load/store), compute encoder, endEncoding with
   draw-call count and clear mask, presentDrawable, addCompletedHandler, waits, commit. Metal CI `45028576809` building.
   Plan: package = bundle + `text:/var/local/sweet-mtl-trace=MercuryPosterExtension`, then wake the lock screen.
+- CI `45028576809` (17b7296) artifact `14757201151` 6/6. Owner had reported the preview fully black (earlier it showed
+  buttons): PosterBoard aborts sig 6 right after creating a 276x597 BGRA thumbnail surface (4 times in that boot, 10 in
+  the heap log, so not new). `ipsw` is gone from the VM (disk recreated), so not symbolicated. New boot image
+  `build/a71-ios26-2123-pbtrace.img` = 2123 image options + `--dtlog MercuryPosterExtension,PosterBoard` (same kernel
+  e80ab708; only other cmdline difference: `sweetfb_flip=0` no longer emitted, XNU default 0), readback VERIFY OK
+  `82d6ca2f9ece285bac5797bbdd85533a352def60e1929575c7454f536b3f251e`. Package `build/a71-ios26-metal-trace.payload` (bundle +
+  `/var/local/sweet-mtl-trace` = "MercuryPosterExtension PosterBoard") VERIFY OK `3bd24e36...`, 12/12, first boot OK.
+- **Trace result (observed):** Mercury encodes every frame on one thread: compute, render pass into 414x896 (3 draws,
+  depth attached), compute, render pass into the 828x1792 drawable (4 draws), then `commit: 24 works, status 5` —
+  the command buffer is already in error, so commit drops it (hence `draws=0`). `failWith:` is silent; of its callers
+  only `setCullMode:` (non-zero = "culling is not implemented") fits, and Mercury's binary calls `setCullMode:`.
+- `79c3dfb`: cull/winding/fill are kept per draw (`rwa_draw.native_cull/_winding/_fill`, declared but never used
+  before); the backend makes rasterizer variants (Metal clockwise -> Gallium `front_ccw=1`, because the viewport y scale
+  is negative; guess, reasoned not measured). `/var/local/sweet-mtl-cull` = `none` (ignore culling) or `flip` (invert
+  winding) for checking on the phone. `failWith:` logs its reason (16/process). Metal CI `45029584119` building.
