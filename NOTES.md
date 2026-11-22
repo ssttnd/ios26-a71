@@ -1705,3 +1705,18 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   updates). QuartzCore has CA_DISABLE_DIRTY_REGIONS and CA_DISABLE_BACKDROP_CACHE. Prepared
   `a71-ios26-ca-nodirty.payload` `7bdb9c6f...` (launchd.plist live `261eae97...` -> backboardd
   EnvironmentVariables CA_DISABLE_DIRTY_REGIONS=1, original kept as .a71-before-nodirty) and rollback `bf945e44...`.
+- 2026-11-23 later: CA_DISABLE_DIRTY_REGIONS for backboardd (launchd.plist, `a71-ios26-ca-nodirty.payload`): glass
+  behaviour unchanged. CA_DISABLE_BACKDROP_CACHE (`a71-ios26-ca-nobdcache.payload` `21bf30f5...`): no wallpaper at all,
+  glass unchanged. Restored the original launchd.plist (`261eae97...`, test files kept as .a71-nodirty-test /
+  .a71-nobdcache-test). After that the wallpaper stayed black on two boots (PosterBoard logged "data could not be
+  written" for CollectionsPoster ProviderInfo, "Bailed; Will not transition Active poster"); a plain reboot by the
+  owner brought it back. Phone now: Metal `srgbimg` (16189e71), boot 60 Hz.
+- Linear-write build (7bea1cc/38427a4) pyramid: L1 194,159,90 A120 (= linear of L0), L2-L8 all 232,226,195 A0:
+  identical means at every level => levels >= 2 are most likely never written (earlier 245,242,226,0 likewise).
+  Owner: wallpaper glass too dark and the background inside it "rotated" (photo vs reference).
+- Kernel lead for UI glass: copy-mode gate (takeFrame) shows a swap unfinished after 100 ms (gpu_hold_timeouts: 22 in
+  the video boot) and never copies it again; a static screen keeps the half-drawn frame. Compared with iOS 16: our
+  SwapWait in copy mode waits for the copy of swap N (iOS 16 0229 waits for N-1: FPS item, not ported).
+- `814474e`: xnu 2125 (recopy of frames shown unfinished, sweetfb_recopy, stats recopies=N; applies after 2115) and
+  Metal DISPATCH trace (grid, tex0/tex1 size/levels/usage, buffer 0 first 8 bytes, same-texture flag). Kernel CI
+  `45060395051`, Metal CI `45060392095`.
