@@ -1303,3 +1303,10 @@ Next:
   neither Git's nor Windows' store trusts; `curl -k` was refused by the session's safety check. Waiting for the owner's OK
   to download AppleIncRootCertificate.cer from www.apple.com/appleca/ and use it as --cacert. Phone: hung on the first
   boot after the drawlog-Mercury package (`86a1b8c8...`); needs a power-key restart.
+- Owner OK'd downloading Apple Root CA (`www.apple.com/appleca/AppleIncRootCertificate.cer`, 1215 bytes, SHA-256 fingerprint
+  B0:B1:73:0E:...:F0:24; scratch only) as --cacert for gdmf.apple.com. Pallas with audience 01c1d682 (iOS SU): 404 "Active
+  not found". With audience 0c88076f-c292-4dad-95e7-304db9d29d34 (present in the 23G90 shared cache): 200, 130 Wallpaper
+  assets, all iPad screen classes, old sets (WWDC 2020/21, Desert, Lake, Fans...). No iPhone and nothing newer than iOS 17.
+  The only asset type string in the cache is com.apple.MobileAsset.Wallpaper. DefaultWallpapers~iphone.plist in 23G90:
+  default 7565 (iOS 17), iPhone15,2/15,3 -> 7600-7650 (collection 1E9A5729, files absent). Conclusion (inference): the iOS 26
+  sphere wallpaper ships only in the firmware of newer iPhones, not in the iPhone12,1 IPSW nor as a download.
