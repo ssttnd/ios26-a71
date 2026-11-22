@@ -1621,3 +1621,11 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   SpringBoard started. Result pending.
 - Wallpaper photo: Sky shapes are recognisable (blue/green discs) but large areas are washed out to pinkish white,
   with speckle noise and blocky edges between regions: clipped/overflowing values, not a uniform gamma offset.
+- 23:35: island CI `45052293336` (124c7e0: permanent black pill window one level under SpringBoard's SystemAperture
+  window; file log /var/mobile/Library/Caches/a71island.log) + backboardd draw trace installed
+  (`a71-ios26-pill-bbtrace.payload` `cc20e969...`, 7/7; old drawlog-every moved to `.a71-mercury-1122`).
+  Owner says the wallpaper colours are right but about twice too bright. Trace (`research/bbtrace-boot.txt`): backboardd
+  draws Mercury's 828x1792 surface with `PBGRABsovXm_TimgA2Xhf_Isrc` = source-over; Mercury's resolve is 39% alpha 0
+  (mean A 119), so whatever is beneath (placeholder fill, maybe a stale snapshot) is added. Also seen: a full-screen
+  `luma_boost_lph` pass with a 128x1 R8 LUT (not investigated). Test `1bb7cc4`: file /var/local/sweet-mtl-opaque-resolve
+  (process list or "*") makes external resolves blit with alpha forced to 1. Metal CI `45052627600` building.
