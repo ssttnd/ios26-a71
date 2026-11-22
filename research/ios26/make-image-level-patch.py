@@ -1767,13 +1767,25 @@ rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned l
          o.dst.format = dst->res->format;
          o.dst.box = (struct pipe_box){ .x = 0, .y = 0, .z = (int)slice, .width = w, .height = h,
                                         .depth = 1 };
-         o.mask = PIPE_MASK_RGBA;
+         /* freedreno's fd_blitter_blit makes its own identity-swizzle source view, so a
+          * blit swizzle of A = 1 was dropped (2026-11-23). Instead: the destination is
+          * cleared to opaque black, then only R, G and B are blitted over it (u_blitter
+          * honours the mask as a colour write mask). backboardd draws this surface twice
+          * (an opaque copy, then source-over), which doubled any pixel with alpha < 1. */
+         struct pipe_surface st = { 0 };
+         st.format = dst->res->format;
+         st.u.tex.level = dl;
+         st.u.tex.first_layer = st.u.tex.last_layer = slice;
+         struct pipe_surface *surf = pipe->create_surface(pipe, dst->res, &st);
+         if (surf) {
+            union pipe_color_union black = { .f = { 0.0f, 0.0f, 0.0f, 1.0f } };
+            pipe->clear_render_target(pipe, surf, &black, 0, 0, (unsigned)w, (unsigned)h, false);
+            pipe_surface_reference(&surf, NULL);
+            o.mask = PIPE_MASK_RGB;
+         } else {
+            o.mask = PIPE_MASK_RGBA;
+         }
          o.filter = PIPE_TEX_FILTER_NEAREST;
-         o.swizzle_enable = true;
-         o.swizzle[0] = PIPE_SWIZZLE_X;
-         o.swizzle[1] = PIPE_SWIZZLE_Y;
-         o.swizzle[2] = PIPE_SWIZZLE_Z;
-         o.swizzle[3] = PIPE_SWIZZLE_1;
          pipe->blit(pipe, &o);
          return 0;
       }
