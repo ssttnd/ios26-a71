@@ -1284,13 +1284,13 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
     if (!strncmp(name, "llvm.fabs.", 10)) {
        nir_def *a = air_get_ssa(c, in->operands[1]);
        if (!a)
-@@ -1410,6 +1529,53 @@
+@@ -1410,6 +1529,55 @@
     return true;
  }
  
 +/* The image slots a texture written at a run-time mip level uses: slot base+k is bound
 + * to level k of the same texture (air_metal.c). Made once per texture, after every other
-+ * image binding, at most eight and never past the sixteen image slots the runtime has.
++ * image binding, up to fifteen and never past the sixteen image slots the runtime has.
 + */
 +#define AIR_IMAGE_SLOTS 16
 +static bool
@@ -1314,7 +1314,9 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 +      *count = info->resources[primary].level_count;
 +      return true;
 +   }
-+   unsigned n = next < AIR_IMAGE_SLOTS ? MIN2(8, AIR_IMAGE_SLOTS - next) : 0;
++   /* Mercury's VariableBlurrer pyramid is 10 levels (414x896): with eight aliases its
++    * levels 8 and 9 were written into level 7 (A71, 2026-11-23, pixelated blur). */
++   unsigned n = next < AIR_IMAGE_SLOTS ? MIN2(15, AIR_IMAGE_SLOTS - next) : 0;
 +   if (n < 2)
 +      return air_error(c, "intrinsic: no image slots left for the mip levels of texture %u",
 +                       binding);
@@ -1338,7 +1340,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1573,6 +1739,54 @@
+@@ -1573,6 +1741,54 @@
     return coord;
  }
  
@@ -1393,7 +1395,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  static bool
  texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
  {
-@@ -1584,6 +1798,48 @@
+@@ -1584,6 +1800,48 @@
     if (!strncmp(n->part[0], "get_null_", 9) && in->base.type->kind == AIR_TYPE_POINTER) {
        struct air_ptr p = { .class = AIR_PTR_NONE };
        air_set(c, &in->base, air_val_ptr(c, p));
@@ -1442,7 +1444,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
        return true;
     }
     struct air_tex_name t;
-@@ -1700,19 +1956,30 @@
+@@ -1700,19 +1958,30 @@
        nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);
        if (!coord)
           return false;
@@ -1481,7 +1483,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
                        nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                        nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                        nir_imm_int(&c->b, 0),
-@@ -1991,6 +2258,18 @@
+@@ -1991,6 +2260,18 @@
  
     if (!strcmp(n.part[0], "is_function_constant_defined"))
        return fc_defined_op(c, in);

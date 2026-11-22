@@ -1162,7 +1162,7 @@ edit('tools/mesa/air/air_intrinsics.c',
      ('/* a constant i1/i32 argument, which these intrinsics use as flags */',
       '''/* The image slots a texture written at a run-time mip level uses: slot base+k is bound
  * to level k of the same texture (air_metal.c). Made once per texture, after every other
- * image binding, at most eight and never past the sixteen image slots the runtime has.
+ * image binding, up to fifteen and never past the sixteen image slots the runtime has.
  */
 #define AIR_IMAGE_SLOTS 16
 static bool
@@ -1186,7 +1186,9 @@ image_level_slots(struct air_ctx *c, unsigned binding, unsigned *base, unsigned 
       *count = info->resources[primary].level_count;
       return true;
    }
-   unsigned n = next < AIR_IMAGE_SLOTS ? MIN2(8, AIR_IMAGE_SLOTS - next) : 0;
+   /* Mercury's VariableBlurrer pyramid is 10 levels (414x896): with eight aliases its
+    * levels 8 and 9 were written into level 7 (A71, 2026-11-23, pixelated blur). */
+   unsigned n = next < AIR_IMAGE_SLOTS ? MIN2(15, AIR_IMAGE_SLOTS - next) : 0;
    if (n < 2)
       return air_error(c, "intrinsic: no image slots left for the mip levels of texture %u",
                        binding);
