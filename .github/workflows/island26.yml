@@ -4,6 +4,10 @@ name: island26
 # built here; SpringBoard itself is patched and re-signed offline, never uploaded.
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - userspace/island26/**
+      - .github/workflows/island26.yml
 env:
   BERGAMOTA_REPO: https://github.com/ry-diffusion/Bergamota
   BERGAMOTA_SHA: 37a7a7a917fc09945ed2f7d1ae68b84d4525b4cb
