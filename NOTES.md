@@ -1326,3 +1326,11 @@ Next:
 - After the crashes the UI came back without clock and with black wallpaper (no crash loop); rebooted from the PC
   (`a71:reboot`). **Owner: iOS 18 wallpaper (fluidity.one) shows at boot with all animations, lock-screen clock present.**
   So a preselected Mercury poster can render at boot; the earlier black boot with fluidity.dynamic preselected is not explained.
+- iPhone18,3 OS image downloaded in full in the VM (8,388,608,000 bytes, AEA1, key URL wkms-public.apple.com) and decrypted
+  with `ipsw fw aea` (pure Go) to a 9,758,048,256-byte raw APFS container (NXSB). It now lives only inside
+  `~/i18/mini2.ipsw` in the VM (stored zip: BuildManifest without cryptex/exclave entries, Restore.plist, the raw DMG).
+  `ipsw extract --files` on Linux needs apfs-fuse (not installed); `sudo apt-get install` and `apt-get download` +
+  building apfs-fuse 66b86bd were both refused by the session safety check. Wallpapers NOT extracted yet.
+- **C: is nearly full: 2.4 GB free.** VM overlay `research/root-vm/root-build.qcow2` grew to ~47-49 GB (deleted AEA/DMG copies
+  inside the guest do not shrink it). Do not start large writes. Options: delete/recreate the VM overlay after the
+  extraction (loses ~/w air2nir build), or free space elsewhere; backups stay.
