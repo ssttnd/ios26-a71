@@ -18,6 +18,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import <os/log.h>
+#import <sys/sysctl.h>
+#import <signal.h>
 
 static os_log_t ILog;
 // os_log does not reach the USB console without sweetdtlog=SpringBoard: every line also goes to
@@ -144,6 +146,35 @@ static void IShowPill(int attempt) {
          IPill.windowLevel, NSStringFromClass(aperture.class));
 }
 
+// A PosterBoard that outlived the previous SpringBoard (respring, or backboardd crash) never gives the new one its
+// wallpaper again (Bergamota NOTES, boot 46, same on iOS 26 here 2026-11-22): SIGTERM a PosterBoard whose start time
+// is before ours; SpringBoard launches a fresh one. Preference RestartStalePosterBoard (default YES).
+static void IRestartStalePosterBoard(void) {
+    struct kinfo_proc self_info;
+    size_t len = sizeof(self_info);
+    int mib_self[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    if (sysctl(mib_self, 4, &self_info, &len, NULL, 0) != 0) return;
+    struct timeval me = self_info.kp_proc.p_starttime;
+    int mib[3] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL };
+    size_t size = 0;
+    if (sysctl(mib, 3, NULL, &size, NULL, 0) != 0 || !size) return;
+    size += size / 4;
+    struct kinfo_proc *list = malloc(size);
+    if (!list) return;
+    if (sysctl(mib, 3, list, &size, NULL, 0) == 0) {
+        for (size_t i = 0; i < size / sizeof(*list); i++) {
+            struct extern_proc *p = &list[i].kp_proc;
+            if (strncmp(p->p_comm, "PosterBoard", sizeof(p->p_comm)) != 0) continue;
+            struct timeval t = p->p_starttime;
+            BOOL older = t.tv_sec < me.tv_sec || (t.tv_sec == me.tv_sec && t.tv_usec < me.tv_usec);
+            ILOG("PosterBoard %d started %ld, SpringBoard %d started %ld: %s", p->p_pid, (long)t.tv_sec, getpid(),
+                 (long)me.tv_sec, older ? "stale, SIGTERM" : "fresh");
+            if (older) kill(p->p_pid, SIGTERM);
+        }
+    }
+    free(list);
+}
+
 __attribute__((constructor)) static void IInit(void) {
     @autoreleasepool {
         ILog = os_log_create("org.a71.island", "tweak");
@@ -159,6 +190,7 @@ __attribute__((constructor)) static void IInit(void) {
         IIslandTop = INum(p, @"IslandTop", IIslandTop);
         IAvoidW = INum(p, @"StatusBarAvoidWidth", IAvoidW);
         IHomeType = (long)INum(p, @"HomeScreenType", IHomeType);
+        if (!p[@"RestartStalePosterBoard"] || [p[@"RestartStalePosterBoard"] boolValue]) IRestartStalePosterBoard();
         if (p[@"AlwaysPill"]) IAlwaysPill = [p[@"AlwaysPill"] boolValue];
         if (IAlwaysPill) {
             [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification object:nil
