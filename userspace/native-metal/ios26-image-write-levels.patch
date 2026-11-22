@@ -1878,6 +1878,17 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
+@@ -2057,8 +2275,8 @@
+        */
+       .unnormalized_coords = !st->normalized_coordinates,
+       .max_anisotropy = st->max_anisotropy > 1 ? st->max_anisotropy : 0,
+-      .min_lod = st->lod_min,
+-      .max_lod = st->lod_max,
++      .min_lod = CLAMP(st->lod_min, 0.0f, 15.0f),
++      .max_lod = CLAMP(st->lod_max, 0.0f, 15.0f),
+    };
+    /* transparent black, which is both Metal's default border colour and what
+     * clamp_to_zero reads by definition. Written out rather than left to the zeroing
 @@ -2128,9 +2346,12 @@
      * it (docs/air.md 3.3).
      */

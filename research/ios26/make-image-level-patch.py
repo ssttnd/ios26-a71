@@ -1408,6 +1408,14 @@ edit('tools/mesa/air/air_metal.c',
      # and fd6 declines MAX2(1, 4) != MAX2(1, 0): the resolve was dropped in silence, and the
      # 828x1792 private resolve stage read 100% zero on the A71 (2026-11-22). Bergamota's
      # A630 port found the same and the wallpaper appeared once storage samples were set.
+     # A6XX_TEX_SAMP_1_MIN/MAX_LOD are unsigned 4.8 fixed point (12 bits): Metal's default
+     # lodMaxClamp (FLT_MAX, or 65504 in a constexpr sampler word) packs as 0xFFE000 and
+     # keeps the low bits, 0, so every sample clamped to level 0. Mercury's blur pyramid was
+     # built from level 0 at every level and came out pixelated (A71, 2026-11-23); the same
+     # bug was found on iOS 16 (ios-a71 effefe8, max_lod 16.0 wrapped to 0).
+     ('      .min_lod = st->lod_min,\n      .max_lod = st->lod_max,\n',
+      '      .min_lod = CLAMP(st->lod_min, 0.0f, 15.0f),\n'
+      '      .max_lod = CLAMP(st->lod_max, 0.0f, 15.0f),\n'),
      ('.array_size = array_size, .last_level = mips - 1, .nr_samples = query_samples,\n',
       '.array_size = array_size, .last_level = mips - 1, .nr_samples = query_samples,\n'
       '      .nr_storage_samples = query_samples,\n'),
