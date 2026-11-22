@@ -1,0 +1,18 @@
+PosterBoard gets a Metal device (extra GPU slot), like MercuryPosterExtension in 2119.
+
+PosterBoard aborted with NSInvalidArgumentException "attempt to insert nil object from objects[1]"
+right after "native A618 backend unavailable: ... no msm device to open" and creating a 276x597
+snapshot surface (2026-11-22, every wallpaper editor open and every new poster configuration).
+SpringBoard logs the same refusal but does not abort; it stays off the list so the three extra
+slots remain for the poster processes.
+
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -58,5 +58,5 @@
+ bool extra_client(const char *name)
+ {
+- static const char *const names[]={"AegirPoster", "MercuryPosterExtension"};
++ static const char *const names[]={"AegirPoster", "MercuryPosterExtension", "PosterBoard"};
+  for(const char *n:names)if(!strcmp(name,n))return true;
+  return false;
