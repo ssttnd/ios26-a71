@@ -1416,6 +1416,50 @@ edit('tools/mesa/air/air_metal.c',
      ('      .min_lod = st->lod_min,\n      .max_lod = st->lod_max,\n',
       '      .min_lod = CLAMP(st->lod_min, 0.0f, 15.0f),\n'
       '      .max_lod = CLAMP(st->lod_max, 0.0f, 15.0f),\n'),
+     # MTLTextureSwizzleChannels. CoreAnimation views an opaque layer's IOSurface with
+     # alpha -> one; the swizzle was dropped, and backboardd's source-over pass over
+     # Mercury's wallpaper added it to itself (twice as bright, A71 2026-11-23).
+     ('   bool shader_read, shader_write;\n};\n',
+      '   bool shader_read, shader_write;\n'
+      '   unsigned char mtl_swizzle[4];    /* MTLTextureSwizzle r, g, b, a; all 0 = none set */\n'
+      '};\n'),
+     ('            t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);\n',
+      '''            if (t->mtl_swizzle[0] | t->mtl_swizzle[1] | t->mtl_swizzle[2] | t->mtl_swizzle[3]) {
+               /* MTLTextureSwizzle: 0 zero, 1 one, 2 red .. 5 alpha, composed over the
+                * format's own default swizzle */
+               const unsigned char base[4] = { tmpl.swizzle_r, tmpl.swizzle_g, tmpl.swizzle_b,
+                                               tmpl.swizzle_a };
+               unsigned char out[4];
+               for (unsigned k = 0; k < 4; k++) {
+                  const unsigned m = t->mtl_swizzle[k];
+                  out[k] = m == 0 ? PIPE_SWIZZLE_0 : m == 1 ? PIPE_SWIZZLE_1 :
+                           m <= 5 ? base[m - 2] : base[k];
+               }
+               tmpl.swizzle_r = out[0];
+               tmpl.swizzle_g = out[1];
+               tmpl.swizzle_b = out[2];
+               tmpl.swizzle_a = out[3];
+            }
+            t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);
+'''),
+     ('int\nrwa_texture_write(struct rwa_texture *texture, unsigned level, unsigned layer,',
+      '''/* A Metal texture swizzle (newTextureViewWithPixelFormat:...swizzle:, or a
+ * descriptor's swizzle): kept with the texture and applied to its sampler view. */
+int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);
+int
+rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4])
+{
+   if (!texture)
+      return -1;
+   const bool identity = swizzle[0] == 2 && swizzle[1] == 3 && swizzle[2] == 4 && swizzle[3] == 5;
+   for (unsigned k = 0; k < 4; k++)
+      texture->mtl_swizzle[k] = identity ? 0 : swizzle[k];
+   pipe_sampler_view_reference(&texture->view, NULL);
+   return 0;
+}
+
+int
+rwa_texture_write(struct rwa_texture *texture, unsigned level, unsigned layer,'''),
      ('.array_size = array_size, .last_level = mips - 1, .nr_samples = query_samples,\n',
       '.array_size = array_size, .last_level = mips - 1, .nr_samples = query_samples,\n'
       '      .nr_storage_samples = query_samples,\n'),
@@ -2118,6 +2162,44 @@ edit('tools/mesa/air/air_run.c',
    for (unsigned i = 0; i < info.num_resources; i++) {'''))
 
 edit('userland/src/redwoodmetal.m',
+     # MTLTextureSwizzleChannels on views and on IOSurface descriptors (air_metal.c keeps it
+     # with the texture). A view that would be the same object is copied by re-import only
+     # for IOSurfaces; for others the swizzle is logged and dropped as before.
+     ('{ NATIVE_OBJECT_LOCK; \n\t(void)swizzle;\n\treturn [self newTextureViewWithPixelFormat:format textureType:type levels:levels\n\t\t\t\t\t    slices:slices];\n}\n',
+      '''{ NATIVE_OBJECT_LOCK;
+\tint rwa_texture_set_swizzle(struct rwa_texture *, const unsigned char [4]);
+\tid v = [self newTextureViewWithPixelFormat:format textureType:type levels:levels slices:slices];
+\tconst unsigned char sw[4] = { (unsigned char)swizzle.red, (unsigned char)swizzle.green,
+\t                             (unsigned char)swizzle.blue, (unsigned char)swizzle.alpha };
+\tconst bool identity = sw[0] == 2 && sw[1] == 3 && sw[2] == 4 && sw[3] == 5;
+\tstatic unsigned told;
+\tif (!identity && told++ < 16)
+\t\trw_print("texture view swizzle %u%u%u%u format %lu of shape format %u surface %p -> %s\\n",
+\t\t         sw[0], sw[1], sw[2], sw[3], (unsigned long)format, _shape.pixel_format, _nativeSurface,
+\t\t         v == nil ? "nil" : v == self ? "same object, dropped" : "applied");
+\tif (!identity && v != nil && v != self)
+\t\trwa_texture_set_swizzle([v mesaTexture], sw);
+\treturn v;
+}
+'''),
+     ('    [result nativeAttachSurface:s];return result;\n}\n',
+      '''    [result nativeAttachSurface:s];
+\tint rwa_texture_set_swizzle(struct rwa_texture *, const unsigned char [4]);
+\tif ([d respondsToSelector:@selector(swizzle)]) {
+\t\tMTLTextureSwizzleChannels c = [d swizzle];
+\t\tconst unsigned char sw[4] = { (unsigned char)c.red, (unsigned char)c.green,
+\t\t                             (unsigned char)c.blue, (unsigned char)c.alpha };
+\t\tif (!(sw[0] == 2 && sw[1] == 3 && sw[2] == 4 && sw[3] == 5)) {
+\t\t\tstatic unsigned told;
+\t\t\tif (told++ < 16)
+\t\t\t\trw_print("IOSurface texture swizzle %u%u%u%u format %u %ux%u\\n", sw[0], sw[1], sw[2],
+\t\t\t\t         sw[3], shape.pixel_format, shape.width, shape.height);
+\t\t\trwa_texture_set_swizzle(texture, sw);
+\t\t}
+\t}
+\treturn result;
+}
+'''),
      ('@implementation SweetNativeMetalDevice\n',
       '''@interface SweetNativeNoCopyRelease : NSObject {
 	void (^_deallocator)(void *, NSUInteger);
@@ -2903,7 +2985,7 @@ native_drawlog_texstat(unsigned seq, id t)
 		return;
 	}
 	unsigned levels = (unsigned)[t mipmapLevelCount];
-	levels = levels == 0 ? 1 : levels > 4 ? 4 : levels;
+	levels = levels == 0 ? 1 : levels > 10 ? 10 : levels;
 	for (unsigned l = 0; l < levels; l++) {
 		unsigned w = (unsigned)[t width] >> l, h = (unsigned)[t height] >> l;
 		w = w ? w : 1;
@@ -2941,6 +3023,13 @@ native_drawlog_texstat(unsigned seq, id t)
 	        tx[0] ? tx : "-");
 	if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
 		native_drawlog_texstat(seq, textures[3]);
+	/* Mercury's glass arc samples its blur pyramid (texture 7, blurredBackground) at a
+	 * run-time LOD: every level, to tell a stale or flat pyramid from a wrong arc. */
+	else if (!strcmp(nm.ffn, "space::rasterizeArcFragment") && ntextures > 7 && textures[7] != nil) {
+		static unsigned arc_told;
+		if (arc_told++ < 6)
+			native_drawlog_texstat(seq, textures[7]);
+	}
 	/* A full-screen image layer (the wallpaper a poster extension rendered into its own
 	 * IOSurface): read what the compositor is about to sample, so a black wallpaper can be
 	 * told apart from one that is never composited. */
