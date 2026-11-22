@@ -1404,3 +1404,9 @@ sensor-region frame for a 414x896 screen (SystemApertureUI `_frameForSensorRegio
 likely from the device tree we generate); (5) PosterBoard/backboardd OGL-path crashes on live poster switches.
 VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the PC: research/ios26/iphone18-3/094-96558-090.apfs
 (9.76 GB, 7-Zip reads it). USB logger running into logs/usb-ios26-1122.txt.
+- **Flip result (owner):** with /var/local/sweet-mtl-cull = flip the whole Marble picture is sometimes correct (both halves),
+  but it flickers: some frames lose parts (black). So the winding mapping was inverted at least for these draws -> next agent:
+  make `front_ccw = winding ? 1 : 0` the default in the generator, then chase the flicker separately (candidates, unverified:
+  frames composited before the GPU write of the IOSurface retires (see "publication without GPU drain" options in the
+  SweetNativeMetal banner: /var/local/sweet-native-strict-publish, sweet-native-always-clean), or rasterizer variant reuse).
+  Flip file left installed.
