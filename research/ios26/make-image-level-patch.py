@@ -1216,6 +1216,17 @@ image_level_slots(struct air_ctx *c, unsigned binding, unsigned *base, unsigned 
          slot = nir_iadd_imm(&c->b, level, base);
       }
       nir_image_store(&c->b, slot,'''),
+     ('''      nir_def *value = air_get_ssa(c, in->operands[arg++]);
+      if (!value)
+         return false;
+      if (!tex.is_image)''',
+      '''      const struct air_value *stored = in->operands[arg++];
+      nir_def *value = air_get_ssa(c, stored);
+      if (!value)
+         return false;
+      /* A texture write returns void; its operand carries the texel type. */
+      dest_type = tex_dest_type(c, stored->type, n);
+      if (!tex.is_image)'''),
      # A texture or sampler chosen at run time (a pointer phi between them, Mercury), and
      # air.is_null_texture_*: the operation is translated once per place the pointer can
      # name and the results selected; a null side gives the other side's answer, which

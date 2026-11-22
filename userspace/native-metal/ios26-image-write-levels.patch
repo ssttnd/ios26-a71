@@ -1403,8 +1403,13 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
        return true;
     }
     struct air_tex_name t;
-@@ -1703,16 +1953,24 @@
-       nir_def *value = air_get_ssa(c, in->operands[arg++]);
+@@ -1700,19 +1950,30 @@
+       nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);
+       if (!coord)
+          return false;
+-      nir_def *value = air_get_ssa(c, in->operands[arg++]);
++      const struct air_value *stored = in->operands[arg++];
++      nir_def *value = air_get_ssa(c, stored);
        if (!value)
           return false;
 -      uint64_t lod;
@@ -1413,6 +1418,8 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 -      if (lod != 0)
 -         return air_error(c, "intrinsic: air.%s to mip level %u (only 0 is handled)",
 -                          n->part[0], (unsigned)lod);
++      /* A texture write returns void; its operand carries the texel type. */
++      dest_type = tex_dest_type(c, stored->type, n);
        if (!tex.is_image)
           return air_error(c, "intrinsic: air.%s to a texture the interface says is not "
                               "written", n->part[0]);
@@ -1435,7 +1442,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
                        nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                        nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                        nir_imm_int(&c->b, 0),
-@@ -1991,6 +2249,18 @@
+@@ -1991,6 +2252,18 @@
  
     if (!strcmp(n.part[0], "is_function_constant_defined"))
        return fc_defined_op(c, in);
