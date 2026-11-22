@@ -1334,3 +1334,29 @@ Next:
 - **C: is nearly full: 2.4 GB free.** VM overlay `research/root-vm/root-build.qcow2` grew to ~47-49 GB (deleted AEA/DMG copies
   inside the guest do not shrink it). Do not start large writes. Options: delete/recreate the VM overlay after the
   extraction (loses ~/w air2nir build), or free space elsewhere; backups stay.
+
+## 2026-11-22 evening — Marble (iPhone 17 wallpapers), PosterBoard GPU fix, Dynamic Island attempts
+
+- iPhone18,3 26.6.2 OS image: decrypted container streamed out of the VM to `research/ios26/iphone18-3/094-96558-090.apfs`
+  (9,758,048,256 bytes, ignored); **7-Zip 26.01 on Windows reads APFS** (`7z x img "Library/Wallpaper/*" -r`). New
+  collection vs the iPhone 11 build: `Marble-V57.wallpaperCollection` (id FF4DCD8F..., already listed in our
+  Collections~iphone.plist): 7920 Lavender, 7930 Sage, 7940 Mist Blue, 7950 White, 7960 Black; type ParameterizedCA
+  (main.caml + HEIC layers, same path as the working iOS 17 wallpaper), `productTypes: ['iPhone18,3']`.
+- `build/a71-ios26-marble.payload` (`756a8992...`, 82/82): research/ios26/iphone18-3/marble-a71 (Apple files, only the five
+  Wallpaper.plist productTypes += iPhone12,1) to /Library/Wallpaper/Collections/Marble-V57.wallpaperCollection; CollectionsPoster
+  ProviderInfo.plist renamed `.a71-backup-1122` (forces descriptor refresh: it is keyed by LS identity + build). Descriptor
+  appeared as 7920 (PosterBoard names a collection after order[0]). `a71-ios26-marble-mistblue.payload` (`b9936547...`):
+  WallpaperCollection.plist order [7940,...], previewWallpaperMatchesDeviceTraits false, ProviderInfo renamed `.a71-backup-1122b`
+  -> descriptor 7940.
+- Selecting it failed: **PosterBoard aborts (nil object in dictionary) right after "SweetNativeMetal[PosterBoard]: native A618
+  backend unavailable ... no msm device to open"** while making the 276x597 snapshot. The kernel GPU allowlist had only
+  backboardd, AegirPoster, MercuryPosterExtension. **xnu 2124** (`591d715`) adds PosterBoard (SpringBoard is refused too but does
+  not abort; kept off to save the 3 extra slots). Kernel CI `45038208172` building. Owner's own Settings change selected
+  space.dynamic (black).
+- Dynamic Island: MobileGestalt keys are base64(md5("MGCopyAnswer"+name)) (checked: arm64e -> li+w2foswFu0srn5UxdOug).
+  The 11-19 test used a plain key (useless). Real key DeviceSupportsDynamicIsland = `YlEtTtHlNesRBMal1CqRaA`; artwork subtype
+  lives in `oPeik/9e8lQWMszEjbPzng`.ArtworkDeviceSubType (1792). Phone cache unchanged since 11-19 (research/mg/1122/).
+  Step 1 (`a71-ios26-island-1122.payload`, key only): persisted, no island. Step 2 (`island2556`, + subtype 2556): no island,
+  red status bar "rdar:45025538", grey placeholder icons (Settings, Wallet, Health, Maps), widgets "Waiting...". **Restored the
+  original cache** (`a71-ios26-island-1122-restore.payload` `5cd50f06...`, 7/7). Original also at /var/local/mg-backup/
+  MobileGestalt.plist.before-island-1122.
