@@ -1420,6 +1420,16 @@ edit('tools/mesa/air/air_metal.c',
      # and Mercury's VariableBlurrer pyramid (BGRA8Unorm_sRGB, 414x896) read back levels
      # 2-8 as near-white with alpha 0 (A71 2026-11-23); the glass element in the
      # wallpaper sampled them. Bound as the linear twin, as Mesa's own frontends do.
+     # ...and an sRGB texture a shader writes is stored linear: the image store cannot encode,
+     # so with sRGB storage every pyramid level was decoded once more than written and the
+     # pyramid darkened to black by level 6 (A71 2026-11-23). Linear storage keeps rendering
+     # (no encode), resolves from sRGB (blit decodes), image stores and sampling (no decode)
+     # all in linear values. Only for an explicit ShaderWrite usage and never an IOSurface, so
+     # CPU uploads of sRGB-encoded images keep their sRGB resource.
+     ('      .target = target, .format = fmt->pipe,\n',
+      '      .target = target,\n'
+      '      .format = (!import && (shape->usage & RWA_USAGE_SHADER_WRITE) &&\n'
+      '                 util_format_is_srgb(fmt->pipe)) ? util_format_linear(fmt->pipe) : fmt->pipe,\n'),
      ('            .resource = t->res,\n            .format = t->res->format,\n',
       '            .resource = t->res,\n'
       '            .format = util_format_linear(t->res->format),\n'),
