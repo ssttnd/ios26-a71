@@ -1781,7 +1781,7 @@ rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned l
             union pipe_color_union black = { .f = { 0.0f, 0.0f, 0.0f, 1.0f } };
             pipe->clear_render_target(pipe, surf, &black, 0, 0, (unsigned)w, (unsigned)h, false);
             pipe_surface_reference(&surf, NULL);
-            o.mask = PIPE_MASK_RGB;
+            o.mask = PIPE_MASK_R | PIPE_MASK_G | PIPE_MASK_B;
          } else {
             o.mask = PIPE_MASK_RGBA;
          }
