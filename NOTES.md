@@ -1323,3 +1323,6 @@ Next:
   BuildManifest/Restore.plist; ipsw 3.1.749 linux_x86_64 in ~/ipswtool (sha256 5d704501... matches release checksums.txt).
   Plan: `ipsw fw aea` (key from Apple), then `ipsw extract --files --pattern` (go APFS reader; `sudo apt` for apfs-fuse was
   refused by the session safety check). Remote zip helper (scratch): rzip.py.
+- After the crashes the UI came back without clock and with black wallpaper (no crash loop); rebooted from the PC
+  (`a71:reboot`). **Owner: iOS 18 wallpaper (fluidity.one) shows at boot with all animations, lock-screen clock present.**
+  So a preselected Mercury poster can render at boot; the earlier black boot with fluidity.dynamic preselected is not explained.
