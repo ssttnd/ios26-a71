@@ -1310,3 +1310,16 @@ Next:
   The only asset type string in the cache is com.apple.MobileAsset.Wallpaper. DefaultWallpapers~iphone.plist in 23G90:
   default 7565 (iOS 17), iPhone15,2/15,3 -> 7600-7650 (collection 1E9A5729, files absent). Conclusion (inference): the iOS 26
   sphere wallpaper ships only in the firmware of newer iPhones, not in the iPhone12,1 IPSW nor as a download.
+- Fresh boot with fluidity.dynamic preselected: black (owner). Mercury drew without errors. Test package
+  `build/a71-ios26-poster-fluidity-one.payload` (poster.want = fluidity.one, `66997e21...`): at ~120 s the job switched live to
+  `fluidity.one(3B6CAB4C...)`. Owner: wallpaper turned WHITE, then a hang; leaving Settings restarted SpringBoard.
+- Same boot, observed: PosterBoard[406] (editor opened, PREditor scenes) aborted with NSInvalidArgumentException
+  "-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil object from objects[1]" right after
+  `PUIPosterSnapshotter ... Snapshot acquired runtime assertion` (the long-standing PosterBoard sig 6). SBRendererService
+  aborted twice (no message). backboardd[66] aborted with the old `push_surface ... ogl-context.cpp line 1186` assert (the
+  CoreAnimation OpenGL-path renderer; guess: a snapshot/remote renderer still on the OGL path), which restarted SpringBoard.
+- iOS 26 wallpaper hunt (owner approved downloads): iPhone18,3 IPSW 26.6.2 23G90 (same build), OS image
+  `094-96558-090.dmg.aea` (8,388,608,000 bytes, IPSW range 2591079680-10979687679) downloading inside the VM to ~/i18 with
+  BuildManifest/Restore.plist; ipsw 3.1.749 linux_x86_64 in ~/ipswtool (sha256 5d704501... matches release checksums.txt).
+  Plan: `ipsw fw aea` (key from Apple), then `ipsw extract --files --pattern` (go APFS reader; `sudo apt` for apfs-fuse was
+  refused by the session safety check). Remote zip helper (scratch): rzip.py.
