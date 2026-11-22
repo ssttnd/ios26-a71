@@ -1271,3 +1271,24 @@ Next:
 - `2b1af7f`: trace adds sample count, resolveTexture (size, format, level, IOSurface) per render pass and a line per
   resolve blit. Metal CI `45031476531` building. Plan for the same install: drawlog-every -> "10 800 backboardd" so
   backboardd's TEXSTAT reads the full-screen wallpaper layer it composites.
+
+## 2026-11-22 ~19:30 — FIRST WORKING iOS 26 WALLPAPER (Mercury fluidity.dynamic on NativeMetal)
+
+- Resolve trace (CI `45031476531`, 2b1af7f, package `build/a71-ios26-metal-resolvetrace.payload` `1f694eeb...`, also
+  drawlog-every -> "10 800 backboardd"): Space renders 4x MSAA, resolves every frame into rotating drawables (IOSurfaces);
+  backboardd's traced draws never sampled a format-81 828x1792 texture (only its own format-80 buffers). Lock snapshot
+  read from TWRP was identical to yesterday's zero FILL (but the reader skips the journal: not conclusive).
+- Owner wants the stock iOS 26 blue/green wallpaper, not the Earth: all three Mercury configs on the phone were
+  `space.dynamic`; the phone's `/var/local/poster.sh` was the OLD recipe (GradientPoster darkBlue, failing -2220). Installed
+  the repo `userspace/wallpaper26/poster.sh` (default `com.apple.MercuryPoster fluidity.dynamic`) with
+  `build/a71-ios26-poster-fluidity.payload` VERIFY OK `67c2325a...`, 3/3. Old phone copy: `research/wall/1122/poster.sh.phone`.
+- **Observed:** PosterBoard created `fluidity.dynamic(BC120642-...)` and made it the active LockScreen poster; Mercury compiled
+  `fluidity::sdf*`/`fluidity::vertex/fragmentShader`, no driver failures. **Owner photo: the home screen shows the iOS 26
+  fluidity wallpaper (curved dark blue / light blue / cream shapes, smooth gradients).** First GPU-rendered wallpaper.
+  It is the Dynamic variant (colours change); owner's reference picture is blue/green: likely one of the static
+  descriptors `fluidity.one`..`four` (mapping unknown). Select one by `text:/var/local/poster.want=com.apple.MercuryPoster fluidity.N`.
+- Fixes that made it possible today: 79c3dfb/64e5f1c (cull/winding/fill honoured instead of silently failing the command
+  buffer), 6fd5fdb (inline bicubic as linear), 17b7296/2b1af7f (per-process trace), ddd07f1 (HFS --ls, overflow extents).
+- Phone state: boot `build/a71-ios26-2123-pbtrace.img` (`82d6ca2f...`, dtlog Mercury+PosterBoard); Metal CI 45031476531
+  bundle; `/var/local/sweet-mtl-trace` = "MercuryPosterExtension PosterBoard"; drawlog-every "10 800 backboardd".
+  Open: PosterBoard aborts (sig 6) when the editor/preview opens (not yet captured with its dtlog); Space poster still black.
