@@ -3,6 +3,7 @@
 
   a71-hfs-get.py ADB_EXE /path/on/root [OUT]       copy one file (OUT default: its name)
   a71-hfs-get.py ADB_EXE --stat /path [/path...]   print type and size
+  a71-hfs-get.py ADB_EXE --ls /dir [/dir...]       list a folder (name, type, size)
 
 Read only: every access is `dd if=/dev/block/by-name/userdata` through `adb exec-out`. The journal is
 not replayed (tools/hfsread.py), so a file changed shortly before a forced restart may read as its
@@ -81,6 +82,15 @@ def main():
     if sys.argv[2] == "--stat":
         for p in sys.argv[3:]:
             print(p, h.info(p))
+        return
+    if sys.argv[2] == "--ls":
+        for p in sys.argv[3:]:
+            i = h.info(p)
+            if not i or i["type"] != "dir":
+                print(p, i)
+                continue
+            for name, kind, cnid, size in h.listdir(i["cnid"]):
+                print(f"{kind:4} {size:>12} {name}")
         return
     path = sys.argv[2]
     info = h.info(path)

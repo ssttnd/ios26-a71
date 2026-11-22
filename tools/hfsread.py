@@ -88,6 +88,41 @@ class HFS:
                 return None
             i = best
 
+    def listdir(self, cnid):
+        """[(name, 'dir'|'file', cnid, size)] for the children of folder `cnid`. Descends to the
+        leaf holding the folder's thread record, key (cnid, ""), then follows the leaf chain."""
+        i = self.root_node
+        while True:
+            kind, cnt, offs, d = self.node(i)
+            if kind == 0xff:
+                break
+            best = None
+            for k in range(cnt):
+                kl, p, n = self.key(d, offs[k])
+                if (p, n.encode('utf-16-be')) <= (cnid, b''):
+                    best = struct.unpack('>I', d[offs[k] + 2 + kl:offs[k] + 6 + kl])[0]
+            if best is None:
+                best = struct.unpack('>I', d[offs[0] + 2 + self.key(d, offs[0])[0]:offs[0] + 6 + self.key(d, offs[0])[0]])[0]
+            i = best
+        out = []
+        while i:
+            kind, cnt, offs, d = self.node(i)
+            for k in range(cnt):
+                kl, p, n = self.key(d, offs[k])
+                if p > cnid:
+                    return out
+                if p < cnid:
+                    continue
+                rec = d[offs[k] + 2 + kl:offs[k] + 2 + kl + 248]
+                rt = struct.unpack('>h', rec[:2])[0]
+                if rt == 1:
+                    out.append((n, 'dir', struct.unpack('>I', rec[8:12])[0], 0))
+                elif rt == 2:
+                    out.append((n, 'file', struct.unpack('>I', rec[8:12])[0],
+                                struct.unpack('>Q', rec[88:96])[0]))
+            i = struct.unpack('>I', d[0:4])[0]   # fLink
+        return out
+
     def resolve(self, path):
         cnid = 2
         rec = None
@@ -111,9 +146,37 @@ class HFS:
         return {'type': 'file', 'cnid': struct.unpack('>I', rec[8:12])[0], 'size': size,
                 'ext': self.fork_extents(fork), 'flags': struct.unpack('>H', rec[2:4])[0]}
 
+    def overflow_extents(self, cnid, have):
+        """Data-fork extents past the first eight, from the extents overflow B-tree (all leaves
+        walked; keys are forkType 0, fileID, startBlock)."""
+        ext = self.fork_extents(self.extfork)
+        hdr = self.fork_read(ext, 0, 512)
+        ns = struct.unpack('>H', hdr[14 + 18:14 + 20])[0]
+        first = struct.unpack('>I', hdr[14 + 10:14 + 14])[0]   # firstLeafNode
+        found = []
+        i = first
+        while i:
+            d = self.fork_read(ext, i * ns, ns)
+            cnt = struct.unpack('>H', d[10:12])[0]
+            for k in range(cnt):
+                o = struct.unpack('>H', d[ns - 2 * (k + 1):ns - 2 * k])[0]
+                kl = struct.unpack('>H', d[o:o + 2])[0]
+                fork_type, fid, start = d[o + 2], struct.unpack('>I', d[o + 4:o + 8])[0], struct.unpack('>I', d[o + 8:o + 12])[0]
+                if fork_type == 0 and fid == cnid:
+                    r = o + 2 + kl
+                    found.append((start, [struct.unpack('>II', d[r + j * 8:r + j * 8 + 8]) for j in range(8)]))
+            i = struct.unpack('>I', d[0:4])[0]
+        out = list(have)
+        for _, recs in sorted(found):
+            out += recs
+        return out
+
     def readfile(self, path):
         i = self.info(path)
-        return self.fork_read(i['ext'], 0, i['size'])
+        exts = i['ext']
+        if sum(c for _, c in exts) * self.bs < i['size']:
+            exts = self.overflow_extents(i['cnid'], exts)
+        return self.fork_read(exts, 0, i['size'])
 
 
 if __name__ == '__main__':
