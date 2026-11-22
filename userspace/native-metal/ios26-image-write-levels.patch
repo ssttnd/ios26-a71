@@ -2350,7 +2350,25 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[vertexBuffers[i] release];[buffers[i] release];[textures[i] release];[samplers[i] release];}
      [super dealloc];
  }
-@@ -3472,6 +3697,200 @@
+@@ -3296,6 +3521,17 @@
+ 
+ - (id)commandBufferWithUnretainedReferences
+ {
++	return [self commandBuffer];
++}
++
++- (id)commandBufferWithDescriptor:(id)descriptor
++{
++	static unsigned calls;
++	unsigned n = __atomic_add_fetch(&calls, 1, __ATOMIC_RELAXED);
++	if (n <= 3 || (n & 1023) == 0)
++		rw_print("commandBufferWithDescriptor: call %u answered with an ordinary command buffer "
++		         "(descriptor %p: retained references and error options are not separate here)\n",
++		         n, descriptor);
+ 	return [self commandBuffer];
+ }
+ 
+@@ -3472,6 +3708,200 @@
  	RW_CB_ERROR        = 5,
  };
  
@@ -2551,7 +2569,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  @implementation SweetNativeMetalCommandBuffer {
  	SweetNativeMetalCommandQueue *_queue;
  	NSMutableArray *_work;
-@@ -3613,7 +4032,11 @@
+@@ -3613,7 +4043,11 @@
  /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
   * absent, for the reason the device's own 44 were answered: a missing selector aborts the
   * caller, and these are the four that were still missing. */
@@ -2564,7 +2582,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  - (id)resourceStateCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (id)accelerationStructureCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (void)encodeSignalEvent:(id)event value:(uint64_t)value { NATIVE_OBJECT_LOCK;  (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }
-@@ -3651,6 +4074,10 @@
+@@ -3651,6 +4085,10 @@
          [self failWith:why];[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;
      }
  	for (SweetNativeMetalWork *work in _work) {
@@ -2575,7 +2593,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          if(work->nativeBarrier) {
              if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
              continue;
-@@ -3906,6 +4333,7 @@
+@@ -3906,6 +4344,7 @@
  		return NO;
  	}
  
@@ -2583,7 +2601,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	const unsigned dl = native_drawlog_next();
  	{
  		if (dl)
-@@ -4140,6 +4568,8 @@
+@@ -4140,6 +4579,8 @@
  	unsigned _vertexBufferCount, _fragmentBufferCount;
  	unsigned _fragmentTextureCount, _fragmentSamplerCount;
  	BOOL _complained;
@@ -2592,7 +2610,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (instancetype)initWithRedwoodCommandBuffer:(SweetNativeMetalCommandBuffer *)commandBuffer
-@@ -4176,7 +4606,15 @@
+@@ -4176,7 +4617,15 @@
  		 */
  		NSUInteger store = [attachment storeAction];
  
@@ -2609,7 +2627,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		    store == MTLStoreActionStoreAndMultisampleResolve ||
  		    [attachment resolveTexture] != nil) {
  			rw_print("colour attachment %u asks for a multisample "
-@@ -5457,6 +5895,23 @@
+@@ -5457,6 +5906,23 @@
          [_commandBuffer recordWork:work];[work release];
          _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
      }
@@ -2633,7 +2651,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      [super endEncoding];
  }
  
-@@ -5622,9 +6077,20 @@
+@@ -5622,9 +6088,20 @@
  { NATIVE_OBJECT_LOCK; 
  	MTLSize groups;
  

@@ -2375,7 +2375,30 @@ static NSUInteger sweet_heap_texture_bytes(MTLTextureDescriptor *d)
      ('\t(void)length; (void)options;\n\treturn (MTLSizeAndAlign){ 0, 0 };\n',
       '\t(void)options;\n\treturn (MTLSizeAndAlign){ (length + 255) & ~(NSUInteger)255, 256 };\n'),
      ('\t(void)descriptor;\n\treturn (MTLSizeAndAlign){ 0, 0 };\n',
-      '\treturn (MTLSizeAndAlign){ sweet_heap_texture_bytes(descriptor), 0x10000 };\n'))
+      '\treturn (MTLSizeAndAlign){ sweet_heap_texture_bytes(descriptor), 0x10000 };\n'),
+     # -[MTLCommandQueue commandBufferWithDescriptor:] (Swift makeCommandBuffer(descriptor:)).
+     # This queue never had it, so the call went to _MTLCommandQueue's own method, which the
+     # "unimplemented" log cannot see. Mercury's Space poster calls it (selector in its binary),
+     # takes a drawable every frame and never committed a command buffer for one: guess, not
+     # disassembled, that the base method answers nil like _MTLDevice's command-queue stub.
+     # The descriptor's retainedReferences / errorOptions / logState change nothing here.
+     ('- (id)commandBufferWithUnretainedReferences\n{\n\treturn [self commandBuffer];\n}\n',
+      r'''- (id)commandBufferWithUnretainedReferences
+{
+	return [self commandBuffer];
+}
+
+- (id)commandBufferWithDescriptor:(id)descriptor
+{
+	static unsigned calls;
+	unsigned n = __atomic_add_fetch(&calls, 1, __ATOMIC_RELAXED);
+	if (n <= 3 || (n & 1023) == 0)
+		rw_print("commandBufferWithDescriptor: call %u answered with an ordinary command buffer "
+		         "(descriptor %p: retained references and error options are not separate here)\n",
+		         n, descriptor);
+	return [self commandBuffer];
+}
+'''))
 
 # Draw log: which texture object (a view names its parent) and which level, so a pass that
 # samples the texture it renders into can be told from one that ping-pongs.
