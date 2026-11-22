@@ -1380,3 +1380,27 @@ Next:
   contents/7940.Marble-Three-V57.wallpaper`) plus RuntimeSnapshot-home.atx and scratch/SnapshotCache.cachedb.
   `build/a71-ios26-marble-png7940.payload` (`32aaab72...`, 37/37): PNG layers into the collection AND the configuration copy;
   snapshot and cache renamed `*.a71-old`. Visual result pending.
+- **PNG layers work:** owner photo shows Marble Mist Blue petals with correct shape, transparency and gradients — but only the
+  left half; the right half (the mirrored layers: `rotate(-180deg,1,0,0) scale(-1)`) is black, and parts flicker black.
+  The scene sets no doubleSided, yet backboardd's log shows rasterizer variants `cull 1 (front) winding 0 -> front_ccw 1`.
+  Guess: my Metal->Gallium winding mapping (79c3dfb, reasoned, never measured) is inverted, so CoreAnimation's own front-face
+  culling removes the wrong side of mirrored layers. Test installed: `build/a71-ios26-cull-flip.payload` (`1e8d55ac...`,
+  /var/local/sweet-mtl-cull = "flip"), backboardd logs "winding flipped", boot OK, no crashes. **Visual result pending.**
+  If flip fixes it: make it the default in make-image-level-patch.py (front_ccw = winding ? 1 : 0) and remove the file.
+  If it breaks other UI (vanishing icons/text): `rm:/var/local/sweet-mtl-cull`.
+
+## 2026-11-22 ~21:00 — HANDOFF
+
+Phone state: boot `build/a71-ios26-2124.img` (`1d33fe0f...`, xnu 2124 PosterBoard GPU, dtlog Mercury+PosterBoard), Metal bundle
+CI 45031476531 (2b1af7f: cull/winding/fill, bicubic, trace, resolve trace). Root: Marble collection (5 colours, productTypes
++iPhone12,1; order [7940,...]); 7940 layers are PNG (collection + configuration 9A17E80D copy); CollectionsPoster ProviderInfo
+renamed twice (`.a71-backup-1122`, `-1122b`); poster.want = "com.apple.WallpaperKit.CollectionsPoster 7940";
+/var/local/sweet-mtl-trace = "MercuryPosterExtension PosterBoard"; drawlog-every "10 800 MercuryPosterExtension";
+/var/local/sweet-mtl-cull = "flip" (test); MobileGestalt cache = original (island attempts reverted).
+Next: (1) owner's verdict on the flip; (2) PNG for the other four Marble colours (decoded in research/ios26/iphone18-3/png/);
+(3) why the phone's HEIC decoder drops the alpha auxiliary image (fixes all such images, not only Marble);
+(4) Dynamic Island: island flag alone does nothing; subtype 2556 gave red status bar "rdar:45025538"; the island needs a
+sensor-region frame for a 414x896 screen (SystemApertureUI `_frameForSensorRegionInBounds:`; no MobileGestalt key found;
+likely from the device tree we generate); (5) PosterBoard/backboardd OGL-path crashes on live poster switches.
+VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the PC: research/ios26/iphone18-3/094-96558-090.apfs
+(9.76 GB, 7-Zip reads it). USB logger running into logs/usb-ios26-1122.txt.
