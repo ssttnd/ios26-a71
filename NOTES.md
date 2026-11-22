@@ -1520,3 +1520,39 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   Commit `fa7d9ca` stages Mercury's same-format multisample IOSurface resolves in a private same-size
   single-sample texture and copies it on the GPU. All three donor Metal patches apply in order. Metal CI
   `45043830425` building; verify its six files, install, and compare the same logged texel measurements.
+
+### 2026-11-22 — Android-port references and current device state
+
+- Staged-resolve CI `45043830425` succeeded; all six files in artifact `14762064090` matched. TWRP
+  verified `a71-ios26-metal-resolve-stage.payload` SHA-256
+  `b94f1f1930c8c6e6c56651d7875daadd5186aea37c51afdc9b0566cab032fb00`.
+  On the 2124 boot, payload 13/13 archived the FrontBoard test preferences and set an explicit managed
+  828×1792 canvas. The original MobileGestalt was already restored. Framebuffer source and destination
+  are both 828×1792 again. USB for this boot starts at byte 59863947.
+- `space.two` Sky is active and still black. Staged GPU copying did not change the two measured shared
+  textures (100% alpha zero at 828×1792). The 414×896 private resolve contained color. Do not treat a
+  CPU read of an IOSurface as proof of its GPU contents without a coherency check. The private-stage
+  readback in `816d5ec` was built successfully by `45044698212`, artifact `14762874564`, and has not been
+  installed. A missing homeScreenConfiguration supplement was also logged at startup.
+- **Relevant iOS 26 wallpaper success on Android:** Bergamota's A630 port rendered `space.dynamic` in
+  Chlorophyll after correcting AIR image-store operand types and runtime null texture tests, and
+  moving aside a stale home-screen snapshot. Their diagnostic fill showed that stale IOSurface CPU
+  reads could be misleading. They also fixed a stale PosterBoard process after a SpringBoard restart.
+  Source: https://github.com/ry-diffusion/Bergamota/blob/develop/NOTES.md#L303-L310 and #L424-L427.
+  A71 `2cba538` changes AIR image-store typing; Metal Actions `45045101450` was dispatched.
+  The pending texture-presence change sends per-stage bound-texture state to `air.is_null_texture`.
+  Recheck both renders and the home snapshot if the renderer starts producing visible output. No
+  snapshot was removed or moved in this session.
+- **Relevant Island ports:** Redmi Note 11 Pro 4G (Viva) positions the real SystemAperture with a
+  SpringBoard tweak that publishes the exclusion rectangle and adapts the safe area and sensor region.
+  Sources: https://www.reddit.com/r/hackios/comments/1xzoo79/native_resolution_and_adjusted_dynamic_island/
+  and https://github.com/nik300/viva-gpu/blob/main/app/tweak/VivaDisplay.m. Galaxy S20 shows an island
+  around the punch hole that expands for Live Activities per its author; the post does not include a
+  source implementation. https://www.reddit.com/r/hackios/comments/1xv72jn/poll_the_all_new_dynamic_hole/.
+  On the A71, the 1791 and FrontBoard tests were ineffective (timer produced no pill) and were rolled
+  back. 23G90 SpringBoard calls `sb_thisDeviceDisplayShape` then `setExclusionArea:` when constructing
+  the display context; the shape comes from `SBHScreenTypeForCurrentDevice` and `sb_displayShapeForScreenType:`.
+  Need an A71-specific SpringBoard geometry test for this build. A separate matched 1179×2556 @3×
+  candidate `build/a71-ios26-island-canvas-2556.img` (`0122ffc20d328198a5f1d2b766e316cde5ad35ee4c22e2a3c136973d64729586`)
+  was built from the existing 2124 kernel; it was not written to the phone. The working rollback image
+  remains `build/a71-ios26-2124.img`.

@@ -32,6 +32,10 @@ def edit(name, *pairs):
 
 
 edit('tools/mesa/air/nir_air.h',
+     ('struct air_shader_info {\n',
+      '#define AIR_TEXTURE_PRESENCE_UBO 31u /* Metal buffer indices end at 30. */\n'
+      'struct air_shader_info {\n'
+      '   bool uses_texture_presence;\n'),
      ('   const char *name;    /* declared Metal function-constant name */\n',
       '   const char *name;    /* declared Metal function-constant name */\n'
       '   uint64_t bits_hi;   /* upper half of a packed vector, zero for scalars */\n'),
@@ -49,6 +53,22 @@ edit('tools/mesa/air/nir_air.h',
 };'''))
 
 edit('tools/mesa/air/air_to_nir.c',
+     ('''      case AIR_RESOURCE_CONSTANT_BUFFER:
+         c.nir->info.num_ubos = MAX2(c.nir->info.num_ubos, r->index + 1);''',
+      '''      case AIR_RESOURCE_CONSTANT_BUFFER:
+         if (c.info->uses_texture_presence && r->index == AIR_TEXTURE_PRESENCE_UBO) {
+            air_error(&c, "a constant buffer overlaps the texture-presence binding");
+            if (error)
+               *error = ralloc_strdup(mem_ctx, c.error);
+            ralloc_free(c.nir);
+            ralloc_free(ctx);
+            return NULL;
+         }
+         c.nir->info.num_ubos = MAX2(c.nir->info.num_ubos, r->index + 1);'''),
+     ('   c.nir->scratch_size = c.scratch_size;\n',
+      '   if (c.info->uses_texture_presence)\n'
+      '      c.nir->info.num_ubos = MAX2(c.nir->info.num_ubos, AIR_TEXTURE_PRESENCE_UBO + 1);\n'
+      '   c.nir->scratch_size = c.scratch_size;\n'),
      ('''   return glsl_vector_type(bits == 16 ? GLSL_TYPE_FLOAT16 :
                            bits == 64 ? GLSL_TYPE_UINT64 : GLSL_TYPE_UINT,
 ''',
@@ -1293,8 +1313,14 @@ null_texture_test(struct air_ctx *c, struct air_val *v)
       air_error(c, "intrinsic: is_null_texture of nothing");
       return NULL;
    }
-   if (v->kind == AIR_VAL_PTR)
-      return v->ptr.class == AIR_PTR_NONE ? nir_imm_true(&c->b) : nir_imm_false(&c->b);
+   if (v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_NONE)
+      return nir_imm_true(&c->b);
+   if (v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_TEXTURE && v->ptr.binding < 32) {
+      c->info->uses_texture_presence = true;
+      nir_def *mask = nir_load_ubo(&c->b, 1, 32, nir_imm_int(&c->b, AIR_TEXTURE_PRESENCE_UBO),
+                                   nir_imm_int(&c->b, 0), .align_mul = 4, .range = 4);
+      return nir_ieq_imm(&c->b, nir_iand_imm(&c->b, mask, 1u << v->ptr.binding), 0);
+   }
    if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
       nir_def *a = null_texture_test(c, v->elems[0]);
       nir_def *b = null_texture_test(c, v->elems[1]);
@@ -1374,6 +1400,33 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
               !strcmp(n->part[1], "unorm4x8")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('   unsigned num_views = 0, num_images = 0, num_samplers = 0;\n',
+      '   unsigned num_views = 0, num_images = 0, num_samplers = 0;\n'
+      '   uint32_t texture_presence = 0;\n'),
+     ('''      switch (r->kind) {
+      case AIR_RESOURCE_DEVICE_BUFFER:
+         if (r->index >= ARRAY_SIZE(sb)) {''',
+      '''      if (t && r->index < 32 &&
+          (r->kind == AIR_RESOURCE_TEXTURE || r->kind == AIR_RESOURCE_IMAGE))
+         texture_presence |= 1u << r->index;
+      switch (r->kind) {
+      case AIR_RESOURCE_DEVICE_BUFFER:
+         if (r->index >= ARRAY_SIZE(sb)) {'''),
+     ('''   if (num_ssbo)
+      pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);''',
+      '''   if (info->uses_texture_presence) {
+      struct pipe_constant_buffer cb = { .buffer_size = sizeof(texture_presence) };
+      u_upload_data(pipe->stream_uploader, 0, sizeof(texture_presence), 64, &texture_presence,
+                    &cb.buffer_offset, &cb.buffer);
+      if (!cb.buffer) {
+         say(why, why_size, "%s: could not upload the texture-presence mask", name);
+         return -1;
+      }
+      native_bind_constant(device, stage, AIR_TEXTURE_PRESENCE_UBO, &cb);
+      pipe_resource_reference(&cb.buffer, NULL);
+   }
+   if (num_ssbo)
+      pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);'''),
      ('#include "nir_builder.h"\n',
       '#include "nir_builder.h"\n#include "nir_serialize.h"\n#include "util/blob.h"\n'),
      (' * What is deliberately absent is everything packed into a 32-bit word -- RGB10A2Unorm,\n',
@@ -1969,6 +2022,26 @@ null_texture_view(struct rwa_device *device)
 # pages here, so the bytes are copied into a buffer of our own, and the caller's
 # deallocator runs when that buffer goes away, as Metal promises. A caller that writes the
 # pages after this call is not seen; the loader fills them first.
+edit('tools/mesa/air/air_run.c',
+     ('''   unsigned num_img_written = 0;
+   for (unsigned i = 0; i < num_img; i++)''',
+      '''   if (info->uses_texture_presence) {
+      static const uint32_t present = UINT32_MAX; /* The harness supplies every declared texture. */
+      pipe->set_constant_buffer(pipe, PIPE_SHADER_COMPUTE, AIR_TEXTURE_PRESENCE_UBO, false,
+                                &(struct pipe_constant_buffer){ .user_buffer = &present, .buffer_size = sizeof(present) });
+   }
+   unsigned num_img_written = 0;
+   for (unsigned i = 0; i < num_img; i++)'''),
+     ('''   /* every constant buffer the shader reads, filled with the pattern */
+   for (unsigned i = 0; i < info.num_resources; i++) {''',
+      '''   if (info.uses_texture_presence) {
+      static const uint32_t present = UINT32_MAX;
+      pipe->set_constant_buffer(pipe, PIPE_SHADER_FRAGMENT, AIR_TEXTURE_PRESENCE_UBO, false,
+                                &(struct pipe_constant_buffer){ .user_buffer = &present, .buffer_size = sizeof(present) });
+   }
+   /* every constant buffer the shader reads, filled with the pattern */
+   for (unsigned i = 0; i < info.num_resources; i++) {'''))
+
 edit('userland/src/redwoodmetal.m',
      ('@implementation SweetNativeMetalDevice\n',
       '''@interface SweetNativeNoCopyRelease : NSObject {

@@ -17,7 +17,17 @@ diff --git a/tools/mesa/air/nir_air.h b/tools/mesa/air/nir_air.h
  };
  
  struct air_varying {
-@@ -332,6 +341,7 @@
+@@ -251,7 +260,9 @@
+    const char *function_constant;
+ };
+ 
++#define AIR_TEXTURE_PRESENCE_UBO 31u /* Metal buffer indices end at 30. */
+ struct air_shader_info {
++   bool uses_texture_presence;
+    gl_shader_stage stage;     /* MESA_SHADER_NONE for an air.visible function */
+    const char *entry_point;
+    unsigned num_resources;
+@@ -332,6 +343,7 @@
     unsigned index;     /* the function constant's index */
     uint64_t bits;      /* little-endian packed scalar/small-vector value */
     const char *name;    /* declared Metal function-constant name */
@@ -1077,7 +1087,22 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
     if (!c.error[0])
        materialise_globals(&c);
     if (!c.error[0]) {
-@@ -4305,8 +4753,8 @@
+@@ -4295,6 +4743,14 @@
+       const struct air_resource *r = &c.info->resources[i];
+       switch (r->kind) {
+       case AIR_RESOURCE_CONSTANT_BUFFER:
++         if (c.info->uses_texture_presence && r->index == AIR_TEXTURE_PRESENCE_UBO) {
++            air_error(&c, "a constant buffer overlaps the texture-presence binding");
++            if (error)
++               *error = ralloc_strdup(mem_ctx, c.error);
++            ralloc_free(c.nir);
++            ralloc_free(ctx);
++            return NULL;
++         }
+          c.nir->info.num_ubos = MAX2(c.nir->info.num_ubos, r->index + 1);
+          break;
+       case AIR_RESOURCE_DEVICE_BUFFER:
+@@ -4305,14 +4761,16 @@
           BITSET_SET(c.nir->info.textures_used, r->index);
           break;
        case AIR_RESOURCE_IMAGE:
@@ -1088,7 +1113,15 @@ diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
           break;
        default:
           break;
-@@ -4333,6 +4781,8 @@
+       }
+    }
+ 
++   if (c.info->uses_texture_presence)
++      c.nir->info.num_ubos = MAX2(c.nir->info.num_ubos, AIR_TEXTURE_PRESENCE_UBO + 1);
+    c.nir->scratch_size = c.scratch_size;
+    c.nir->info.shared_size = c.shared_size;
+    c.info->threadgroup_bytes = c.shared_size;
+@@ -4333,6 +4791,8 @@
      * point, which every consumer of this NIR assumes.
      */
     if (_mesa_hash_table_num_entries(c.fns)) {
@@ -1305,7 +1338,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1573,6 +1739,48 @@
+@@ -1573,6 +1739,54 @@
     return coord;
  }
  
@@ -1317,8 +1350,14 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
 +      air_error(c, "intrinsic: is_null_texture of nothing");
 +      return NULL;
 +   }
-+   if (v->kind == AIR_VAL_PTR)
-+      return v->ptr.class == AIR_PTR_NONE ? nir_imm_true(&c->b) : nir_imm_false(&c->b);
++   if (v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_NONE)
++      return nir_imm_true(&c->b);
++   if (v->kind == AIR_VAL_PTR && v->ptr.class == AIR_PTR_TEXTURE && v->ptr.binding < 32) {
++      c->info->uses_texture_presence = true;
++      nir_def *mask = nir_load_ubo(&c->b, 1, 32, nir_imm_int(&c->b, AIR_TEXTURE_PRESENCE_UBO),
++                                   nir_imm_int(&c->b, 0), .align_mul = 4, .range = 4);
++      return nir_ieq_imm(&c->b, nir_iand_imm(&c->b, mask, 1u << v->ptr.binding), 0);
++   }
 +   if (v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2) {
 +      nir_def *a = null_texture_test(c, v->elems[0]);
 +      nir_def *b = null_texture_test(c, v->elems[1]);
@@ -1354,7 +1393,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  static bool
  texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
  {
-@@ -1584,6 +1792,48 @@
+@@ -1584,6 +1798,48 @@
     if (!strncmp(n->part[0], "get_null_", 9) && in->base.type->kind == AIR_TYPE_POINTER) {
        struct air_ptr p = { .class = AIR_PTR_NONE };
        air_set(c, &in->base, air_val_ptr(c, p));
@@ -1403,7 +1442,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
        return true;
     }
     struct air_tex_name t;
-@@ -1700,19 +1950,30 @@
+@@ -1700,19 +1956,30 @@
        nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);
        if (!coord)
           return false;
@@ -1442,7 +1481,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
                        nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                        nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                        nir_imm_int(&c->b, 0),
-@@ -1991,6 +2252,18 @@
+@@ -1991,6 +2258,18 @@
  
     if (!strcmp(n.part[0], "is_function_constant_defined"))
        return fc_defined_op(c, in);
@@ -2045,7 +2084,15 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  static int
  bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
             const struct air_shader_info *info, void **own_sampler,
-@@ -3776,7 +4095,7 @@
+@@ -3745,6 +4064,7 @@
+    struct pipe_image_view images[RWA_MAX_TEXTURES] = { 0 };
+    void *samplers[RWA_MAX_TEXTURES] = { 0 };
+    unsigned num_views = 0, num_images = 0, num_samplers = 0;
++   uint32_t texture_presence = 0;
+ 
+    for (unsigned i = 0; i < info->num_resources; i++) {
+       const struct air_resource *r = &info->resources[i];
+@@ -3776,7 +4096,7 @@
              break;
           case AIR_RESOURCE_TEXTURE:
           case AIR_RESOURCE_IMAGE:
@@ -2054,7 +2101,17 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              break;
           case AIR_RESOURCE_SAMPLER:
              if (!r->inline_sampler)
-@@ -3885,6 +4204,17 @@
+@@ -3787,6 +4107,9 @@
+          }
+       }
+ 
++      if (t && r->index < 32 &&
++          (r->kind == AIR_RESOURCE_TEXTURE || r->kind == AIR_RESOURCE_IMAGE))
++         texture_presence |= 1u << r->index;
+       switch (r->kind) {
+       case AIR_RESOURCE_DEVICE_BUFFER:
+          if (r->index >= ARRAY_SIZE(sb)) {
+@@ -3885,6 +4208,17 @@
        }
  
        case AIR_RESOURCE_TEXTURE:
@@ -2072,7 +2129,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           /* The view is made once and kept with the texture: a device has one context,
            * so a view of this texture is a view for every pipeline that will sample it.
            */
-@@ -3903,12 +4233,27 @@
+@@ -3903,12 +4237,27 @@
                 return -1;
              }
           }
@@ -2102,7 +2159,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4263,14 @@
+@@ -3918,12 +4267,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -2119,7 +2176,25 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -5383,6 +5730,8 @@
+@@ -4002,6 +4353,17 @@
+       num_samplers = MAX2(num_samplers, i + 1);
+    }
+ 
++   if (info->uses_texture_presence) {
++      struct pipe_constant_buffer cb = { .buffer_size = sizeof(texture_presence) };
++      u_upload_data(pipe->stream_uploader, 0, sizeof(texture_presence), 64, &texture_presence,
++                    &cb.buffer_offset, &cb.buffer);
++      if (!cb.buffer) {
++         say(why, why_size, "%s: could not upload the texture-presence mask", name);
++         return -1;
++      }
++      native_bind_constant(device, stage, AIR_TEXTURE_PRESENCE_UBO, &cb);
++      pipe_resource_reference(&cb.buffer, NULL);
++   }
+    if (num_ssbo)
+       pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);
+    unsigned old_views=device->native_pending_views[stage];
+@@ -5383,6 +5745,8 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2128,7 +2203,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6509,12 +6858,12 @@
+@@ -6509,12 +6873,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2144,7 +2219,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6645,6 +6994,9 @@
+@@ -6645,6 +7009,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2154,7 +2229,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7489,47 @@
+@@ -7137,7 +7504,47 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2203,7 +2278,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7606,10 @@
+@@ -7214,6 +7621,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2214,7 +2289,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7703,7 @@
+@@ -7307,6 +7718,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -2222,6 +2297,33 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     unbind_stage(device, PIPE_SHADER_FRAGMENT, &fbound);
     if (!render->generated_vertex)
        unbind_stage(device, PIPE_SHADER_VERTEX, &vbound);
+diff --git a/tools/mesa/air/air_run.c b/tools/mesa/air/air_run.c
+--- a/tools/mesa/air/air_run.c
++++ b/tools/mesa/air/air_run.c
+@@ -1012,6 +1012,11 @@
+       if (!kept)
+          free(bits);
+    }
++   if (info->uses_texture_presence) {
++      static const uint32_t present = UINT32_MAX; /* The harness supplies every declared texture. */
++      pipe->set_constant_buffer(pipe, PIPE_SHADER_COMPUTE, AIR_TEXTURE_PRESENCE_UBO, false,
++                                &(struct pipe_constant_buffer){ .user_buffer = &present, .buffer_size = sizeof(present) });
++   }
+    unsigned num_img_written = 0;
+    for (unsigned i = 0; i < num_img; i++)
+       num_img_written += img_write[i] ? 1 : 0;
+@@ -1752,6 +1757,11 @@
+    });
+    pipe->bind_rasterizer_state(pipe, rast);
+ 
++   if (info.uses_texture_presence) {
++      static const uint32_t present = UINT32_MAX;
++      pipe->set_constant_buffer(pipe, PIPE_SHADER_FRAGMENT, AIR_TEXTURE_PRESENCE_UBO, false,
++                                &(struct pipe_constant_buffer){ .user_buffer = &present, .buffer_size = sizeof(present) });
++   }
+    /* every constant buffer the shader reads, filled with the pattern */
+    for (unsigned i = 0; i < info.num_resources; i++) {
+       const struct air_resource *r = &info.resources[i];
 diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 --- a/userland/src/redwoodmetal.m
 +++ b/userland/src/redwoodmetal.m
