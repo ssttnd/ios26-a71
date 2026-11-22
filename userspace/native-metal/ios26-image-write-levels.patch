@@ -1713,7 +1713,31 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -3081,13 +3191,22 @@
+@@ -2128,9 +2238,12 @@
+     * it (docs/air.md 3.3).
+     */
+    if (a->mag_filter == AIR_SAMPLER_BICUBIC || a->min_filter == AIR_SAMPLER_BICUBIC) {
+-      say(why, why_size, "the shader's own sampler at index %u asks for filter::bicubic, "
+-                         "which neither MTLSamplerDescriptor nor this GPU has", index);
+-      return false;
++      static bool told;
++      if (!told) {
++         told = true;
++         fprintf(stderr, "SweetNativeMetal: the shader's own sampler at index %u asks for "
++                 "filter::bicubic; sampled as linear (no bicubic on this GPU)\n", index);
++      }
+    }
+    if (a->mag_filter > AIR_SAMPLER_BICUBIC || a->min_filter > AIR_SAMPLER_BICUBIC ||
+        a->mip_filter > AIR_SAMPLER_MIP_LINEAR) {
+@@ -2219,6 +2332,7 @@
+    static const unsigned filter[] = {
+       [AIR_SAMPLER_NEAREST] = RWA_FILTER_NEAREST,
+       [AIR_SAMPLER_LINEAR] = RWA_FILTER_LINEAR,
++      [AIR_SAMPLER_BICUBIC] = RWA_FILTER_LINEAR,   /* approximation, see above */
+    };
+    /* AIR_SAMPLER_MIP_* and MTLSamplerMipFilter happen to be in the same order; said as
+     * a table anyway, so that the next field someone adds is not cast through by habit.
+@@ -3081,13 +3195,22 @@
     device->pipe->delete_compute_state(device->pipe, cso);
  }
  
@@ -1738,7 +1762,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* and the states built for the samplers the shader declared itself. Nothing is
      * unbound first, for the reason rwa_sampler_destroy gives: a dispatch leaves
      * nothing of its own bound.
-@@ -3121,14 +3240,9 @@
+@@ -3121,14 +3244,9 @@
  {
     struct rwa_device *device = compute->device;
  
@@ -1755,7 +1779,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     nir_shader *cs = nir_shader_clone(NULL, compute->nir);
     if (!cs) {
-@@ -3140,7 +3254,41 @@
+@@ -3140,7 +3258,41 @@
     cs->info.workgroup_size[2] = block[2];
     cs->info.workgroup_size_variable = false;
  
@@ -1798,7 +1822,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     void *cso = device->pipe->create_compute_state(device->pipe,
        &(struct pipe_compute_state){
-@@ -3151,6 +3299,7 @@
+@@ -3151,6 +3303,7 @@
         * it already, and neither of the two drivers in this build can reach this at all
         * (both return a state object and report a bad shader later, at launch).
         */
@@ -1806,7 +1830,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        say(why, why_size, "%s would not make a compute pipeline of %s",
            device->screen->get_name(device->screen),
            compute->info.entry_point ? compute->info.entry_point : "the shader");
-@@ -3172,14 +3321,34 @@
+@@ -3172,14 +3325,34 @@
                              "compiled shader takes at most %u: it uses too many "
                              "registers for a group that large", threads, si.max_threads);
           delete_compute_state(device, cso);
@@ -1845,7 +1869,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return cso;
  }
  
-@@ -3457,6 +3626,37 @@
+@@ -3457,6 +3630,37 @@
  }
  
  /*
@@ -1883,7 +1907,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
   * Which Metal buffer indices a module declares ARGUMENT BUFFERS at, one bit each, and a
   * refusal when one is past the 32 a mask holds.
   *
-@@ -3580,6 +3780,14 @@
+@@ -3580,6 +3784,14 @@
              say(why, why_size, "%s binds a texture at index %u, past the %u slots this "
                                 "library fills", name, r->index, RWA_MAX_TEXTURES);
              return -1;
@@ -1898,7 +1922,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           }
           if (!member && (r->index >= bindings->texture_count ||
                           !bindings->textures[r->index])) {
-@@ -3717,6 +3925,62 @@
+@@ -3717,6 +3929,62 @@
     d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
  }
  
@@ -1961,7 +1985,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  static int
  bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
             const struct air_shader_info *info, void **own_sampler,
-@@ -3776,7 +4040,7 @@
+@@ -3776,7 +4044,7 @@
              break;
           case AIR_RESOURCE_TEXTURE:
           case AIR_RESOURCE_IMAGE:
@@ -1970,7 +1994,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              break;
           case AIR_RESOURCE_SAMPLER:
              if (!r->inline_sampler)
-@@ -3885,6 +4149,17 @@
+@@ -3885,6 +4153,17 @@
        }
  
        case AIR_RESOURCE_TEXTURE:
@@ -1988,7 +2012,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           /* The view is made once and kept with the texture: a device has one context,
            * so a view of this texture is a view for every pipeline that will sample it.
            */
-@@ -3903,12 +4178,27 @@
+@@ -3903,12 +4182,27 @@
                 return -1;
              }
           }
@@ -2018,7 +2042,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              .resource = t->res,
              .format = t->res->format,
              /* what the shader does with it, from the metadata rather than assumed: a
-@@ -3918,12 +4208,14 @@
+@@ -3918,12 +4212,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -2035,7 +2059,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -5383,6 +5675,8 @@
+@@ -5383,6 +5679,8 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2044,7 +2068,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6509,12 +6803,12 @@
+@@ -6509,12 +6807,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2060,7 +2084,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6645,6 +6939,9 @@
+@@ -6645,6 +6943,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2070,7 +2094,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7434,48 @@
+@@ -7137,7 +7438,48 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2120,7 +2144,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7552,10 @@
+@@ -7214,6 +7556,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2131,7 +2155,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7649,7 @@
+@@ -7307,6 +7653,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);

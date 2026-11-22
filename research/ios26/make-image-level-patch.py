@@ -1876,7 +1876,28 @@ null_texture_view(struct rwa_device *device)
       }
    }
    pipe->bind_rasterizer_state(pipe, rast);
-'''))
+'''),
+     # filter::bicubic in a shader's own sampler (Mercury Space, 2026-11-22: it failed every
+     # command buffer once culling worked). Adreno and Gallium have no bicubic; sample it as
+     # linear, as air_run already does, and say so once.
+     ('''   if (a->mag_filter == AIR_SAMPLER_BICUBIC || a->min_filter == AIR_SAMPLER_BICUBIC) {
+      say(why, why_size, "the shader's own sampler at index %u asks for filter::bicubic, "
+                         "which neither MTLSamplerDescriptor nor this GPU has", index);
+      return false;
+   }
+''',
+      '''   if (a->mag_filter == AIR_SAMPLER_BICUBIC || a->min_filter == AIR_SAMPLER_BICUBIC) {
+      static bool told;
+      if (!told) {
+         told = true;
+         fprintf(stderr, "SweetNativeMetal: the shader's own sampler at index %u asks for "
+                 "filter::bicubic; sampled as linear (no bicubic on this GPU)\\n", index);
+      }
+   }
+'''),
+     ('      [AIR_SAMPLER_LINEAR] = RWA_FILTER_LINEAR,\n   };\n',
+      '      [AIR_SAMPLER_LINEAR] = RWA_FILTER_LINEAR,\n'
+      '      [AIR_SAMPLER_BICUBIC] = RWA_FILTER_LINEAR,   /* approximation, see above */\n   };\n'))
 
 # newBufferWithBytesNoCopy: Mercury's KTX loader makes its staging buffer this way and the
 # driver answered nil ("Failed to create staging buffer"). The GPU cannot map the caller's
