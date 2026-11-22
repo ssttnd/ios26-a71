@@ -1292,3 +1292,14 @@ Next:
 - Phone state: boot `build/a71-ios26-2123-pbtrace.img` (`82d6ca2f...`, dtlog Mercury+PosterBoard); Metal CI 45031476531
   bundle; `/var/local/sweet-mtl-trace` = "MercuryPosterExtension PosterBoard"; drawlog-every "10 800 backboardd".
   Open: PosterBoard aborts (sig 6) when the editor/preview opens (not yet captured with its dtlog); Space poster still black.
+- Owner: the iOS 26 stock wallpaper they want (two discs/spheres, blue/green) is a different wallpaper from fluidity
+  (= iOS 18 default). Not in the 23G90 root: Mercury has only space.* and fluidity.*; /Library/Wallpaper collections are
+  iOS 17 (7565, this model's default), Bokeh, Stripe, Clownfish; other poster appexes (DynamicBackground, Gradient
+  Background, Extragalactic, Rhizome, Unity2025, Infograph) are not it. CollectionsPoster has entitlement
+  `com.apple.MobileAsset.Wallpaper` and `WKWallpaperBundleDownloadManager`: newer stock wallpapers are downloaded
+  MobileAssets. The legacy mesu catalog (`mesu.apple.com/assets/com_apple_MobileAsset_Wallpaper/...xml`, 312 assets)
+  stops at iOS 15-era sets. Next: Pallas `POST https://gdmf.apple.com/v2/assets` (AssetType com.apple.MobileAsset.Wallpaper,
+  iPhone12,1/N104AP 26.6.2 23G90, audience 01c1d682-6e8f-4908-b724-5501fe3f5e5c). Its TLS chains to Apple Root CA, which
+  neither Git's nor Windows' store trusts; `curl -k` was refused by the session's safety check. Waiting for the owner's OK
+  to download AppleIncRootCertificate.cer from www.apple.com/appleca/ and use it as --cacert. Phone: hung on the first
+  boot after the drawlog-Mercury package (`86a1b8c8...`); needs a power-key restart.
