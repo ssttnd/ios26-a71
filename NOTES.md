@@ -1262,3 +1262,12 @@ Next:
   with status 1 and `space::rasterizeBackground*` draws execute into the 414x896 target. Next failure, now logged:
   `the shader's own sampler at index 0 asks for filter::bicubic` fails the command buffer.
 - `6fd5fdb`: inline bicubic sampled as linear (logged once). Metal CI `45030566816` building.
+- CI `45030566816` (6fd5fdb) artifact `14757528286` 6/6; `build/a71-ios26-metal-bicubic.payload` VERIFY OK `f47c1a08...`, 9/9.
+  **Observed:** no Mercury failures any more (bicubic logged once as linear); every frame commits status 1 with 4 draws
+  (background, circle A, circle B, arc) into 828x1792. Owner: wallpaper still black.
+- That 828x1792 target is the same texture every frame (not drawables 24-27), **4x multisample**, `store 2`
+  (MultisampleResolve). TEXSTAT readback of it fails ("4 samples per texel"); its "mean 238" is TEXSTAT's own 0xEE
+  pre-fill, not image data. No `presentDrawable` passes through our command buffer (Mercury presents the drawable itself).
+- `2b1af7f`: trace adds sample count, resolveTexture (size, format, level, IOSurface) per render pass and a line per
+  resolve blit. Metal CI `45031476531` building. Plan for the same install: drawlog-every -> "10 800 backboardd" so
+  backboardd's TEXSTAT reads the full-screen wallpaper layer it composites.
