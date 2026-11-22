@@ -1360,3 +1360,16 @@ Next:
   red status bar "rdar:45025538", grey placeholder icons (Settings, Wallet, Health, Maps), widgets "Waiting...". **Restored the
   original cache** (`a71-ios26-island-1122-restore.payload` `5cd50f06...`, 7/7). Original also at /var/local/mg-backup/
   MobileGestalt.plist.before-island-1122.
+- Kernel CI `45038208172` (591d715, 2124) succeeded, kernel `6ce810fc...bf27` (matches SHA256SUMS, contains "PosterBoard").
+  `build/a71-ios26-2124.img` = 2123 image options with that kernel (dtlog Mercury+PosterBoard), readback VERIFY OK
+  `1d33fe0fd37e3dd3294cf398d8259223d48e2553b14d7a84ce095138a57ea810`. Booted first try; no PosterBoard abort; poster job created
+  `CollectionsPoster:configuration:7940` (Marble Mist Blue) and it became the active poster.
+- **Owner photo: Marble draws, but as straight-edged light-blue rectangles in blocks (symmetric), black gaps.** Cause found:
+  every Marble layer HEIC (Fix-Seam, Level-1..4) carries an alpha auxiliary image (`urn:mpeg:hevc:2015:auxid:1`, 512x512 grid
+  tiles, strips e.g. 670x2705); the working iOS 17 wallpaper HEIC has no alpha. The disc outlines come from that alpha, so the
+  phone decodes the colour plane and drops alpha (decoder process not logged; no HEIC/CMPhoto lines on USB). The scene
+  (main.caml) is 35 CATransformLayers rotated around Y (-11.5..-75.4 deg) with x-scale compensation, perspective ~ orthographic;
+  filters bias/colorBrightness/colorSaturate/multiplyColor; CA never asked for MTLDepthClipModeClamp.
+- Planned workaround: decode the HEICs with alpha on the PC and store lossless PNG bytes under the same .HEIC names (ImageIO
+  sniffs content), caml untouched. Blocked: `pip install pillow-heif` into a user venv in the VM was refused by the session safety
+  check (like sudo apt / apt-get download before). Needs the owner's permission rule, or another decoder.
