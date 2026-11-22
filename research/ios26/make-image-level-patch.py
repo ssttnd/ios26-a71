@@ -1590,10 +1590,10 @@ rwa_texture_generate_mipmap(struct rwa_texture *texture)
  * it is a copy, which is what Metal's resolve of a one-sample attachment amounts to. Mercury
  * draws its wallpaper this way and the resolve texture stayed black. */
 int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
-                        unsigned slice, bool external);
+                        unsigned slice, bool external, unsigned trace_seq);
 int
 rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
-                    unsigned slice, bool external)
+                    unsigned slice, bool external, unsigned trace_seq)
 {
    if (!src || !dst)
       return -1;
@@ -1635,6 +1635,29 @@ rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned l
       b.dst.level = 0;
       b.dst.box.z = 0;
       pipe->blit(pipe, &b);
+      if (trace_seq && (stage->format == PIPE_FORMAT_B8G8R8A8_UNORM ||
+                        stage->format == PIPE_FORMAT_B8G8R8A8_SRGB)) {
+         struct pipe_transfer *transfer = NULL;
+         const uint8_t *map = pipe->texture_map(pipe, stage, 0, PIPE_MAP_READ, &b.dst.box, &transfer);
+         if (map) {
+            unsigned sum[4] = { 0 }, transparent = 0;
+            for (unsigned y = 0; y < 16; y++) {
+               const uint8_t *row = map + (size_t)(2 * y + 1) * h / 32 * transfer->stride;
+               for (unsigned x = 0; x < 16; x++) {
+                  const uint8_t *pixel = row + ((2 * x + 1) * w / 32) * 4;
+                  for (unsigned i = 0; i < 4; i++)
+                     sum[i] += pixel[i];
+                  transparent += pixel[3] == 0;
+               }
+            }
+            fprintf(stderr, "SweetNativeMetal: TEXSTAT %u private resolve stage %dx%d mean %u,%u,%u,%u clear %u%%\\n",
+                    trace_seq, w, h, sum[0] / 256, sum[1] / 256, sum[2] / 256, sum[3] / 256,
+                    transparent * 100 / 256);
+            pipe->texture_unmap(pipe, transfer);
+         } else {
+            fprintf(stderr, "SweetNativeMetal: TEXSTAT %u could not read the private resolve stage\\n", trace_seq);
+         }
+      }
       pipe->resource_copy_region(pipe, dst->res, dl, 0, 0, slice, stage, 0, &b.dst.box);
       return 0;
    }
@@ -1997,7 +2020,7 @@ static char sweet_nocopy_key;
      ('@implementation SweetNativeMetalCommandBuffer {\n',
       '''int rwa_texture_generate_mipmap(struct rwa_texture *texture);
 int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
-                        unsigned slice, bool external);
+                        unsigned slice, bool external, unsigned trace_seq);
 
 @interface SweetNativeMetalBlitEncoder : NSObject {
 	id _device;
@@ -2262,20 +2285,22 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
             work->nativeBlit = [^{
                 void *surface = [dst respondsToSelector:@selector(iosurface)] ? (void *)[dst iosurface] : NULL;
                 bool stage_external = surface != NULL && !strcmp(getprogname(), "MercuryPosterExtension");
-                if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl, stage_external) != 0)
+                unsigned seq = 0;
+                if (sweet_trace_enabled() && lvl == 0 && sl == 0 &&
+                    [src sampleCount] > 1 && [dst sampleCount] == 1) {
+                    static unsigned logged[2];
+                    unsigned index = surface != NULL;
+                    if (logged[index] < 2)
+                        seq = ++logged[index] + (index ? 9002 : 9000);
+                }
+                if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl, stage_external, seq) != 0)
                     RW_ONCE("a multisample resolve failed\\n");
                 else {
                     sweet_trace("resolve %p -> %p level %u slice %u blitted", src, dst, lvl, sl);
                     /* Read the single-sample result, since getBytes rejects the MSAA attachment. */
-                    if (sweet_trace_enabled() && lvl == 0 && sl == 0 &&
-                        [src sampleCount] > 1 && [dst sampleCount] == 1) {
-                        static unsigned logged[2];
-                        unsigned index = surface != NULL;
-                        if (logged[index] < 2) {
-                            unsigned seq = ++logged[index] + (index ? 9002 : 9000);
-                            rw_print("TEXSTAT %u resolved color %p surface %p\\n", seq, dst, surface);
-                            native_drawlog_texstat(seq, dst);
-                        }
+                    if (seq) {
+                        rw_print("TEXSTAT %u resolved color %p surface %p\\n", seq, dst, surface);
+                        native_drawlog_texstat(seq, dst);
                     }
                 }
             } copy];
