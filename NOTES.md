@@ -1581,3 +1581,29 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Fix `9252b8c`: template sets `.nr_storage_samples = query_samples` (generator `make-image-level-patch.py`,
   patch regenerated; the three-patch series applies in CI order on an LF donor copy). Metal CI `45050202196` building.
   Next: verify six hashes, install, expect nonzero TEXSTAT 9003+ and a visible Sky (`space.two` still active).
+
+## 2026-11-22 ~23:00 — storage-samples Metal installed (full-size Space now has colour); Dynamic Island tweak installed
+
+- Metal CI `45050202196` (9252b8c) succeeded; artifact `14764519549` matched all six hashes. TWRP: boot still
+  `1d33fe0f...` (2124); `build/a71-ios26-metal-storage-samples.payload` VERIFY OK
+  `ffeaf4cfa3c93f85a63856e8eb8100ddee64a80d610d4275752377d21d8fcba5`, applied 9/9. USB from byte 66171936:
+  **TEXSTAT 9003/9004 private resolve stage 828x1792 mean 204,168,110,119 clear 39%** and the IOSurface resolve the same
+  (was 0,0,0,0 / 100%). The storage-samples fix is verified in the log. Owner's visual verdict on Sky is pending.
+- Dynamic Island, new approach (after Viva's SpringBoard display hooks, github.com/nik300/viva-gpu `app/tweak/VivaDisplay.m`,
+  `docs/DYNAMIC-ISLAND.md`): `SBSIsSystemApertureAvailable` is only MGGetBoolAnswer(DeviceSupportsDynamicIsland) (or FBS
+  emulation), so MobileGestalt keeps subtype 1792 (2556 had broken icons/widgets) and gets only the island key; SpringBoard
+  gets geometry from `userspace/island26/A71Island.m` (exclusion area via `sb_displayShapeForScreenType:`, pill 125x36.67 at
+  11.33 pt, privacy dot, logs the SBH home screen type; prefs `/var/mobile/Library/Preferences/org.a71.island.plist`).
+  Built by workflow `island26.yml` (push trigger), run `45050666013`, artifact `14765715183`, dylib SHA256SUMS ok.
+- SpringBoard (23G90, 115,456 bytes, `30e77024...`) has 16 bytes of header slack: `tools/a71-addweak.py` drops
+  LC_SOURCE_VERSION/FUNCTION_STARTS/DATA_IN_CODE and adds LC_LOAD_WEAK_DYLIB /usr/local/lib/A71Island.dylib (weak: a
+  missing dylib = stock behaviour). Run it with MSYS_NO_PATHCONV=1. Re-signed in the VM with pinned ldid
+  (v2.1.5-procursus7 linux x86_64, hash checked) via Bergamota pacstrip.sign: identifier com.apple.springboard, flags 2,
+  506 entitlements identical. Result `cd3003d5...` (ignored research/island/; Apple binary, never in git or CI).
+- TWRP check: live SpringBoard `30e77024...` and MG `e9759d28...` = originals. `build/a71-ios26-island-tweak.payload`
+  (16 entries) VERIFY OK `9a9f9613256b65d81c9626118e4bfe72aa408a68cdfd62ee8f8c2ce372e26f9f`: dylib, SpringBoard moved to
+  `SpringBoard.a71-orig-1122`, patched one installed, MG moved to /var/local/mg-backup/...before-island-tweak, key-only MG
+  (`research/mg/1122/MobileGestalt.plist.island`) installed. Boot: 16/16 errno=0, SpringBoard exec once, no restarts in 75 s.
+  USB from byte 67881790. Tweak os_log is not on the console (boot dtlog has no SpringBoard). Island visibility: owner to check.
+- Rollback: `build/a71-ios26-island-tweak-rollback.payload` `9d477edc3f14823bfcd7200c05c7f853b5c74242c509816c110c3550f3e90dae`
+  (restores SpringBoard and the original MG; patched SB kept as `.a71island-1122`). Not written.
