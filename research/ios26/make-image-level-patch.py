@@ -1416,6 +1416,13 @@ edit('tools/mesa/air/air_metal.c',
      ('      .min_lod = st->lod_min,\n      .max_lod = st->lod_max,\n',
       '      .min_lod = CLAMP(st->lod_min, 0.0f, 15.0f),\n'
       '      .max_lod = CLAMP(st->lod_max, 0.0f, 15.0f),\n'),
+     # A shader image of an sRGB texture: freedreno's image (IBO) path has no sRGB store,
+     # and Mercury's VariableBlurrer pyramid (BGRA8Unorm_sRGB, 414x896) read back levels
+     # 2-8 as near-white with alpha 0 (A71 2026-11-23); the glass element in the
+     # wallpaper sampled them. Bound as the linear twin, as Mesa's own frontends do.
+     ('            .resource = t->res,\n            .format = t->res->format,\n',
+      '            .resource = t->res,\n'
+      '            .format = util_format_linear(t->res->format),\n'),
      # MTLTextureSwizzleChannels. CoreAnimation views an opaque layer's IOSurface with
      # alpha -> one; the swizzle was dropped, and backboardd's source-over pass over
      # Mercury's wallpaper added it to itself (twice as bright, A71 2026-11-23).

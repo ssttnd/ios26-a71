@@ -2252,7 +2252,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);
              if (!t->view) {
                 say(why, why_size, "%s would not make a sampler view of the %s bound at "
-@@ -3903,12 +4326,27 @@
+@@ -3903,14 +4326,29 @@
                 return -1;
              }
           }
@@ -2280,8 +2280,11 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 -         images[r->index] = (struct pipe_image_view){
 +         images[r->image_slot] = (struct pipe_image_view){
              .resource = t->res,
-             .format = t->res->format,
+-            .format = t->res->format,
++            .format = util_format_linear(t->res->format),
              /* what the shader does with it, from the metadata rather than assumed: a
+              * read-write image told it is write-only reads zeros on some drivers.
+              */
 @@ -3918,12 +4356,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
