@@ -1212,3 +1212,19 @@ Next:
   Space" from "any poster". Not fixed: other Mercury posters (Ajisai/Jurin/shippou/tori/Flocon), RenderBox custom fn.
 - Commits this session (all pushed, codex/a71-settings): fafafd0 heap, 925da4b layer readback, 0abc4b7 supportsFamily,
   28993d8 function tables + trace, 7339f5d gradients/rgb565, eefd2b4 zero texel + i1 widening, 7d454cf sampler slots.
+
+## 2026-11-22 — Space poster: frame loop without command buffers; commandBufferWithDescriptor:
+
+- Re-read the last heap-log boot (`logs/usb-ios26-metal-heap.txt` from line 152827, Mercury PID 302). Observed: on every
+  wake Mercury logs "Making a guess at solar position" once per frame and takes a new drawable (IOSurfaces 24, 25, 26, 27
+  in turn), but no frame commits a command buffer: the only Mercury GPU work is one `space::updateCylinderVertexPositions`
+  dispatch (3602 threads) at setup and the VTMTS snapshot scaling. No `unimplemented -[...]` line from any process.
+- The 2.4 MB `newBufferWithBytesNoCopy` copy is Mercury's KTX staging buffer (filled before the call): not the cause.
+- Mercury's binary (extracted from `build/ios26-root-a71-23G90.img` with `MSYS_NO_PATHCONV=1 tools/hfsread.py --dump`,
+  scratch only) uses `commandBufferWithDescriptor:`. SweetNativeMetalCommandQueue has no such method, so it falls to
+  `_MTLCommandQueue`'s own, which the forwarding log cannot see. Guess (not disassembled): it returns nil like the
+  `_MTLDevice` queue stub, and Swift's `guard let` skips the frame.
+- `21db73a` (generator + regenerated `ios26-image-write-levels.patch`): `commandBufferWithDescriptor:` returns
+  `[self commandBuffer]` and logs calls 1-3 and every 1024th. Metal CI `45026843334` building.
+- Phone booted again at about 18:17 local on the unchanged boot `f6679f41...c8b0`; new USB log `logs/usb-ios26-1122.txt`
+  (background logger of this session).
