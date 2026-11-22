@@ -1660,3 +1660,11 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Found: run-time mip level writes got at most 8 image aliases; Mercury's VariableBlurrer pyramid on the 414x896
   target has 10 levels, so levels 8/9 were written into level 7. `ac0856c` allows up to 15 (16 slots, RWA_MAX_TEXTURES
   16, fd a6xx bindless images). Metal CI `45054780677` building. Expected to affect the pixelated blur.
+- **Brightness cause found** (owner: holding the torch button on the lock screen makes the wallpaper normal). In the
+  backboardd trace (`research/bbtrace-boot.txt`, draws 451-452) backboardd draws the SAME Mercury surface (#d9f0,
+  828x1792) twice per frame: `PBGRAXm_TimgA2Xhf_Ixrg` (opaque, no blend) then `PBGRABsovXm_TimgA2Xhf_Isrc`
+  (source-over). With Mercury's alpha ~0.47 (39% zero) the second pass adds the image to itself (~2x). On Apple the
+  surface is opaque. The alpha-1 swizzle blit of 1bb7cc4 never worked: freedreno's fd_blitter_blit makes its own
+  identity-swizzle source view (freedreno_blitter.c 55-58). `49b0302`: clear the IOSurface to (0,0,0,1) and blit RGB
+  only. Includes the 15-alias fix (ac0856c; its CI 45054780677 superseded). Metal CI `45055258661` building.
+  Open: why Mercury's alpha is < 1 at all (true fix would be there).
