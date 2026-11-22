@@ -1558,6 +1558,12 @@ rwa_compute_destroy(struct rwa_compute *compute)
                                            PIPE_BIND_SHADER_IMAGE))
       write = true;
 '''),
+     ('   struct pipe_surface *native_surface;\n',
+      '   struct pipe_surface *native_surface;\n'
+      '   struct pipe_resource *resolve_stage; /* Single-sample intermediate for external resolves. */\n'),
+     ('   pipe_surface_reference(&texture->native_surface, NULL);\n',
+      '   pipe_surface_reference(&texture->native_surface, NULL);\n'
+      '   pipe_resource_reference(&texture->resolve_stage, NULL);\n'),
      # ASTC (Mercury's albedo-a.ktx is astc_6x6_srgb); the A618 samples ASTC LDR itself
      ('#include "util/u_inlines.h"\n',
       '#include "util/u_inlines.h"\n#include "util/u_gen_mipmap.h"\n'),
@@ -1584,10 +1590,10 @@ rwa_texture_generate_mipmap(struct rwa_texture *texture)
  * it is a copy, which is what Metal's resolve of a one-sample attachment amounts to. Mercury
  * draws its wallpaper this way and the resolve texture stayed black. */
 int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
-                        unsigned slice);
+                        unsigned slice, bool external);
 int
 rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
-                    unsigned slice)
+                    unsigned slice, bool external)
 {
    if (!src || !dst)
       return -1;
@@ -1606,7 +1612,33 @@ rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned l
                                   .depth = 1 };
    b.mask = PIPE_MASK_RGBA;
    b.filter = PIPE_TEX_FILTER_NEAREST;
-   dst->device->pipe->blit(dst->device->pipe, &b);
+   struct pipe_context *pipe = dst->device->pipe;
+   if (external && src->res->nr_samples > 1 && dst->res->nr_samples <= 1 &&
+       src->res->format == dst->res->format && dst->res->target == PIPE_TEXTURE_2D) {
+      /* A618 produced color in private resolves and transparent IOSurface output.
+       * Resolve away from the imported layout, then copy the single-sample texels. */
+      struct pipe_resource *stage = src->resolve_stage;
+      if (!stage || stage->width0 != (unsigned)w || stage->height0 != (unsigned)h) {
+         struct pipe_resource desc = {
+            .target = PIPE_TEXTURE_2D, .format = dst->res->format,
+            .width0 = w, .height0 = h, .depth0 = 1, .array_size = 1,
+            .bind = PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW,
+            .usage = PIPE_USAGE_DEFAULT,
+         };
+         stage = pipe->screen->resource_create(pipe->screen, &desc);
+         if (!stage)
+            return -1;
+         pipe_resource_reference(&src->resolve_stage, NULL);
+         src->resolve_stage = stage;
+      }
+      b.dst.resource = stage;
+      b.dst.level = 0;
+      b.dst.box.z = 0;
+      pipe->blit(pipe, &b);
+      pipe->resource_copy_region(pipe, dst->res, dl, 0, 0, slice, stage, 0, &b.dst.box);
+      return 0;
+   }
+   pipe->blit(pipe, &b);
    return 0;
 }
 
@@ -1965,7 +1997,7 @@ static char sweet_nocopy_key;
      ('@implementation SweetNativeMetalCommandBuffer {\n',
       '''int rwa_texture_generate_mipmap(struct rwa_texture *texture);
 int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned level,
-                        unsigned slice);
+                        unsigned slice, bool external);
 
 @interface SweetNativeMetalBlitEncoder : NSObject {
 	id _device;
@@ -2228,14 +2260,15 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
         if (src != nil) {
             SweetNativeMetalWork *work = [SweetNativeMetalWork new];
             work->nativeBlit = [^{
-                if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl) != 0)
+                void *surface = [dst respondsToSelector:@selector(iosurface)] ? (void *)[dst iosurface] : NULL;
+                bool stage_external = surface != NULL && !strcmp(getprogname(), "MercuryPosterExtension");
+                if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl, stage_external) != 0)
                     RW_ONCE("a multisample resolve failed\\n");
                 else {
                     sweet_trace("resolve %p -> %p level %u slice %u blitted", src, dst, lvl, sl);
                     /* Read the single-sample result, since getBytes rejects the MSAA attachment. */
                     if (sweet_trace_enabled() && lvl == 0 && sl == 0 &&
                         [src sampleCount] > 1 && [dst sampleCount] == 1) {
-                        void *surface = [dst respondsToSelector:@selector(iosurface)] ? (void *)[dst iosurface] : NULL;
                         static unsigned logged[2];
                         unsigned index = surface != NULL;
                         if (logged[index] < 2) {
