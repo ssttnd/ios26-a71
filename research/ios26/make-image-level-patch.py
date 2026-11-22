@@ -2231,6 +2231,8 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
             work->nativeBlit = [^{
                 if (rwa_texture_resolve([src mesaTexture], [dst mesaTexture], lvl, sl) != 0)
                     RW_ONCE("a multisample resolve failed\\n");
+                else
+                    sweet_trace("resolve %p -> %p level %u slice %u blitted", src, dst, lvl, sl);
             } copy];
             [_commandBuffer recordWork:work];
             [work release];
@@ -2567,11 +2569,16 @@ static void sweet_trace(const char *fmt, ...)
 		MTLRenderPassColorAttachmentDescriptor *a0 =
 		    [[(MTLRenderPassDescriptor *)descriptor colorAttachments] objectAtIndexedSubscript:0];
 		id<MTLTexture> t = [a0 texture];
-		sweet_trace("cb %p renderCommandEncoder: color0 %p %lux%lu fmt %lu load %lu store %lu depth %p",
+		id<MTLTexture> rt = [a0 resolveTexture];
+		sweet_trace("cb %p renderCommandEncoder: color0 %p %lux%lu fmt %lu samples %lu load %lu store %lu depth %p "
+		            "resolve %p %lux%lu fmt %lu level %lu surface %p",
 		            self, t, (unsigned long)(t ? [t width] : 0), (unsigned long)(t ? [t height] : 0),
-		            (unsigned long)(t ? [t pixelFormat] : 0), (unsigned long)[a0 loadAction],
-		            (unsigned long)[a0 storeAction],
-		            [[(MTLRenderPassDescriptor *)descriptor depthAttachment] texture]);
+		            (unsigned long)(t ? [t pixelFormat] : 0), (unsigned long)(t ? [t sampleCount] : 0),
+		            (unsigned long)[a0 loadAction], (unsigned long)[a0 storeAction],
+		            [[(MTLRenderPassDescriptor *)descriptor depthAttachment] texture],
+		            rt, (unsigned long)(rt ? [rt width] : 0), (unsigned long)(rt ? [rt height] : 0),
+		            (unsigned long)(rt ? [rt pixelFormat] : 0), (unsigned long)[a0 resolveLevel],
+		            rt != nil && [(id)rt respondsToSelector:@selector(iosurface)] ? (void *)[(id)rt iosurface] : NULL);
 	}
 '''),
      ('\tid _resolve[8];\n', '\tid _resolve[8];\n\tunsigned _sweetTraceDraws;\n'),
