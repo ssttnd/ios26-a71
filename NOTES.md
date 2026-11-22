@@ -1357,7 +1357,8 @@ Next:
   The 11-19 test used a plain key (useless). Real key DeviceSupportsDynamicIsland = `YlEtTtHlNesRBMal1CqRaA`; artwork subtype
   lives in `oPeik/9e8lQWMszEjbPzng`.ArtworkDeviceSubType (1792). Phone cache unchanged since 11-19 (research/mg/1122/).
   Step 1 (`a71-ios26-island-1122.payload`, key only): persisted, no island. Step 2 (`island2556`, + subtype 2556): no island,
-  red status bar "rdar:45025538", grey placeholder icons (Settings, Wallet, Health, Maps), widgets "Waiting...". **Restored the
+  red status bar "rdar:45025538", grey placeholder icons (Settings, Wallet, Health, Maps), widgets "Waiting..." (owner,
+  2026-11-22: the icons and widgets were not caused by this build). **Restored the
   original cache** (`a71-ios26-island-1122-restore.payload` `5cd50f06...`, 7/7). Original also at /var/local/mg-backup/
   MobileGestalt.plist.before-island-1122.
 - Kernel CI `45038208172` (591d715, 2124) succeeded, kernel `6ce810fc...bf27` (matches SHA256SUMS, contains "PosterBoard").
@@ -1591,7 +1592,8 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   (was 0,0,0,0 / 100%). The storage-samples fix is verified in the log. Owner's visual verdict on Sky is pending.
 - Dynamic Island, new approach (after Viva's SpringBoard display hooks, github.com/nik300/viva-gpu `app/tweak/VivaDisplay.m`,
   `docs/DYNAMIC-ISLAND.md`): `SBSIsSystemApertureAvailable` is only MGGetBoolAnswer(DeviceSupportsDynamicIsland) (or FBS
-  emulation), so MobileGestalt keeps subtype 1792 (2556 had broken icons/widgets) and gets only the island key; SpringBoard
+  emulation), so MobileGestalt keeps subtype 1792 and gets only the island key (correction from the owner: the grey icons and
+  "Waiting..." widgets seen during the 2556 test were NOT caused by subtype 2556; 2556 is not ruled out); SpringBoard
   gets geometry from `userspace/island26/A71Island.m` (exclusion area via `sb_displayShapeForScreenType:`, pill 125x36.67 at
   11.33 pt, privacy dot, logs the SBH home screen type; prefs `/var/mobile/Library/Preferences/org.a71.island.plist`).
   Built by workflow `island26.yml` (push trigger), run `45050666013`, artifact `14765715183`, dylib SHA256SUMS ok.
@@ -1607,3 +1609,8 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   USB from byte 67881790. Tweak os_log is not on the console (boot dtlog has no SpringBoard). Island visibility: owner to check.
 - Rollback: `build/a71-ios26-island-tweak-rollback.payload` `9d477edc3f14823bfcd7200c05c7f853b5c74242c509816c110c3550f3e90dae`
   (restores SpringBoard and the original MG; patched SB kept as `.a71island-1122`). Not written.
+- Owner (23:05): **Sky wallpaper visible, but very bright.** No Dynamic Island seen (whether with an activity such as a
+  timer or charging is not yet known: an idle island is the black camera area and is not drawn by SpringBoard).
+  Mercury renders to fmt 81 (BGRA8Unorm_sRGB), 4x; full-size mean BGR 204,168,110 (R110 G168 B204), half-size 224,199,121.
+  Bergamota saw the same overexposure on A630 (its cause: AIR image stores typed as uint, fixed here in 2cba538) and still
+  had "some areas very light" afterwards. Cause of the brightness here not identified yet.
