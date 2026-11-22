@@ -1813,7 +1813,69 @@ null_texture_view(struct rwa_device *device)
             num_views = MAX2(num_views, r->index + 1);
             break;
          }
-         /* The view is made once and kept with the texture: a device has one context,'''))
+         /* The view is made once and kept with the texture: a device has one context,'''),
+     # Cull mode, winding and fill mode per draw (rwa_draw.native_cull/_winding/_fill were
+     # declared and never read). The frontend refused them by failing the whole command
+     # buffer without a word, which is why Mercury's Space poster encoded every frame
+     # (trace 2026-11-22: compute + 3 draws + compute + 4 draws) and committed status 5.
+     ('   void *blend, *dsa, *rast, *velem;\n',
+      '   void *blend, *dsa, *rast, *velem;\n'
+      '   struct pipe_rasterizer_state rast_state; /* what rast was made from */\n'
+      '   void *rast_var[12];   /* (cull 0..2 * 2 + Metal winding) * 2 + wireframe */\n'),
+     ('   render->rast = device->pipe->create_rasterizer_state(device->pipe,\n      &(struct pipe_rasterizer_state){\n',
+      '   render->rast_state = (struct pipe_rasterizer_state){\n'),
+     ('         .multisample = samples > 1 });\n',
+      '         .multisample = samples > 1 };\n'
+      '   render->rast = device->pipe->create_rasterizer_state(device->pipe, &render->rast_state);\n'),
+     ('   if (render->rast) {\n      pipe->bind_rasterizer_state(pipe, NULL);\n      pipe->delete_rasterizer_state(pipe, render->rast);\n   }\n',
+      '   if (render->rast) {\n      pipe->bind_rasterizer_state(pipe, NULL);\n      pipe->delete_rasterizer_state(pipe, render->rast);\n   }\n'
+      '   for (unsigned k = 0; k < ARRAY_SIZE(render->rast_var); k++)\n'
+      '      if (render->rast_var[k])\n'
+      '         pipe->delete_rasterizer_state(pipe, render->rast_var[k]);\n'),
+     ('   pipe->bind_rasterizer_state(pipe, render->rast);\n',
+      r'''   void *rast = render->rast;
+   {
+      /* /var/local/sweet-mtl-cull: "none" draws both faces, "flip" inverts the winding
+       * mapping below; read once per process, for checking the mapping on the phone. */
+      static int policy = -1;
+      int p = __atomic_load_n(&policy, __ATOMIC_RELAXED);
+      if (p < 0) {
+         char word[16] = { 0 };
+         FILE *f = fopen("/var/local/sweet-mtl-cull", "r");
+         p = 0;
+         if (f) {
+            if (fscanf(f, "%15s", word) == 1)
+               p = !strcmp(word, "none") ? 1 : !strcmp(word, "flip") ? 2 : 0;
+            fclose(f);
+         }
+         __atomic_store_n(&policy, p, __ATOMIC_RELAXED);
+         if (p)
+            fprintf(stderr, "SweetNativeMetal: /var/local/sweet-mtl-cull: %s\n",
+                    p == 1 ? "culling ignored" : "winding flipped");
+      }
+      unsigned cull = draw->native_cull <= 2 && p != 1 ? draw->native_cull : 0;
+      unsigned winding = (draw->native_winding ? 1 : 0) ^ (p == 2);
+      unsigned fill = draw->native_fill ? 1 : 0;
+      if (cull || fill) {
+         unsigned k = (cull * 2 + winding) * 2 + fill;
+         if (!render->rast_var[k]) {
+            struct pipe_rasterizer_state s = render->rast_state;
+            s.cull_face = cull == 1 ? PIPE_FACE_FRONT : cull == 2 ? PIPE_FACE_BACK : PIPE_FACE_NONE;
+            /* Metal's winding is the one seen on screen (NDC y up). This viewport's y scale is
+             * negative, which mirrors Gallium's window space, so Metal clockwise (0) is Gallium
+             * counter-clockwise: front_ccw = 1. */
+            s.front_ccw = winding ? 0 : 1;
+            s.fill_front = s.fill_back = fill ? PIPE_POLYGON_MODE_LINE : PIPE_POLYGON_MODE_FILL;
+            render->rast_var[k] = pipe->create_rasterizer_state(pipe, &s);
+            fprintf(stderr, "SweetNativeMetal: rasterizer variant cull %u winding %u fill %u -> front_ccw %u: %p\n",
+                    cull, winding, fill, s.front_ccw, render->rast_var[k]);
+         }
+         if (render->rast_var[k])
+            rast = render->rast_var[k];
+      }
+   }
+   pipe->bind_rasterizer_state(pipe, rast);
+'''))
 
 # newBufferWithBytesNoCopy: Mercury's KTX loader makes its staging buffer this way and the
 # driver answered nil ("Failed to create staging buffer"). The GPU cannot map the caller's
@@ -2500,7 +2562,43 @@ static void sweet_trace(const char *fmt, ...)
       '                _nativeClearMask, _pipeline);\n'
       '    if(_nativeClearMask'),
      ('- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n\t[super endEncoding];\n}',
-      '- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n\tsweet_trace("compute encoder %p endEncoding", self);\n\t[super endEncoding];\n}'))
+      '- (void)endEncoding\n{ NATIVE_OBJECT_LOCK; \n\tsweet_trace("compute encoder %p endEncoding", self);\n\t[super endEncoding];\n}'),
+     # Cull mode, winding and fill mode go to the draw (backend: rasterizer variants)
+     # instead of failing the command buffer; and a failed command buffer now says why.
+     ('    unsigned nativeScissor[4], nativeFlags;\n',
+      '    unsigned nativeScissor[4], nativeFlags;\n    unsigned nativeCull, nativeWinding, nativeFill;\n'),
+     ('    unsigned _nativeScissor[4], _nativeFlags;\n',
+      '    unsigned _nativeScissor[4], _nativeFlags;\n    unsigned _nativeCull, _nativeWinding, _nativeFill;\n'),
+     ('        .native_flags=work->nativeFlags,\n',
+      '        .native_flags=work->nativeFlags,\n'
+      '        .native_cull=work->nativeCull,.native_winding=work->nativeWinding,.native_fill=work->nativeFill,\n'),
+     ('    work->nativeFlags=_nativeFlags;\n',
+      '    work->nativeFlags=_nativeFlags;\n'
+      '    work->nativeCull=_nativeCull;work->nativeWinding=_nativeWinding;work->nativeFill=_nativeFill;\n'),
+     ('- (void)setCullMode:(NSUInteger)mode { NATIVE_OBJECT_LOCK; if(mode)[_commandBuffer failWith:"interface: culling is not implemented"];}\n'
+      '- (void)setFrontFacingWinding:(NSUInteger)mode { NATIVE_OBJECT_LOCK; if(mode)[_commandBuffer failWith:"interface: non-default winding is not implemented"];}\n'
+      '- (void)setTriangleFillMode:(NSUInteger)mode { NATIVE_OBJECT_LOCK; if(mode)[_commandBuffer failWith:"interface: wireframe is not implemented"];}\n',
+      r'''/* MTLCullMode none 0 / front 1 / back 2, MTLWinding clockwise 0 / counter-clockwise 1,
+ * MTLTriangleFillMode fill 0 / lines 1: kept for the draws that follow. */
+- (void)setCullMode:(NSUInteger)mode
+{ NATIVE_OBJECT_LOCK;
+	if (mode > 2) { [_commandBuffer failWith:"interface: unknown cull mode"]; return; }
+	_nativeCull = (unsigned)mode;
+	RW_ONCE("setCullMode: %lu honoured (rasterizer variant per draw)\n", (unsigned long)mode);
+}
+- (void)setFrontFacingWinding:(NSUInteger)mode { NATIVE_OBJECT_LOCK; _nativeWinding = mode ? 1 : 0; }
+- (void)setTriangleFillMode:(NSUInteger)mode
+{ NATIVE_OBJECT_LOCK;
+	_nativeFill = mode ? 1 : 0;
+	if (mode)
+		RW_ONCE("setTriangleFillMode: %lu drawn as lines\n", (unsigned long)mode);
+}
+'''),
+     ('- (void)failWith:(const char *)reason\n{ NATIVE_OBJECT_LOCK; \n',
+      '- (void)failWith:(const char *)reason\n{ NATIVE_OBJECT_LOCK; \n'
+      '\tstatic unsigned told;\n'
+      '\tif (__atomic_add_fetch(&told, 1, __ATOMIC_RELAXED) <= 16)\n'
+      '\t\trw_print("command buffer %p failed: %s\\n", self, reason);\n'))
 
 # Draw log: which texture object (a view names its parent) and which level, so a pass that
 # samples the texture it renders into can be told from one that ping-pongs.
