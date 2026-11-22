@@ -39,6 +39,7 @@ static void IFile(NSString *line) {
 static double IScreenW = 414.0;
 static double IIslandW = 125.0, IIslandH = 36.667, IIslandTop = 11.333;
 static double IAvoidW = 150.0;     // status bar keeps this width free around the pill
+static double IShapeTop = -1, IShapeH = 0;   // status bar exclusion rect (ShapeTop/ShapeHeight), default = the pill
 static double IInterW = 9.0;       // privacy dot slot
 static long IHomeType = 0;         // 0 = SpringBoard's own
 
@@ -77,7 +78,7 @@ static void IInstall(void) {
     }, NULL);
     IHook(@"UISDisplaySingleRectShape", NSSelectorFromString(@"sb_displayShapeForScreenType:"), YES, ^id(id self, NSInteger type) {
         double w = MAX(IAvoidW, IIslandW);
-        CGRect r = CGRectMake(IScreenW / 2 - w / 2, IIslandTop, w, IIslandH);
+        CGRect r = CGRectMake(IScreenW / 2 - w / 2, IShapeTop >= 0 ? IShapeTop : IIslandTop, w, IShapeH > 0 ? IShapeH : IIslandH);
         ILOG("display shape for screen type %ld -> %@", (long)type, NSStringFromCGRect(r));
         id (*init)(id, SEL, CGRect) = (id (*)(id, SEL, CGRect))objc_msgSend;
         return init([NSClassFromString(@"UISDisplaySingleRectShape") alloc], @selector(initWithRect:), r);
@@ -210,6 +211,8 @@ __attribute__((constructor)) static void IInit(void) {
         IIslandH = INum(p, @"IslandHeight", IIslandH);
         IIslandTop = INum(p, @"IslandTop", IIslandTop);
         IAvoidW = INum(p, @"StatusBarAvoidWidth", IAvoidW);
+        IShapeTop = INum(p, @"ShapeTop", IShapeTop);
+        IShapeH = INum(p, @"ShapeHeight", IShapeH);
         IHomeType = (long)INum(p, @"HomeScreenType", IHomeType);
         if (!p[@"RestartStalePosterBoard"] || [p[@"RestartStalePosterBoard"] boolValue]) IRestartStalePosterBoard();
         if (p[@"AlwaysPill"]) IAlwaysPill = [p[@"AlwaysPill"] boolValue];
