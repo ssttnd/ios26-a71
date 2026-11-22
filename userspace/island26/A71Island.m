@@ -137,7 +137,7 @@ static void IShowPill(int attempt) {
     }
     CGRect b = aperture.windowScene.coordinateSpace.bounds;
     IPill.frame = b;
-    [IPill viewWithTag:71].frame = CGRectMake(CGRectGetMidX(b) - IIslandW / 2, IIslandTop, IIslandW, IIslandH);
+    [IPill viewWithTag:71].frame = CGRectMake(b.origin.x + b.size.width / 2 - IIslandW / 2, IIslandTop, IIslandW, IIslandH);
     IPill.windowLevel = aperture.windowLevel - 1;
     IPill.hidden = NO;
     ILOG("pill: %@ at level %.0f under %@", NSStringFromCGRect([IPill viewWithTag:71].frame),
