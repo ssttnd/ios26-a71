@@ -1675,3 +1675,7 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   as 0xFFE000 -> low 12 bits 0 -> max LOD 0: every sample at level 0, the VariableBlurrer pyramid built from level 0.
   Applies to every default sampler (CoreAnimation blur/glass too). `6fe189c` clamps min/max LOD to [0, 15].
   Metal CI `45055892280` = storage samples + luma skip + 15 aliases + clear/RGB opaque resolve + LOD clamp.
+- Reviewed ../ios-a71 for applicable fixes: summary in `docs/ported-lessons.md`. Main open item: frame pacing (iOS 16
+  0226/0229, fb at 60 Hz). `build/a71-ios26-2124-60hz.img` SHA-256
+  `6ef02e97ee0d0eca9174c59712b6071d258738e539a0ad188367c7be6f7c84ce` = the 2124 image with only `sweetfb_hz=60`
+  (cmdline diffed against the running boot). Not flashed yet.
