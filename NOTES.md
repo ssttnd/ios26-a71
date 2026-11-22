@@ -1668,3 +1668,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   identity-swizzle source view (freedreno_blitter.c 55-58). `49b0302`: clear the IOSurface to (0,0,0,1) and blit RGB
   only. Includes the 15-alias fix (ac0856c; its CI 45054780677 superseded). Metal CI `45055258661` building.
   Open: why Mercury's alpha is < 1 at all (true fix would be there).
+- mip15 bundle (ac0856c, CI 45054780677, `a71-ios26-metal-mip15.payload` `a98a8186...`, 9/9): owner: blur still
+  pixelated (fix kept). CI 45055258661 failed (PIPE_MASK_RGB does not exist; dd11844 uses R|G|B, CI cancelled).
+- **Pixelated blur cause (owner pointed to the iOS 16 port):** ios-a71 effefe8 found A6XX_TEX_SAMP_1_MAX_LOD is 4.8
+  fixed point. air_metal.c passed lod_max unclamped; Metal's default lodMaxClamp (constexpr word 0x7bff = 65504) packs
+  as 0xFFE000 -> low 12 bits 0 -> max LOD 0: every sample at level 0, the VariableBlurrer pyramid built from level 0.
+  Applies to every default sampler (CoreAnimation blur/glass too). `6fe189c` clamps min/max LOD to [0, 15].
+  Metal CI `45055892280` = storage samples + luma skip + 15 aliases + clear/RGB opaque resolve + LOD clamp.
