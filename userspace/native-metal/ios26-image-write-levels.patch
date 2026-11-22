@@ -2361,7 +2361,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7595,47 @@
+@@ -7137,7 +7595,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2379,6 +2379,17 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +         if (f) {
 +            if (fscanf(f, "%15s", word) == 1)
 +               p = !strcmp(word, "none") ? 1 : !strcmp(word, "flip") ? 2 : 0;
++            /* optional process names after the word: the policy applies to those only */
++            char who[64];
++            bool listed = false, any = false;
++            while (fscanf(f, "%63s", who) == 1) {
++               any = true;
++#if defined(__APPLE__)
++               listed |= !strcmp(who, getprogname());
++#endif
++            }
++            if (any && !listed)
++               p = 0;
 +            fclose(f);
 +         }
 +         __atomic_store_n(&policy, p, __ATOMIC_RELAXED);
@@ -2410,7 +2421,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7712,10 @@
+@@ -7214,6 +7723,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2421,7 +2432,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7809,7 @@
+@@ -7307,6 +7820,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);

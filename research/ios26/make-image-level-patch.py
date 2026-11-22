@@ -2102,6 +2102,17 @@ null_texture_view(struct rwa_device *device)
          if (f) {
             if (fscanf(f, "%15s", word) == 1)
                p = !strcmp(word, "none") ? 1 : !strcmp(word, "flip") ? 2 : 0;
+            /* optional process names after the word: the policy applies to those only */
+            char who[64];
+            bool listed = false, any = false;
+            while (fscanf(f, "%63s", who) == 1) {
+               any = true;
+#if defined(__APPLE__)
+               listed |= !strcmp(who, getprogname());
+#endif
+            }
+            if (any && !listed)
+               p = 0;
             fclose(f);
          }
          __atomic_store_n(&policy, p, __ATOMIC_RELAXED);
