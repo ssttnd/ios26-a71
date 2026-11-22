@@ -1556,3 +1556,7 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   candidate `build/a71-ios26-island-canvas-2556.img` (`0122ffc20d328198a5f1d2b766e316cde5ad35ee4c22e2a3c136973d64729586`)
   was built from the existing 2124 kernel; it was not written to the phone. The working rollback image
   remains `build/a71-ios26-2124.img`.
+
+Handoff: combined AIR image typing and runtime texture-presence commit `697ccfd` is on GitHub.
+Metal CI `45045408902` was running when work stopped. The superseded type-only run `45045101450`
+was sent a cancellation request. Neither combined build nor hardware behavior has been verified.
