@@ -1679,3 +1679,14 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   0226/0229, fb at 60 Hz). `build/a71-ios26-2124-60hz.img` SHA-256
   `6ef02e97ee0d0eca9174c59712b6071d258738e539a0ad188367c7be6f7c84ce` = the 2124 image with only `sweetfb_hz=60`
   (cmdline diffed against the running boot). Not flashed yet.
+- 2026-11-23: LOD-clamp bundle (`45055892280`, `a71-ios26-metal-lodclamp.payload` `b230d319...`) + 60 Hz boot
+  (`a71-ios26-2124-60hz.img`, readback VERIFY OK; flushticks=1) installed. Owner: NO wallpaper. Mercury ran, no crash:
+  the clear + RGB opaque path is at fault (fd6 2D blit ignores the mask, so ordering of clear vs blit is suspect).
+  `a71-ios26-opaque-off.payload` moved /var/local/sweet-mtl-opaque-resolve to `.a71-off-1123`: wallpaper back,
+  bright again. Owner: home screen sometimes normal, pulling the notification shade (cover sheet) -> bright; the
+  glass element INSIDE the wallpaper (Space arc) is now a flat gradient (was pixelated before the LOD clamp); UI glass
+  still vanishes.
+- Next proper fix `8ea1ee3`: MTLTextureSwizzleChannels kept per texture (newTextureViewWithPixelFormat:...swizzle:
+  and IOSurface descriptor swizzle; logged as "texture view swizzle" / "IOSurface texture swizzle"), composed into
+  the sampler view. Hypothesis: CA views opaque layers with alpha->one. Also DRAWLOG reads all levels (<=10) of the
+  Mercury arc's blurredBackground (texture 7): arm with drawlog-every "10 800 MercuryPosterExtension". CI `45057128881`.
