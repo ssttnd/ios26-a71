@@ -1614,3 +1614,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Mercury renders to fmt 81 (BGRA8Unorm_sRGB), 4x; full-size mean BGR 204,168,110 (R110 G168 B204), half-size 224,199,121.
   Bergamota saw the same overexposure on A630 (its cause: AIR image stores typed as uint, fixed here in 2cba538) and still
   had "some areas very light" afterwards. Cause of the brightness here not identified yet.
+- Owner photo + report (23:15): **Dynamic Island appears with an activity (timer)** and goes away when it ends (idle
+  island is not drawn, as on an iPhone). Owner wants it higher. Status bar icons sit slightly lower than before (DynamicSplit
+  layout centred on the exclusion rect). `build/a71-ios26-island-prefs-top5.payload` `45060be2...` writes
+  /private/var/mobile/Library/Preferences/org.a71.island.plist {IslandTop 5, IslandHeight 34} (was 11.33/36.67): 4/4,
+  SpringBoard started. Result pending.
+- Wallpaper photo: Sky shapes are recognisable (blue/green discs) but large areas are washed out to pinkish white,
+  with speckle noise and blocky edges between regions: clipped/overflowing values, not a uniform gamma offset.
