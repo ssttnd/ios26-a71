@@ -1651,3 +1651,12 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   docs/prior-art.md lists UniXNU kernel 0242 "GPU cache invalidate before every submit", 0244 "drawables released 3
   vsyncs after the flip", AdrenoMetal 51b7003 "supportsTileShaders NO -> QuartzCore non-tile path". Same-GPU port:
   marnov999/ios26-sweet (SM7150, A618), README only.
+- Owner after the luma-boost boot: status bar position OK; wallpaper "was OK, then very bright again" (guess: correct
+  snapshot first, then the live Mercury render); blur inside the wallpaper is pixelated. luma_boost skip did NOT fix
+  the brightness. Checked and ruled out: sRGB formats (Mercury passes fmt 81 -> B8G8R8A8_SRGB, resolves 81), constant
+  sampler of the arc/downsample (linear min/mag, mip nearest: as Apple), texel offsets (translated), dispatch barriers
+  (PIPE_BARRIER_ALL after each launch_grid). Space uniforms have no EDR field; no core-brightness node in Apple's
+  N104AP tree either.
+- Found: run-time mip level writes got at most 8 image aliases; Mercury's VariableBlurrer pyramid on the 414x896
+  target has 10 levels, so levels 8/9 were written into level 7. `ac0856c` allows up to 15 (16 slots, RWA_MAX_TEXTURES
+  16, fd a6xx bindless images). Metal CI `45054780677` building. Expected to affect the pixelated blur.
