@@ -1468,6 +1468,13 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   shaders. Visual confirmation of the lock and home screens is pending. The repo's poster script now
   defaults to `space.dynamic` if there is no explicit poster.want override.
 
+- Owner confirmed Sky is black. The 20:49 video shows the separate Marble flicker, with intermittent
+  missing icons. For Sky, Mercury logged all four Space draws and successful resolve submissions from
+  4x MSAA into a single-sample IOSurface. The existing `TEXSTAT` values of 238 were the `0xee` sentinel:
+  `getBytes` rejected the 4x MSAA source and did not read its pixels. The new trace (`63a1bc8`, Metal
+  Actions `45042508339`) reads only a bounded number of single-sample resolve destinations, keeping
+  internal textures and visible IOSurfaces identifiable in the log.
+
 ### Dynamic Island follow-up
 
 - Confirmed in 23G90 local disassembly: `SBSystemApertureViewController._frameForSensorRegionInBounds:`
@@ -1483,3 +1490,33 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   the exclusion rectangle before choosing the DynamicSplit provider. Trace construction of that object and
   SpringBoard's activation gate. The red bar from the earlier full subtype change coincided with different
   screen and artwork metrics; the geometry reads traced here did not query a physical camera.
+- The published Nugget XR/11 RDAR workaround uses a managed `IOMobileGraphicsFamily` preference with
+  828×1791. Prepared `a71-ios26-island-canvas-pref.payload` with that preference and the 2556 subtype
+  plus the numeric MobileGestalt island flag. TWRP read the current original MG (`e9759d28...`), found
+  no existing resolution preference, and verified the staged package SHA-256
+  `957dd89c872ff40719bac02483b68fb8bbdfaf7f36447c6d4e9fdb13fcb32c56`.
+  System reboot requested. USB verification starts at offset 56094672. Rollback is prepared in
+  `build/a71-ios26-island-canvas-pref-rollback.payload` (`ef0bcada...`), which restores the exact MG
+  bytes and archives the test preference outside its active filename. Boot image remains 2124.
+- iOS subsequently booted, package 10/10. `backboardd` submitted 828×1791 IOSurfaces while the kernel
+  framebuffer still presented a destination of 828×1792. The owner reported no visible Dynamic Island.
+- Disassembly of `SBSIsSystemApertureAvailable` confirmed an independent route through the FrontBoard
+  emulation domain: with emulation enabled it recognizes subtype 2556 without changing MobileGestalt.
+  The SpringBoard display-context emulation routine changes the mode only when emulated bounds are set.
+  It does not synthesize an exclusion area. The next test unsets the prior canvas preference, restores
+  the exact original MG, and sets only the FrontBoard emulation flag and aperture subtype.
+- Diagnostic Metal CI `45042508339` succeeded and artifact `14762034740` matched all six manifest hashes.
+  Combined package with the FrontBoard test is `a71-ios26-resolve-frontboard-island.payload`, SHA-256
+  `32fb612b1c3d61a946c9e576f72539643d272dc6b45daffe98d4accc13d2a1c0`. The companion rollback
+  `a71-ios26-frontboard-island-rollback.payload` (`fd384e13...`) archives the test preferences.
+- Combined package readback matched, iOS booted and applied 21/21. Restored the original MG and archived
+  the managed canvas plist. Actual compositor surfaces still measured 828×1791 after removal. The local
+  IOMobileFramebuffer code reads app preferences and has a setter that persists `canvas_width` and
+  `canvas_height`; check ordinary preference domains before restoring 828×1792. Owner reported a slight
+  status-bar shift and no visible Island after the FrontBoard test. No verified Island fix is installed.
+- The diagnostic Sky run measured nonzero BGRA in its 414×895 private resolve (132,138,135,145 on the first
+  sample) and all-zero RGBA in two 828×1791 IOSurface resolves. This establishes that visible surfaces were
+  already transparent before compositor sampling; it does not identify why the full-frame resolve is zero.
+  Commit `fa7d9ca` stages Mercury's same-format multisample IOSurface resolves in a private same-size
+  single-sample texture and copies it on the GPU. All three donor Metal patches apply in order. Metal CI
+  `45043830425` building; verify its six files, install, and compare the same logged texel measurements.
