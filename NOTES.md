@@ -1410,3 +1410,12 @@ VM: ~/i18/mini2.ipsw (iPhone 17 OS image), ~/heifenv; decrypted container on the
   frames composited before the GPU write of the IOSurface retires (see "publication without GPU drain" options in the
   SweetNativeMetal banner: /var/local/sweet-native-strict-publish, sweet-native-always-clean), or rasterizer variant reuse).
   Flip file left installed.
+- **Flicker analysis (owner video 20261122_204934.mp4, 194 frames @30 fps, OpenCV on the PC):** brightness collapses in bursts at
+  frames ~19-31, 67-80, 116-129, 164-167 — every ~48 frames (~1.6 s), ~0.4 s each. Normal frames: whole Marble + icons, correct.
+  Flicker frames: entire screen black INCLUDING icons/dock, only a central wedge of the wallpaper visible. So whole composited
+  frames reach the panel incomplete, not just the wallpaper layer. backboardd logged no failWith / draw failure / GPU timeout /
+  MESA error in this boot. Interpretation (unverified): the panel copy (sweet_fb copy mode) or IOSurface publication takes the
+  frame before backboardd's GPU work for it retires ("IOSurface publication without GPU drain", "skips the clean while the
+  surface seed is unchanged"). First tests, no rebuild needed: touch /var/local/sweet-native-strict-publish, then
+  /var/local/sweet-native-always-clean (each restores the conservative behaviour; package `text:` items), and watch for the
+  1.6 s period (likely the wallpaper's own animation/parallax cycle loading the GPU enough to expose the race).
