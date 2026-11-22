@@ -2475,7 +2475,9 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
 '''),
      # GLASSSTAT: every draw is counted by kind (SweetNativeDrawLog.inc)
      ('\tconst unsigned dl = native_drawlog_next();\n',
-      '\tnative_glassstat([work->render render]);\n\tconst unsigned dl = native_drawlog_next();\n'),
+      '\tnative_glassstat([work->render render]);\n'
+      '\tif (native_skip_luma_boost([work->render render]))\n\t\treturn YES;\n'
+      '\tconst unsigned dl = native_drawlog_next();\n'),
      # MTLHeap: Mercury's look preview allocates its textures from a heap. The device answered
      # nil (and a zero size-and-align), Mercury logged "unable to create heap: 0", and
      # uber_fragment then ran with no texture bound. A heap here is bookkeeping: each resource
@@ -3033,6 +3035,42 @@ native_glassstat(const void *render)
 \tglass_fg += cat == 2;
 \tblur += cat == 3;
 \tpthread_mutex_unlock(&lock);
+}
+
+/* CoreAnimation's luma_boost_lph/lpf (QuartzCore 23G90): out.rgb = d0.rgb +
+ * scale * edr * LUT(luma(d0) * inv_edr), an EDR brightness lift drawn over the finished
+ * frame with framebuffer fetch. backboardd runs it full-screen on the A71, whose panel has
+ * no EDR, and the wallpaper came out about twice as bright (owner, 2026-11-22). The draw
+ * only adds light, so leaving it out leaves the frame as composited.
+ * /var/local/sweet-mtl-skip-luma-boost present = skip it. */
+static bool
+native_skip_luma_boost(const void *render)
+{
+\tstatic int skip = -1;
+\tstatic const void *last_render;
+\tstatic bool last_is;
+\tif (skip < 0) {
+\t\tskip = access("/var/local/sweet-mtl-skip-luma-boost", F_OK) == 0;
+\t\tfprintf(stderr, "SweetNativeMetal: luma_boost draws %s (/var/local/sweet-mtl-skip-luma-boost)\\n",
+\t\t        skip ? "skipped" : "drawn");
+\t}
+\tif (!skip)
+\t\treturn false;
+\tif (render == last_render)
+\t\treturn last_is;
+\tchar f[48] = "";
+\tpthread_mutex_lock(&native_drawlog_lock);
+\tstruct native_drawlog_name *e = native_drawlog_slot(render, false);
+\tif (e)
+\t\tmemcpy(f, e->ffn, sizeof(f));
+\tpthread_mutex_unlock(&native_drawlog_lock);
+\tf[sizeof(f) - 1] = 0;
+\tlast_render = render;
+\tlast_is = !strncmp(f, "luma_boost_", 11);
+\tstatic unsigned told;
+\tif (last_is && told++ < 4)
+\t\tfprintf(stderr, "SweetNativeMetal: skipped %s draw\\n", f);
+\treturn last_is;
 }
 
 /* One attribute of one vertex, decoded by MTLVertexFormat. */
