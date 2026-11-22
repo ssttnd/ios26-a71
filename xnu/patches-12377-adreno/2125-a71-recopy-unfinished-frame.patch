@@ -9,7 +9,7 @@ again when its fence passes, unless a newer swap arrives first. sweetfb_recopy=0
 FB stats gain recopies=N.
 
 diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
-index ea1941d..27ce752 100644
+index ea1941d..a69e028 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
 @@ -406,7 +406,18 @@ public:
@@ -115,7 +115,7 @@ index ea1941d..27ce752 100644
  	    fScanCopy && !fScanFailed ? 1 : 0, c.scanCopies, SW_F2(scAvg), sweet_abs_us(c.scanCopyMaxAbs),
  	    fScanGpu && !fScanGpuOff ? (fScanGpuRest ? 2 : 1) : 0, c.scanGpuCopies, c.scanGpuFallbacks,
  	    c.scanGpuSubmitFails, c.scanGpuLate, sweet_abs_us(c.scanGpuWaitMaxAbs));
-@@ -1555,6 +1589,41 @@ sweet_hold_release(SweetSurface **set)
+@@ -1555,6 +1589,40 @@ sweet_hold_release(SweetSurface **set)
  	}
  }
  
@@ -132,8 +132,7 @@ index ea1941d..27ce752 100644
 +		int v = 1;
 +		PE_parse_boot_argn("sweetfb_recopy", &v, sizeof(v));
 +		on = v != 0;
-+		IOLog("SWEET FB: frames shown unfinished are %s (sweetfb_recopy)
-+",
++		IOLog("SWEET FB: frames shown unfinished are %s (sweetfb_recopy)\n",
 +		    on ? "copied again when their GPU work completes" : "left as shown");
 +	}
 +	if (!on || fEarly) {
@@ -157,7 +156,7 @@ index ea1941d..27ce752 100644
  void
  AppleCLCD::swap(const uint8_t *rec)
  {
-@@ -1566,8 +1635,15 @@ AppleCLCD::swap(const uint8_t *rec)
+@@ -1566,8 +1634,15 @@ AppleCLCD::swap(const uint8_t *rec)
  			sweet_hold(held[i], true);
  		}
  	}
@@ -173,7 +172,7 @@ index ea1941d..27ce752 100644
  	/*
  	 * Sweet 2009: a swap replacing an unshown frame moves that frame to the older slot (unless one is already there:
  	 * then the replaced one, newer than it, is dropped), so the gate can show it as soon as its GPU work completes
-@@ -1600,6 +1676,7 @@ AppleCLCD::swap(const uint8_t *rec)
+@@ -1600,6 +1675,7 @@ AppleCLCD::swap(const uint8_t *rec)
  	memcpy(fPendHold, held, sizeof(held));
  	IOLockUnlock(fLock);
  	sweet_hold_release(dropped);
