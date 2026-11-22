@@ -1731,6 +1731,50 @@ rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsigned l
             fprintf(stderr, "SweetNativeMetal: TEXSTAT %u could not read the private resolve stage\\n", trace_seq);
          }
       }
+      /* backboardd composites Mercury's drawable source-over; Mercury's resolve came out
+       * 39% alpha 0 on the A71 (2026-11-22) and the wallpaper was added to what lay
+       * under it (twice as bright). /var/local/sweet-mtl-opaque-resolve lists the
+       * processes ("*" = all) whose external resolves are written with alpha 1. */
+      static int opaque = -1;
+      if (opaque < 0) {
+         opaque = 0;
+         FILE *f = fopen("/var/local/sweet-mtl-opaque-resolve", "r");
+         if (f) {
+            char list[256] = { 0 };
+            size_t n = fread(list, 1, sizeof(list) - 1, f);
+            fclose(f);
+            list[n] = 0;
+#if defined(__APPLE__)
+            const char *me = getprogname();
+#else
+            const char *me = NULL;
+#endif
+            opaque = strchr(list, '*') != NULL || (me && *me && strstr(list, me) != NULL);
+         }
+         fprintf(stderr, "SweetNativeMetal: external resolves %s (/var/local/sweet-mtl-opaque-resolve)\\n",
+                 opaque ? "written with alpha 1" : "copied as rendered");
+      }
+      if (opaque) {
+         struct pipe_blit_info o = { 0 };
+         o.src.resource = stage;
+         o.src.level = 0;
+         o.src.format = stage->format;
+         o.src.box = (struct pipe_box){ .x = 0, .y = 0, .z = 0, .width = w, .height = h, .depth = 1 };
+         o.dst.resource = dst->res;
+         o.dst.level = dl;
+         o.dst.format = dst->res->format;
+         o.dst.box = (struct pipe_box){ .x = 0, .y = 0, .z = (int)slice, .width = w, .height = h,
+                                        .depth = 1 };
+         o.mask = PIPE_MASK_RGBA;
+         o.filter = PIPE_TEX_FILTER_NEAREST;
+         o.swizzle_enable = true;
+         o.swizzle[0] = PIPE_SWIZZLE_X;
+         o.swizzle[1] = PIPE_SWIZZLE_Y;
+         o.swizzle[2] = PIPE_SWIZZLE_Z;
+         o.swizzle[3] = PIPE_SWIZZLE_1;
+         pipe->blit(pipe, &o);
+         return 0;
+      }
       pipe->resource_copy_region(pipe, dst->res, dl, 0, 0, slice, stage, 0, &b.dst.box);
       return 0;
    }
