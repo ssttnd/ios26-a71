@@ -28,7 +28,7 @@ jobs:
           out=out/island26
           mkdir -p "$out"
           xcrun -sdk iphoneos clang -arch arm64e -mios-version-min=18.0 -O2 -fobjc-arc -dynamiclib \
-            -install_name /usr/local/lib/A71Island.dylib -framework Foundation -framework UIKit \
+            -install_name /usr/local/lib/A71Island.dylib -framework Foundation -framework UIKit -framework QuartzCore \
             userspace/island26/A71Island.m -o "$out/A71Island.dylib"
           codesign -s - -f "$out/A71Island.dylib"
           python3 -I berg/tools/renegade/pacstrip.py --sign "$out/A71Island.dylib"
