@@ -1373,3 +1373,10 @@ Next:
 - Planned workaround: decode the HEICs with alpha on the PC and store lossless PNG bytes under the same .HEIC names (ImageIO
   sniffs content), caml untouched. Blocked: `pip install pillow-heif` into a user venv in the VM was refused by the session safety
   check (like sudo apt / apt-get download before). Needs the owner's permission rule, or another decoder.
+- Owner approved package installs. VM: `~/heifenv` (python venv) with pillow-heif 1.8.1 / Pillow 13.0.0. Decoded all 30 Marble
+  HEICs with alpha (e.g. Fix-Seam 95% non-opaque, Level-3 36%), ICC kept, lossless PNG: `research/ios26/iphone18-3/png/`.
+  The 7940 (Mist Blue) layers in `marble-a71` now hold PNG bytes under the original .HEIC names (ImageIO sniffs content).
+- PosterBoard keeps a copy of the wallpaper inside the configuration (`CollectionsPoster/configurations/9A17E80D.../versions/0/
+  contents/7940.Marble-Three-V57.wallpaper`) plus RuntimeSnapshot-home.atx and scratch/SnapshotCache.cachedb.
+  `build/a71-ios26-marble-png7940.payload` (`32aaab72...`, 37/37): PNG layers into the collection AND the configuration copy;
+  snapshot and cache renamed `*.a71-old`. Visual result pending.
