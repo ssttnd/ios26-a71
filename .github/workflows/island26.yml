@@ -1,0 +1,35 @@
+name: island26
+# A71Island.dylib (userspace/island26): SpringBoard geometry hooks for the system Dynamic Island on iOS 26.
+# arm64e, ad hoc signed, then Bergamota's pacstrip --sign (same recipe as sweetnet26.yml). Only our own source is
+# built here; SpringBoard itself is patched and re-signed offline, never uploaded.
+on:
+  workflow_dispatch:
+env:
+  BERGAMOTA_REPO: https://github.com/ry-diffusion/Bergamota
+  BERGAMOTA_SHA: 37a7a7a917fc09945ed2f7d1ae68b84d4525b4cb
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Bergamota (pacstrip)
+        run: |
+          git init -q berg
+          git -C berg fetch -q --depth 1 "$BERGAMOTA_REPO" "$BERGAMOTA_SHA"
+          git -C berg checkout -q FETCH_HEAD
+          test "$(git -C berg rev-parse HEAD)" = "$BERGAMOTA_SHA"
+      - name: Build A71Island.dylib
+        run: |
+          out=out/island26
+          mkdir -p "$out"
+          xcrun -sdk iphoneos clang -arch arm64e -mios-version-min=18.0 -O2 -fobjc-arc -dynamiclib \
+            -install_name /usr/local/lib/A71Island.dylib -framework Foundation -framework UIKit \
+            userspace/island26/A71Island.m -o "$out/A71Island.dylib"
+          codesign -s - -f "$out/A71Island.dylib"
+          python3 -I berg/tools/renegade/pacstrip.py --sign "$out/A71Island.dylib"
+          (cd "$out" && shasum -a 256 * > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: island26
+          path: out/island26/
