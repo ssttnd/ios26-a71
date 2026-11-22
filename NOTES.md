@@ -1690,3 +1690,18 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   and IOSurface descriptor swizzle; logged as "texture view swizzle" / "IOSurface texture swizzle"), composed into
   the sampler view. Hypothesis: CA views opaque layers with alpha->one. Also DRAWLOG reads all levels (<=10) of the
   Mercury arc's blurredBackground (texture 7): arm with drawlog-every "10 800 MercuryPosterExtension". CI `45057128881`.
+- 2026-11-23 swizzle build (`8ea1ee3`, CI 45057128881, `a71-ios26-swizzle-trace.payload` `bc780ced...`, sweet-mtl-trace
+  += backboardd, drawlog-every = Mercury): owner: still very bright; NO "swizzle" log line: CA does not request alpha->one.
+  Mercury pyramid (TEXSTAT 7, blurredBackground 414x896 fmt 81): L0/L1 A=120, L2-L8 near-white A=0, L9 never written.
+- `7d574e8` (sRGB image view -> linear twin, CI 45057822718, `a71-ios26-metal-srgbimg.payload` `16189e71...`): L1
+  194,159,90 A120; L2 208,196,141 A0; then darker each level (162, 88, 25, 2, 0): linear stores decoded again on read.
+  Owner: wallpaper glass element drawn wrong. `7bea1cc`: shader-written (explicit ShaderWrite usage, not IOSurface)
+  sRGB textures are created with the linear format. Metal CI `45058643638`. Open: A=0 from L2 (downsample is a plain
+  4-tap * 0.25 on all four channels).
+- Glass: owner video (20261123, Unigram 5195228476017258615.mp4, 345 frames): dock glass + search pill present frames
+  0-27, gone 28-87 after a home-page swipe, back after App Library -> home (120+). Control Center after a tap: module
+  platters lose fill outside rectangular patches (frame 216). Owner: glass survives App Library -> home (even slowly),
+  lost after a later home-page swipe. backboardd trace: 69 of 75 full-screen passes use loadAction Load (partial
+  updates). QuartzCore has CA_DISABLE_DIRTY_REGIONS and CA_DISABLE_BACKDROP_CACHE. Prepared
+  `a71-ios26-ca-nodirty.payload` `7bdb9c6f...` (launchd.plist live `261eae97...` -> backboardd
+  EnvironmentVariables CA_DISABLE_DIRTY_REGIONS=1, original kept as .a71-before-nodirty) and rollback `bf945e44...`.
