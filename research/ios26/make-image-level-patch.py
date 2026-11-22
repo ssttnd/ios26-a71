@@ -1400,6 +1400,15 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
               !strcmp(n->part[1], "unorm4x8")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
+     # Mercury draws Space 4x and resolves into its drawable. pipe->blit of a 4x source is
+     # refused by the fd6 2D engine and falls back to u_blitter, whose
+     # util_blitter_is_blit_supported asks is_format_supported(nr_samples, nr_storage_samples)
+     # and fd6 declines MAX2(1, 4) != MAX2(1, 0): the resolve was dropped in silence, and the
+     # 828x1792 private resolve stage read 100% zero on the A71 (2026-11-22). Bergamota's
+     # A630 port found the same and the wallpaper appeared once storage samples were set.
+     ('.array_size = array_size, .last_level = mips - 1, .nr_samples = query_samples,\n',
+      '.array_size = array_size, .last_level = mips - 1, .nr_samples = query_samples,\n'
+      '      .nr_storage_samples = query_samples,\n'),
      ('   unsigned num_views = 0, num_images = 0, num_samplers = 0;\n',
       '   unsigned num_views = 0, num_images = 0, num_samplers = 0;\n'
       '   uint32_t texture_presence = 0;\n'),
