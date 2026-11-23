@@ -2158,3 +2158,16 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Still installed and now probably unnecessary: wallpaper repeat-skip test, single-layer test, luma-boost skip,
   drawlog-every + metadata-only, wall-regions. Next: confirm Cover Sheet and app launches by screenshot, then
   remove the A/B test flags one at a time and make the Ixrg alpha-one behaviour default (no flag).
+- After the Ixrg fix (owner + shot `build/a71-xrg-home.png`, USB line 680297, Cover Sheet): wallpaper no longer
+  washed, but **the lock-screen date and clock are not visible**. The clock glyph draws are still issued
+  (`PBGRAXm_TimgBvcmA2Xhf_Ialp`, A8 glyphs 1xx x112, plus `TkfhBvcm`/`TdfgBvcm`/`TcimBvcm` passes with RGBA16F
+  backdrops; 90 Bvcm draws in window 678709-680296 vs 121 before), so they render but produce no visible change.
+  Guess (not proven): the vibrant colour-matrix (`Bvcm`) result depends on backdrop/frame alpha, which was low
+  before the fix and is 1 now; or the text was visible only through the old alpha holes. Needs the Bvcm shader
+  (LLVM dump of the QuartzCore metallib in the VM) and its uniforms before changing anything.
+- Owner: glass inside the wallpaper still wrong and colours slightly off; sent the reference Sky wallpaper
+  (light cyan top-left, mint disc, blue disc, the big glass arc refracting deep blue at the bottom right). On the
+  phone the area under the arc is flat pale lavender/grey and the top-left is beige. Link to an older finding:
+  Mercury's blur pyramid (blurredBackground, 414x896 fmt 81) had L2-L8 near-white with A=0 — that matches both
+  the flat pale arc and the low alpha WALLREGION found exactly in that area. Next real fix is in Mercury's
+  VariableBlurrer downsample chain (why levels >= 2 are white and transparent), not in backboardd.
