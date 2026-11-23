@@ -1790,3 +1790,13 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   TWRP readback VERIFY OK. This renames only sweet-mtl-trace and
   sweet-native-drawlog-every to .a71-before-editor-test. Requested system
   reboot on the same 2125 image. Retest the editor on this boot.
+- Quiet-editor payload applied 2/2 with errno/sync/clear all zero at lines
+  31501-31507 of the USB log. User reported wallpaper missing on that boot.
+  PosterBoard still selected the same space.two lock configuration and
+  Mercury ran. Its missing texture slot 3 message also occurs in the old
+  capture, so that message alone does not explain the new symptom.
+- A normal USB reboot was requested and confirmed at line 50169. The next
+  2125 boot reached SpringBoard and Mercury, with the same selected lock
+  configuration and working framebuffer copies. Wallpaper visibility and
+  chooser still need visual confirmation. The owner said they will do
+  any next reboot themselves. Logger remains running.
