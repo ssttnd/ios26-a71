@@ -2819,6 +2819,8 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\tnative_xrg_alpha_one([work->render render], work->textures, work->textureCount);\n'
       '\tnative_mercury_occl_trace([work->render render], work->color, work->colorCount,\n'
       '\t                          work->buffers, work->bufferOffsets, work->count);\n'
+      '\tnative_glass_uniform_trace(0, [work->render render], work->buffers, work->bufferOffsets, work->count,\n'
+      '\t                           work->textures, work->textureCount);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3445,6 +3447,59 @@ native_mercury_occl_trace(const void *render, id const *colors, unsigned ncolors
 	fprintf(stderr, "SweetNativeMetal: MERCURYOCCL %s bg=%d occl=%d screen=%ux%u rt %p %ux%u fmt %u samples %u IOSurface %u\\n",
 	        ffn, bg, occl, sw, sh, (void *)rt, rt ? (unsigned)[rt width] : 0, rt ? (unsigned)[rt height] : 0,
 	        rt ? (unsigned)[rt pixelFormat] : 0, rt ? (unsigned)[rt sampleCount] : 0, rwd_surface_id(surface));
+}
+
+/* GLASSU (opt-in, /var/local/sweet-native-glass-uniforms, backboardd): for CoreAnimation's glass passes
+ * (fragment function glass_*), fragment buffer 1 (GlassBackgroundUniforms, 272 bytes: blur_radius @0x5c,
+ * refraction amounts, colour matrices, opacities) as 68 floats in four lines, and the source/sdf textures.
+ * Tells "CA asks for no glass" (radius/opacity 0) from "glass asked for but drawn wrong". 48 draws max, no
+ * readback. */
+static void
+native_glass_uniform_trace(unsigned seq_hint, const void *render, id const *fbufs, const size_t *foffs,
+                           unsigned nfb, id const *textures, unsigned ntextures)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-glass-uniforms", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: GLASSU enabled\\n");
+	});
+	if (!enabled || nfb < 2 || fbufs[1] == nil)
+		return;
+	char ffn[48] = "";
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	if (name != NULL)
+		memcpy(ffn, name->ffn, sizeof(ffn));
+	pthread_mutex_unlock(&native_drawlog_lock);
+	ffn[sizeof(ffn) - 1] = 0;
+	if (strncmp(ffn, "glass_", 6) != 0)
+		return;
+	static unsigned told;
+	const unsigned n = __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
+	if (n >= 48)
+		return;
+	const uint8_t *base = (const uint8_t *)[fbufs[1] contents];
+	const size_t len = (size_t)[fbufs[1] length], off = foffs[1];
+	id t3 = ntextures > 3 ? textures[3] : nil, t4 = ntextures > 4 ? textures[4] : nil;
+	fprintf(stderr, "SweetNativeMetal: GLASSU %u %s buf %zu@%zu src %ux%u fmt %u lv %u sdf %ux%u fmt %u\\n", n, ffn, len, off,
+	        t3 ? (unsigned)[t3 width] : 0, t3 ? (unsigned)[t3 height] : 0, t3 ? (unsigned)[t3 pixelFormat] : 0,
+	        t3 ? (unsigned)[t3 mipmapLevelCount] : 0, t4 ? (unsigned)[t4 width] : 0, t4 ? (unsigned)[t4 height] : 0,
+	        t4 ? (unsigned)[t4 pixelFormat] : 0);
+	if (base == NULL || off + 272 > len)
+		return;
+	const float *f = (const float *)(base + off);
+	for (unsigned row = 0; row < 4; row++) {
+		char line[400];
+		int at = snprintf(line, sizeof(line), "SweetNativeMetal: GLASSU %u f%u:", n, row * 17);
+		for (unsigned k = 0; k < 17 && at > 0 && (size_t)at < sizeof(line); k++)
+			at += snprintf(line + at, sizeof(line) - at, " %.4g", f[row * 17 + k]);
+		fprintf(stderr, "%s\\n", line);
+	}
+	(void)seq_hint;
 }
 
 static void
