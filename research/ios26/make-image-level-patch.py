@@ -1402,6 +1402,68 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
               !strcmp(n->part[1], "unorm4x8")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('''   pipe->launch_grid(pipe, &grid);
+   pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);
+''',
+      '''   pipe->launch_grid(pipe, &grid);
+   pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);
+
+   /* The first four Mercury dispatches go to an intermediate, L1 of
+    * the pyramid, another intermediate, then L2 of the pyramid. Sample
+    * each expected destination once so we can locate the alpha loss. */
+   if (strstr(name, "VariableBlurrer::downsample") && bindings->texture_count > 1) {
+      static int enabled = -1;
+      static unsigned budget;
+      int trace = __atomic_load_n(&enabled, __ATOMIC_RELAXED);
+      if (trace < 0) {
+         FILE *flag = fopen("/var/local/sweet-native-arc-texels", "r");
+         trace = flag != NULL;
+         if (flag)
+            fclose(flag);
+         __atomic_store_n(&enabled, trace, __ATOMIC_RELAXED);
+      }
+      if (trace && __atomic_load_n(&budget, __ATOMIC_RELAXED) < 4) {
+         const unsigned step = __atomic_fetch_add(&budget, 1, __ATOMIC_RELAXED);
+         struct rwa_texture *dst = bindings->textures[1];
+         if (step < 4 && dst && dst->res->target == PIPE_TEXTURE_2D &&
+             (dst->res->format == PIPE_FORMAT_B8G8R8A8_UNORM ||
+              dst->res->format == PIPE_FORMAT_B8G8R8A8_SRGB)) {
+            const unsigned relative_level = step % 2 ? (step + 1) / 2 : 0;
+            if (relative_level < dst->level_count) {
+               const unsigned level = dst->first_level + relative_level;
+               const unsigned width = u_minify(dst->res->width0, level);
+               const unsigned height = u_minify(dst->res->height0, level);
+               struct pipe_box box = {0, 0, 0, width, height, 1};
+               struct pipe_transfer *transfer = NULL;
+               const uint8_t *data = pipe->texture_map(pipe, dst->res, level,
+                                                        PIPE_MAP_READ, &box, &transfer);
+               if (data) {
+                  unsigned sums[4] = {0};
+                  unsigned zero_alpha = 0;
+                  for (unsigned y = 1; y <= 8; y++) {
+                     for (unsigned x = 1; x <= 8; x++) {
+                        const uint8_t *pixel = data + (size_t)(height * y / 9) * transfer->stride
+                                              + 4 * (width * x / 9);
+                        for (unsigned channel = 0; channel < 4; channel++)
+                           sums[channel] += pixel[channel];
+                        zero_alpha += pixel[3] == 0;
+                     }
+                  }
+                  pipe->texture_unmap(pipe, transfer);
+                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u dst %p L%u %ux%u BGRA %u,%u,%u,%u zero_alpha %u/64\\n",
+                          step, (void *)dst->res, level, width, height,
+                          sums[0] / 64, sums[1] / 64, sums[2] / 64, sums[3] / 64, zero_alpha);
+               } else {
+                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u L%u map failed\\n", step, level);
+               }
+            } else {
+               fprintf(stderr, "SweetNativeMetal: ARCTEX step %u expected L%u but found %u levels\\n",
+                       step, relative_level, dst->level_count);
+            }
+         }
+      }
+   }
+'''),
      ('''   unsigned old_images=device->native_pending_images[stage];
 ''',
       '''   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {

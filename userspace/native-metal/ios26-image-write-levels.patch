@@ -2326,11 +2326,10 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (num_ssbo)
        pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);
     unsigned old_views=device->native_pending_views[stage];
-@@ -4014,6 +4467,42 @@
-             old_views>num_views?old_views-num_views:0, false, views);
+@@ -4015,6 +4468,42 @@
        device->native_views_ns+=native_now_ns()-began;
        memcpy(device->native_views[stage],views,sizeof(views));device->native_views_valid[stage]=true;
-+   }
+    }
 +   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {
 +      static int enabled = -1;
 +      static unsigned budget;
@@ -2366,10 +2365,74 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +         }
 +         fprintf(stderr, "SweetNativeMetal: ARCBIND %s%s\n", name, details);
 +      }
-    }
++   }
     unsigned old_images=device->native_pending_images[stage];
     if (device->in_command && device->native_images_valid[stage] &&
-@@ -5383,6 +5872,8 @@
+        !memcmp(device->native_images[stage],images,sizeof(images)))device->native_binding_reused++;
+@@ -4175,6 +4664,62 @@
+    };
+    pipe->launch_grid(pipe, &grid);
+    pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);
++
++   /* The first four Mercury dispatches go to an intermediate, L1 of
++    * the pyramid, another intermediate, then L2 of the pyramid. Sample
++    * each expected destination once so we can locate the alpha loss. */
++   if (strstr(name, "VariableBlurrer::downsample") && bindings->texture_count > 1) {
++      static int enabled = -1;
++      static unsigned budget;
++      int trace = __atomic_load_n(&enabled, __ATOMIC_RELAXED);
++      if (trace < 0) {
++         FILE *flag = fopen("/var/local/sweet-native-arc-texels", "r");
++         trace = flag != NULL;
++         if (flag)
++            fclose(flag);
++         __atomic_store_n(&enabled, trace, __ATOMIC_RELAXED);
++      }
++      if (trace && __atomic_load_n(&budget, __ATOMIC_RELAXED) < 4) {
++         const unsigned step = __atomic_fetch_add(&budget, 1, __ATOMIC_RELAXED);
++         struct rwa_texture *dst = bindings->textures[1];
++         if (step < 4 && dst && dst->res->target == PIPE_TEXTURE_2D &&
++             (dst->res->format == PIPE_FORMAT_B8G8R8A8_UNORM ||
++              dst->res->format == PIPE_FORMAT_B8G8R8A8_SRGB)) {
++            const unsigned relative_level = step % 2 ? (step + 1) / 2 : 0;
++            if (relative_level < dst->level_count) {
++               const unsigned level = dst->first_level + relative_level;
++               const unsigned width = u_minify(dst->res->width0, level);
++               const unsigned height = u_minify(dst->res->height0, level);
++               struct pipe_box box = {0, 0, 0, width, height, 1};
++               struct pipe_transfer *transfer = NULL;
++               const uint8_t *data = pipe->texture_map(pipe, dst->res, level,
++                                                        PIPE_MAP_READ, &box, &transfer);
++               if (data) {
++                  unsigned sums[4] = {0};
++                  unsigned zero_alpha = 0;
++                  for (unsigned y = 1; y <= 8; y++) {
++                     for (unsigned x = 1; x <= 8; x++) {
++                        const uint8_t *pixel = data + (size_t)(height * y / 9) * transfer->stride
++                                              + 4 * (width * x / 9);
++                        for (unsigned channel = 0; channel < 4; channel++)
++                           sums[channel] += pixel[channel];
++                        zero_alpha += pixel[3] == 0;
++                     }
++                  }
++                  pipe->texture_unmap(pipe, transfer);
++                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u dst %p L%u %ux%u BGRA %u,%u,%u,%u zero_alpha %u/64\n",
++                          step, (void *)dst->res, level, width, height,
++                          sums[0] / 64, sums[1] / 64, sums[2] / 64, sums[3] / 64, zero_alpha);
++               } else {
++                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u L%u map failed\n", step, level);
++               }
++            } else {
++               fprintf(stderr, "SweetNativeMetal: ARCTEX step %u expected L%u but found %u levels\n",
++                       step, relative_level, dst->level_count);
++            }
++         }
++      }
++   }
+ 
+    /* Waited for here, and not left to rwa_finish, because this is the call that can
+     * say which dispatch did not come back -- and because the buffers are mapped the
+@@ -5383,6 +5928,8 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2378,7 +2441,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6509,12 +7000,12 @@
+@@ -6509,12 +7056,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2394,7 +2457,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6645,6 +7136,9 @@
+@@ -6645,6 +7192,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2404,7 +2467,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7631,58 @@
+@@ -7137,7 +7687,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2464,7 +2527,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7759,10 @@
+@@ -7214,6 +7815,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2475,7 +2538,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7856,7 @@
+@@ -7307,6 +7912,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
