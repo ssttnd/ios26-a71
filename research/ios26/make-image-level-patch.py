@@ -3269,7 +3269,9 @@ native_wall_skip_uploaded_overlay(const void *commands, const void *render,
 static void
 native_drawlog_draw(unsigned seq,'''),
      ('static void\nnative_drawlog_draw(unsigned seq,',
-      'static void native_drawlog_texstat(unsigned seq, id t);\n\nstatic void\nnative_drawlog_draw(unsigned seq,'),
+      'static void native_drawlog_texstat(unsigned seq, id t);\n'
+      'static void native_wall_regionstat(unsigned seq, const char *label, id t, unsigned surface);\n\n'
+      'static void\nnative_drawlog_draw(unsigned seq,'),
      # TEXSTAT: for a logged glass_background draw, the blur texture it samples (slot 3,
      # source_texture), read back level by level: mean BGRA and the share of fully transparent
      # texels. Tells a broken blur chain (black/clear source) from a broken glass output.
@@ -3311,6 +3313,78 @@ native_drawlog_texstat(unsigned seq, id t)
 	}
 }
 
+/* WALLREGION (opt-in, /var/local/sweet-native-wall-regions, backboardd only): the full-size
+ * wallpaper source the compositor is about to sample, read back as a 3x4 grid of mean BGRA
+ * and share of alpha-0 texels per cell. Compared with a USB screenshot of the same frame it
+ * tells a wash already in the poster's surface from one added by compositing. At most one
+ * readback every 5 s and 40 in total: unbounded backboardd readbacks exhausted GPU
+ * allocations once (2026-11-22). */
+static void
+native_wall_regionstat(unsigned seq, const char *label, id t, unsigned surface)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-wall-regions", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: WALLREGION enabled (3x4 grid, 5 s, 40 max)\\n");
+	});
+	if (!enabled || t == nil || [t sampleCount] > 1)
+		return;
+	const unsigned fmt = (unsigned)[t pixelFormat];
+	if (fmt != 80 && fmt != 81)
+		return;
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	static uint64_t next_ms;
+	static unsigned told;
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	const uint64_t ms = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+	pthread_mutex_lock(&lock);
+	const bool go = told < 40 && ms >= next_ms;
+	if (go) {
+		told++;
+		next_ms = ms + 5000;
+	}
+	pthread_mutex_unlock(&lock);
+	if (!go)
+		return;
+	const unsigned w = (unsigned)[t width], h = (unsigned)[t height];
+	uint8_t *px = malloc((size_t)w * h * 4);
+	if (px == NULL)
+		return;
+	memset(px, 0xee, (size_t)w * h * 4);
+	[t getBytes:px bytesPerRow:w * 4 fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0];
+	char line[1024];
+	int at = snprintf(line, sizeof(line), "SweetNativeMetal: WALLREGION %u %s IOSurface %u fmt %u %ux%u", seq,
+	                  label, surface, fmt, w, h);
+	for (unsigned gy = 0; gy < 4; gy++) {
+		for (unsigned gx = 0; gx < 3; gx++) {
+			const unsigned x0 = w * gx / 3, x1 = w * (gx + 1) / 3;
+			const unsigned y0 = h * gy / 4, y1 = h * (gy + 1) / 4;
+			uint64_t sum[4] = { 0 };
+			size_t clear = 0, n = 0;
+			for (unsigned y = y0; y < y1; y += 2) {
+				const uint8_t *row = px + (size_t)y * w * 4;
+				for (unsigned x = x0; x < x1; x += 2, n++) {
+					for (unsigned k = 0; k < 4; k++)
+						sum[k] += row[x * 4 + k];
+					clear += row[x * 4 + 3] == 0;
+				}
+			}
+			n = n ? n : 1;
+			if (at > 0 && (size_t)at < sizeof(line))
+				at += snprintf(line + at, sizeof(line) - at, " r%uc%u=%u,%u,%u,%u/%u%%", gy, gx,
+				               (unsigned)(sum[0] / n), (unsigned)(sum[1] / n), (unsigned)(sum[2] / n),
+				               (unsigned)(sum[3] / n), (unsigned)(clear * 100 / n));
+		}
+	}
+	fprintf(stderr, "%s\\n", line);
+	free(px);
+}
+
 /* One attribute of one vertex, decoded by MTLVertexFormat. */
 '''),
      ('''	char rt[160] = "", ds[80] = "-", tx[320] = "";
@@ -3335,8 +3409,9 @@ native_drawlog_texstat(unsigned seq, id t)
 			fprintf(stderr, "SweetNativeMetal: WALLDRAW %u %s src %p parent %p IOSurface %u usage 0x%lx rt %p\\n",
 			        seq, nm.label, (void *)source, (void *)parent, rwd_surface_id(surface),
 			        (unsigned long)[source usage], (void *)target);
+			native_wall_regionstat(seq, nm.label, source, rwd_surface_id(surface));
 		}
-		return;
+		/* Then the DRAW line like the full log, without its GPU readbacks (below). */
 	}
 	char rt[160] = "", ds[80] = "-", tx[320] = "";
 '''),
@@ -3349,7 +3424,9 @@ native_drawlog_texstat(unsigned seq, id t)
 	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,
 	        indexed ? (index_type ? "u32" : "u16") : "-", index_offset, instances, rt, ds,
 	        tx[0] ? tx : "-");
-	if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
+	if (metadata_only)
+		;   /* no readbacks: they exhausted GPU allocations in backboardd once */
+	else if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
 		native_drawlog_texstat(seq, textures[3]);
 	/* Mercury's glass arc samples its blur pyramid (texture 7, blurredBackground) at a
 	 * run-time LOD: every level, to tell a stale or flat pyramid from a wrong arc. */
@@ -3374,7 +3451,7 @@ native_drawlog_texstat(unsigned seq, id t)
 	}
 	/* what a full-screen target held before this draw: the previous frame's result, so a
 	 * wallpaper that renders black can be told from one that renders and is lost later */
-	if (ncolors > 0 && colors[0] != nil && [colors[0] sampleCount] == 1 &&
+	if (!metadata_only && ncolors > 0 && colors[0] != nil && [colors[0] sampleCount] == 1 &&
 	    [colors[0] width] >= 600 && [colors[0] height] >= 1200) {
 		static unsigned rt_told;
 		if (rt_told++ < 24) {
