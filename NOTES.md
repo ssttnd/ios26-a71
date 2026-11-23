@@ -2126,3 +2126,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   every 5 s and 40 in total. Series checked on an LF donor copy (mip-views -R, then all three). Metal CI
   `45207554477` building. Plan: package bundle + wall-regions flag, keep metadata-only, drawlog-every and the
   repeat/single-layer tests as they are; then screenshot Cover Sheet and compare grid cells with the shot.
+- CI `45207554477` succeeded (artifact `14835232068`); six hashes match build.json; WALLREGION strings in
+  SweetMetal2. `build/a71-ios26-wallregion.payload` (bundle + `/var/local/sweet-native-wall-regions`), TWRP
+  VERIFY OK `4d13ff4bb3798dc4bc0b6eec2ad99af595c2d6d8ee3079e5aad8a9e24567efdd`, boot still 2126 (`8f1d44cf...`).
+  Sent to TWRP with `a71:recovery`, rebooted with `twrp reboot system`; `SWEET PAYLOAD: finished 12/12 errno=0`.
+  This boot starts at USB log line 594274. DRAW lines are printed again (metadata-only, no readbacks).
+- WALLREGION (3 cols x 4 rows, mean B,G,R,A / % alpha-0), observed:
+  - Mercury live surfaces 34 and 35 (drawn `Ixrg` then `Isrc`): RGB normal, alpha low and uneven: row 0 cols 0-1
+    A=0 (100% clear), r0c2 A~55 (52-59% clear), r1c1 A=23-56 (77-90% clear), r1c0 A~119-159, row 2 A 235-255
+    except r2c2 ~99-117, row 3 A 128-214.
+  - Surfaces 39 and 42 (`Isrc` only, same RGB as 35/34) are A=255 everywhere: opaque snapshots.
+  - So the earlier finding holds per region: the source-over pass of a live Mercury surface over its own opaque
+    pass gives src*(2-a); the top and the right side, where alpha is lowest, wash out most, as in the screenshot.
