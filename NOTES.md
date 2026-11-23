@@ -1771,3 +1771,22 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   draws continue with a missing effect, inspect backdrop inputs and which
   completed frame was published. The existing counter totals do not tie
   the reported visual transition to a particular swap.
+
+## 2026-11-23 — poster probe deployed, editor watchdog captured
+
+- With owner authorization, wrote poster-probe-readonly (16,384 bytes,
+  SHA-256 6b60096c4cabb40e370167df615f7ae7cfc74e6cbbd506f5fe84f5e114efeb72);
+  TWRP readback VERIFY OK. Running 2125 applied it (2/2, errno/sync/clear
+  all zero) and booted SpringBoard. New USB log:
+  logs/usb-ios26-poster-readonly.txt.
+- Owner reported the chooser would not open. PosterBoard requested two
+  editor scenes. MercuryPosterExtension PID 366 activated scenes, compiled
+  shaders and armed DRAWLOG (800 draws). PosterBoard then terminated it
+  at its 10 s scene-create watchdog deadline (0x8BADF00D, lines 28333-28373).
+  Verbose tracing and shader compilation are suspects. Timing evidence
+  does not yet establish which cost pushes the editor past the deadline.
+- Rebooted to TWRP from USB and wrote quiet-poster-editor (12,288 bytes,
+  SHA-256 3b8c2c3fabec3ce0e96416f94219436efee6d41db202057567692c266999e01c).
+  TWRP readback VERIFY OK. This renames only sweet-mtl-trace and
+  sweet-native-drawlog-every to .a71-before-editor-test. Requested system
+  reboot on the same 2125 image. Retest the editor on this boot.

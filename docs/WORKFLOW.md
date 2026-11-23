@@ -69,6 +69,21 @@ Reboot once before concluding a build is broken; it has always booted the second
   (2026-11-20). Install at mount only.
 - Do not touch bootloaders, recovery, modem, persist or the backups. Other destructive steps need the owner's OK.
 
+## Wallpaper diagnostics
+
+- The launchd job `org.a71.poster-probe` runs `/private/var/local/poster.sh`
+  without arguments and lists the lock and home configurations after 120 s.
+  It writes `/private/var/local/poster.log`. To set a poster deliberately, run
+  the script as mobile with `--select PROVIDER DESCRIPTOR`.
+- For a variant-switch test, keep the existing snapshots and cache. Capture
+  the lock screen, home screen and cover sheet after the switch and match
+  PosterBoard's configuration and role to the USB log. In TWRP,
+  `tools/a71-hfs-get.py` can read the probe log without mounting userdata.
+- For a Liquid Glass test on 2125, compare a home-page swipe with a return
+  from App Library. Correlate the visible change with `GLASSSTAT` and
+  `recopies` in the same USB capture. The counters cover different events
+  and are not frame identifiers.
+
 ## Boot images
 
 Packer (repack differs only in the ADT random seed, by design):
