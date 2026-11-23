@@ -2040,3 +2040,12 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   the duplicate live-surface path was exercised. Frame copies continued
   (22.83/s in the 94 s window, USB 436680). No visual confirmation.
   2126 screenshot build continues separately (CI 45202143188).
+- Owner confirmed repeat-pass test moved the visible overbrightness
+  off the ordinary screen; still visible while lowering Cover Sheet.
+  The same boot shows two distinct source-over inputs (Mercury
+  IOSurface 39 + CPU-uploaded texture 0x14d050500, USB 436408-436409,
+  437299-437300 and 437311-437318). Keep the repeat test enabled for
+  comparison. The old uploaded-overlay flag had tested only the most
+  recently uploaded object. Commit 8d3d9d7 keeps the matching upload
+  identity on each texture instead. Metal CI 45203006744. Evaluate
+  when available, coordinating any next reboot with a progress message.
