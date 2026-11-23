@@ -2034,3 +2034,9 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   setup. Added opt-in ACM command a71:shot, downscaled read of panel
   scanout, and shot-log decoder. Patch applies on staged sweet_usb.c;
   synthetic decoder test passed. Kernel and device tests pending.
+- Repeat test on boot 2125 applied 12/12 with errno/sync/clear zero
+  (USB 418765). Eight bounded "skipped repeated wallpaper IOSurface"
+  confirmations at 435729-435806 (surface IDs 32, 34, 35) show that
+  the duplicate live-surface path was exercised. Frame copies continued
+  (22.83/s in the 94 s window, USB 436680). No visual confirmation.
+  2126 screenshot build continues separately (CI 45202143188).
