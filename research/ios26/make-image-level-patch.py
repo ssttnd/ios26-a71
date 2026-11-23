@@ -2241,6 +2241,55 @@ null_texture_view(struct rwa_device *device)
       '   rwa_opaque_texture = texture;\n'
       '}\n\n'
       'int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);\n'),
+     # Straight-alpha variant of a pipeline's blend state for one draw (A71 2026-11-23,
+     # wallpaper depth effect): Mercury's live surface is non-premultiplied rgb with an
+     # occlusion mask in alpha (background 0, discs 1). backboardd draws it opaque, then the
+     # clock, then again with premultiplied source-over (ONE, 1-a), which added the
+     # background rgb a second time (overbright). For that pass the frontend asks for
+     # rgb*a + dst*(1-a): the discs cover the clock and nothing is added twice.
+     ('   void *blend, *dsa, *rast, *velem;\n',
+      '   void *blend, *dsa, *rast, *velem;\n'
+      '   struct pipe_blend_state blend_tmpl;   /* what blend was made from */\n'
+      '   void *blend_straight;                 /* rgb source factor SRC_ALPHA, made on demand */\n'),
+     ('   render->blend = device->pipe->create_blend_state(device->pipe, &blend);\n',
+      '   render->blend = device->pipe->create_blend_state(device->pipe, &blend);\n'
+      '   render->blend_tmpl = blend;\n'),
+     ('   if (render->blend) {\n      pipe->bind_blend_state(pipe, NULL);\n      pipe->delete_blend_state(pipe, render->blend);\n',
+      '   if (render->blend_straight) {\n'
+      '      pipe->bind_blend_state(pipe, NULL);\n'
+      '      pipe->delete_blend_state(pipe, render->blend_straight);\n'
+      '   }\n'
+      '   if (render->blend) {\n      pipe->bind_blend_state(pipe, NULL);\n      pipe->delete_blend_state(pipe, render->blend);\n'),
+     ('   pipe->bind_blend_state(pipe, render->blend);\n',
+      '''   void *blend_cso = render->blend;
+   if (rwa_straight_alpha_next) {
+      if (!render->blend_straight) {
+         struct pipe_blend_state s = render->blend_tmpl;
+         bool changed = false;
+         for (unsigned i = 0; i < PIPE_MAX_COLOR_BUFS; i++) {
+            if (s.rt[i].blend_enable && s.rt[i].rgb_src_factor == PIPE_BLENDFACTOR_ONE) {
+               s.rt[i].rgb_src_factor = PIPE_BLENDFACTOR_SRC_ALPHA;
+               changed = true;
+            }
+         }
+         if (changed)
+            render->blend_straight = pipe->create_blend_state(pipe, &s);
+      }
+      if (render->blend_straight)
+         blend_cso = render->blend_straight;
+   }
+   pipe->bind_blend_state(pipe, blend_cso);
+'''),
+     ('int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);\n',
+      '/* The next draw on this thread blends its colour as straight (non-premultiplied) alpha. */\n'
+      'static _Thread_local bool rwa_straight_alpha_next;\n'
+      'void rwa_render_straight_alpha_next(bool on);\n'
+      'void\n'
+      'rwa_render_straight_alpha_next(bool on)\n'
+      '{\n'
+      '   rwa_straight_alpha_next = on;\n'
+      '}\n\n'
+      'int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);\n'),
      ('            struct pipe_sampler_view *use = t->view;\n',
       '            struct pipe_sampler_view *use = t->view;\n'
       '            if (t == rwa_opaque_texture) {\n'
@@ -3283,18 +3332,20 @@ static void
 native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 {
 	void rwa_texture_mark_opaque(struct rwa_texture *);
+	void rwa_render_straight_alpha_next(bool);
 	static dispatch_once_t once;
 	static bool enabled;
 	dispatch_once(&once, ^{
 		const char *process = getprogname();
 		enabled = process != NULL && !strcmp(process, "backboardd") &&
-		          access("/var/local/sweet-native-xrg-alpha-one", F_OK) == 0;
+		          access("/var/local/sweet-native-wallpaper-depth", F_OK) == 0;
 		if (enabled)
-			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg IOSurface draws sample alpha 1 (per draw)\\n");
+			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg passes alpha 1, depth pass straight alpha\\n");
 	});
 	if (!enabled)
 		return;
 	rwa_texture_mark_opaque(NULL);
+	rwa_render_straight_alpha_next(false);
 	if (ntextures <= 3 || textures[3] == nil)
 		return;
 	id source = textures[3];
@@ -3303,10 +3354,10 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 	const size_t len = name != NULL ? strlen(name->label) : 0;
 	const bool xrg = len > 5 && !strcmp(name->label + len - 5, "_Ixrg") &&
 	                 !strncmp(name->label, "com.apple.coreanimation.", 24);
-	/* The home screen also composites the same live wallpaper surface with the plain
-	 * source-over image shader right after its opaque pass; with Mercury's alpha < 1 the two
-	 * mixed (a double wallpaper, wrong tones; Cover Sheet, which has no such pass, was
-	 * right). A surface CoreAnimation has drawn as opaque is opaque in that pass too. */
+	/* The depth-effect pass: the same live wallpaper surface again with the plain source-over
+	 * image shader, after the clock. Mercury's rgb is not premultiplied and its alpha is an
+	 * occlusion mask (rasterizeBackgroundFragment: alpha = wantsOcclusion ? 0 : 1), so this
+	 * pass blends rgb*a + dst*(1-a): discs over the clock, nothing added twice. */
 	const bool over = name != NULL &&
 		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
 	pthread_mutex_unlock(&native_drawlog_lock);
@@ -3317,8 +3368,13 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 	if (fmt != 80 && fmt != 81)
 		return;
 	if (over) {
-		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
-			rwa_texture_mark_opaque([source mesaTexture]);
+		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil) {
+			rwa_render_straight_alpha_next(true);
+			static unsigned told_depth;
+			if (__atomic_fetch_add(&told_depth, 1, __ATOMIC_RELAXED) < 8)
+				fprintf(stderr, "SweetNativeMetal: XRGALPHA depth pass IOSurface %u straight alpha\\n",
+				        rwd_surface_id((void *)[source iosurface]));
+		}
 		return;
 	}
 	rwa_texture_mark_opaque([source mesaTexture]);
@@ -3386,7 +3442,9 @@ static void
 native_xrg_clear(void)
 {
 	void rwa_texture_mark_opaque(struct rwa_texture *);
+	void rwa_render_straight_alpha_next(bool);
 	rwa_texture_mark_opaque(NULL);
+	rwa_render_straight_alpha_next(false);
 }
 
 /* Optional A/B experiment for the 23G90 image-upload site above. */

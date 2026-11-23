@@ -1745,7 +1745,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (stride == 0) {
        *out = least;
        return true;
-@@ -1670,6 +1738,183 @@
+@@ -1670,6 +1738,192 @@
     }
     *out = stride;
     return true;
@@ -1760,6 +1760,15 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +rwa_texture_mark_opaque(struct rwa_texture *texture)
 +{
 +   rwa_opaque_texture = texture;
++}
++
++/* The next draw on this thread blends its colour as straight (non-premultiplied) alpha. */
++static _Thread_local bool rwa_straight_alpha_next;
++void rwa_render_straight_alpha_next(bool on);
++void
++rwa_render_straight_alpha_next(bool on)
++{
++   rwa_straight_alpha_next = on;
 +}
 +
 +int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);
@@ -1929,7 +1938,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  }
  
  int
-@@ -1775,7 +2020,8 @@
+@@ -1775,7 +2029,8 @@
     }
     texture->device->pipe->texture_subdata(texture->device->pipe, texture->res, level + texture->first_level,
                                            PIPE_MAP_WRITE, &box, bytes, row,
@@ -1939,7 +1948,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return 0;
  }
  
-@@ -2057,8 +2303,8 @@
+@@ -2057,8 +2312,8 @@
         */
        .unnormalized_coords = !st->normalized_coordinates,
        .max_anisotropy = st->max_anisotropy > 1 ? st->max_anisotropy : 0,
@@ -1950,7 +1959,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     };
     /* transparent black, which is both Metal's default border colour and what
      * clamp_to_zero reads by definition. Written out rather than left to the zeroing
-@@ -2128,9 +2374,12 @@
+@@ -2128,9 +2383,12 @@
      * it (docs/air.md 3.3).
      */
     if (a->mag_filter == AIR_SAMPLER_BICUBIC || a->min_filter == AIR_SAMPLER_BICUBIC) {
@@ -1966,7 +1975,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     }
     if (a->mag_filter > AIR_SAMPLER_BICUBIC || a->min_filter > AIR_SAMPLER_BICUBIC ||
         a->mip_filter > AIR_SAMPLER_MIP_LINEAR) {
-@@ -2219,6 +2468,7 @@
+@@ -2219,6 +2477,7 @@
     static const unsigned filter[] = {
        [AIR_SAMPLER_NEAREST] = RWA_FILTER_NEAREST,
        [AIR_SAMPLER_LINEAR] = RWA_FILTER_LINEAR,
@@ -1974,7 +1983,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     };
     /* AIR_SAMPLER_MIP_* and MTLSamplerMipFilter happen to be in the same order; said as
      * a table anyway, so that the next field someone adds is not cast through by habit.
-@@ -3081,13 +3331,22 @@
+@@ -3081,13 +3340,22 @@
     device->pipe->delete_compute_state(device->pipe, cso);
  }
  
@@ -1999,7 +2008,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* and the states built for the samplers the shader declared itself. Nothing is
      * unbound first, for the reason rwa_sampler_destroy gives: a dispatch leaves
      * nothing of its own bound.
-@@ -3121,14 +3380,9 @@
+@@ -3121,14 +3389,9 @@
  {
     struct rwa_device *device = compute->device;
  
@@ -2016,7 +2025,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     nir_shader *cs = nir_shader_clone(NULL, compute->nir);
     if (!cs) {
-@@ -3140,7 +3394,41 @@
+@@ -3140,7 +3403,41 @@
     cs->info.workgroup_size[2] = block[2];
     cs->info.workgroup_size_variable = false;
  
@@ -2059,7 +2068,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     void *cso = device->pipe->create_compute_state(device->pipe,
        &(struct pipe_compute_state){
-@@ -3151,6 +3439,7 @@
+@@ -3151,6 +3448,7 @@
         * it already, and neither of the two drivers in this build can reach this at all
         * (both return a state object and report a bad shader later, at launch).
         */
@@ -2067,7 +2076,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        say(why, why_size, "%s would not make a compute pipeline of %s",
            device->screen->get_name(device->screen),
            compute->info.entry_point ? compute->info.entry_point : "the shader");
-@@ -3172,14 +3461,34 @@
+@@ -3172,14 +3470,34 @@
                              "compiled shader takes at most %u: it uses too many "
                              "registers for a group that large", threads, si.max_threads);
           delete_compute_state(device, cso);
@@ -2106,7 +2115,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     return cso;
  }
  
-@@ -3457,6 +3766,37 @@
+@@ -3457,6 +3775,37 @@
  }
  
  /*
@@ -2144,7 +2153,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
   * Which Metal buffer indices a module declares ARGUMENT BUFFERS at, one bit each, and a
   * refusal when one is past the 32 a mask holds.
   *
-@@ -3580,6 +3920,14 @@
+@@ -3580,6 +3929,14 @@
              say(why, why_size, "%s binds a texture at index %u, past the %u slots this "
                                 "library fills", name, r->index, RWA_MAX_TEXTURES);
              return -1;
@@ -2159,7 +2168,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           }
           if (!member && (r->index >= bindings->texture_count ||
                           !bindings->textures[r->index])) {
-@@ -3717,6 +4065,62 @@
+@@ -3717,6 +4074,62 @@
     d->native_cb[stage][slot]=*cb;d->native_cb_valid[stage][slot]=true;
  }
  
@@ -2222,7 +2231,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  static int
  bind_stage(struct rwa_device *device, enum pipe_shader_type stage,
             const struct air_shader_info *info, void **own_sampler,
-@@ -3745,6 +4149,7 @@
+@@ -3745,6 +4158,7 @@
     struct pipe_image_view images[RWA_MAX_TEXTURES] = { 0 };
     void *samplers[RWA_MAX_TEXTURES] = { 0 };
     unsigned num_views = 0, num_images = 0, num_samplers = 0;
@@ -2230,7 +2239,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     for (unsigned i = 0; i < info->num_resources; i++) {
        const struct air_resource *r = &info->resources[i];
-@@ -3776,7 +4181,7 @@
+@@ -3776,7 +4190,7 @@
              break;
           case AIR_RESOURCE_TEXTURE:
           case AIR_RESOURCE_IMAGE:
@@ -2239,7 +2248,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              break;
           case AIR_RESOURCE_SAMPLER:
              if (!r->inline_sampler)
-@@ -3787,6 +4192,9 @@
+@@ -3787,6 +4201,9 @@
           }
        }
  
@@ -2249,7 +2258,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        switch (r->kind) {
        case AIR_RESOURCE_DEVICE_BUFFER:
           if (r->index >= ARRAY_SIZE(sb)) {
-@@ -3885,6 +4293,17 @@
+@@ -3885,6 +4302,17 @@
        }
  
        case AIR_RESOURCE_TEXTURE:
@@ -2267,7 +2276,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           /* The view is made once and kept with the texture: a device has one context,
            * so a view of this texture is a view for every pipeline that will sample it.
            */
-@@ -3895,6 +4314,22 @@
+@@ -3895,6 +4323,22 @@
                 tmpl.u.tex.first_level = t->first_level;
                 tmpl.u.tex.last_level = t->first_level + t->level_count - 1;
              }
@@ -2290,7 +2299,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              t->view = pipe->create_sampler_view(pipe, t->res, &tmpl);
              if (!t->view) {
                 say(why, why_size, "%s would not make a sampler view of the %s bound at "
-@@ -3903,14 +4338,38 @@
+@@ -3903,14 +4347,38 @@
                 return -1;
              }
           }
@@ -2332,7 +2341,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
              /* what the shader does with it, from the metadata rather than assumed: a
               * read-write image told it is write-only reads zeros on some drivers.
               */
-@@ -3918,12 +4377,14 @@
+@@ -3918,12 +4386,14 @@
                        (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
              .shader_access = (r->read ? PIPE_IMAGE_ACCESS_READ : 0) |
                               (r->write ? PIPE_IMAGE_ACCESS_WRITE : 0),
@@ -2349,7 +2358,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           break;
  
        case AIR_RESOURCE_SAMPLER:
-@@ -4002,6 +4463,17 @@
+@@ -4002,6 +4472,17 @@
        num_samplers = MAX2(num_samplers, i + 1);
     }
  
@@ -2367,7 +2376,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (num_ssbo)
        pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);
     unsigned old_views=device->native_pending_views[stage];
-@@ -4014,6 +4486,42 @@
+@@ -4014,6 +4495,42 @@
              old_views>num_views?old_views-num_views:0, false, views);
        device->native_views_ns+=native_now_ns()-began;
        memcpy(device->native_views[stage],views,sizeof(views));device->native_views_valid[stage]=true;
@@ -2410,16 +2419,26 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     }
     unsigned old_images=device->native_pending_images[stage];
     if (device->in_command && device->native_images_valid[stage] &&
-@@ -5383,6 +5891,8 @@
+@@ -5383,6 +5900,10 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
++   struct pipe_blend_state blend_tmpl;   /* what blend was made from */
++   void *blend_straight;                 /* rgb source factor SRC_ALPHA, made on demand */
 +   struct pipe_rasterizer_state rast_state; /* what rast was made from */
 +   void *rast_var[12];   /* (cull 0..2 * 2 + Metal winding) * 2 + wireframe */
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6509,12 +7019,12 @@
+@@ -6469,6 +6990,7 @@
+                                &out.color_write_masks, why, why_size))
+       goto fail;
+    render->blend = device->pipe->create_blend_state(device->pipe, &blend);
++   render->blend_tmpl = blend;
+    /* The pipeline's own depth/stencil state, and it is the ZEROED one on purpose: it is
+     * what a draw gets when the caller passes no rwa_depth_stencil, which is Metal's
+     * state before an application has set one. depth_enabled 0 is "no test", not
+@@ -6509,12 +7031,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2435,7 +2454,18 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6645,6 +7155,9 @@
+@@ -6633,6 +7155,10 @@
+       pipe->bind_fs_state(pipe, NULL);
+       pipe->delete_fs_state(pipe, render->fs_cso);
+    }
++   if (render->blend_straight) {
++      pipe->bind_blend_state(pipe, NULL);
++      pipe->delete_blend_state(pipe, render->blend_straight);
++   }
+    if (render->blend) {
+       pipe->bind_blend_state(pipe, NULL);
+       pipe->delete_blend_state(pipe, render->blend);
+@@ -6645,6 +7171,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2445,7 +2475,33 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7650,58 @@
+@@ -7124,7 +7653,24 @@
+    pipe->set_scissor_states(pipe,0,1,&scissor);
+    pipe->set_blend_color(pipe,&(struct pipe_blend_color){.color={draw->native_blend[0],draw->native_blend[1],draw->native_blend[2],draw->native_blend[3]}});
+ 
+-   pipe->bind_blend_state(pipe, render->blend);
++   void *blend_cso = render->blend;
++   if (rwa_straight_alpha_next) {
++      if (!render->blend_straight) {
++         struct pipe_blend_state s = render->blend_tmpl;
++         bool changed = false;
++         for (unsigned i = 0; i < PIPE_MAX_COLOR_BUFS; i++) {
++            if (s.rt[i].blend_enable && s.rt[i].rgb_src_factor == PIPE_BLENDFACTOR_ONE) {
++               s.rt[i].rgb_src_factor = PIPE_BLENDFACTOR_SRC_ALPHA;
++               changed = true;
++            }
++         }
++         if (changed)
++            render->blend_straight = pipe->create_blend_state(pipe, &s);
++      }
++      if (render->blend_straight)
++         blend_cso = render->blend_straight;
++   }
++   pipe->bind_blend_state(pipe, blend_cso);
+    /* The caller's depth/stencil state, or the pipeline's zeroed one, which is Metal's
+     * behaviour with no MTLDepthStencilState set: no test and no write.
+     */
+@@ -7137,7 +7683,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2505,7 +2561,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7778,10 @@
+@@ -7214,6 +7811,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2516,7 +2572,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7875,7 @@
+@@ -7307,6 +7908,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -3579,7 +3635,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,324 @@
+@@ -121,11 +121,333 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -3733,18 +3789,20 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 +{
 +	void rwa_texture_mark_opaque(struct rwa_texture *);
++	void rwa_render_straight_alpha_next(bool);
 +	static dispatch_once_t once;
 +	static bool enabled;
 +	dispatch_once(&once, ^{
 +		const char *process = getprogname();
 +		enabled = process != NULL && !strcmp(process, "backboardd") &&
-+		          access("/var/local/sweet-native-xrg-alpha-one", F_OK) == 0;
++		          access("/var/local/sweet-native-wallpaper-depth", F_OK) == 0;
 +		if (enabled)
-+			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg IOSurface draws sample alpha 1 (per draw)\n");
++			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg passes alpha 1, depth pass straight alpha\n");
 +	});
 +	if (!enabled)
 +		return;
 +	rwa_texture_mark_opaque(NULL);
++	rwa_render_straight_alpha_next(false);
 +	if (ntextures <= 3 || textures[3] == nil)
 +		return;
 +	id source = textures[3];
@@ -3753,10 +3811,10 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	const size_t len = name != NULL ? strlen(name->label) : 0;
 +	const bool xrg = len > 5 && !strcmp(name->label + len - 5, "_Ixrg") &&
 +	                 !strncmp(name->label, "com.apple.coreanimation.", 24);
-+	/* The home screen also composites the same live wallpaper surface with the plain
-+	 * source-over image shader right after its opaque pass; with Mercury's alpha < 1 the two
-+	 * mixed (a double wallpaper, wrong tones; Cover Sheet, which has no such pass, was
-+	 * right). A surface CoreAnimation has drawn as opaque is opaque in that pass too. */
++	/* The depth-effect pass: the same live wallpaper surface again with the plain source-over
++	 * image shader, after the clock. Mercury's rgb is not premultiplied and its alpha is an
++	 * occlusion mask (rasterizeBackgroundFragment: alpha = wantsOcclusion ? 0 : 1), so this
++	 * pass blends rgb*a + dst*(1-a): discs over the clock, nothing added twice. */
 +	const bool over = name != NULL &&
 +		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
 +	pthread_mutex_unlock(&native_drawlog_lock);
@@ -3767,8 +3825,13 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	if (fmt != 80 && fmt != 81)
 +		return;
 +	if (over) {
-+		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
-+			rwa_texture_mark_opaque([source mesaTexture]);
++		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil) {
++			rwa_render_straight_alpha_next(true);
++			static unsigned told_depth;
++			if (__atomic_fetch_add(&told_depth, 1, __ATOMIC_RELAXED) < 8)
++				fprintf(stderr, "SweetNativeMetal: XRGALPHA depth pass IOSurface %u straight alpha\n",
++				        rwd_surface_id((void *)[source iosurface]));
++		}
 +		return;
 +	}
 +	rwa_texture_mark_opaque([source mesaTexture]);
@@ -3836,7 +3899,9 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +native_xrg_clear(void)
 +{
 +	void rwa_texture_mark_opaque(struct rwa_texture *);
++	void rwa_render_straight_alpha_next(bool);
 +	rwa_texture_mark_opaque(NULL);
++	rwa_render_straight_alpha_next(false);
 +}
 +
 +/* Optional A/B experiment for the 23G90 image-upload site above. */
@@ -3904,7 +3969,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +452,40 @@
+@@ -139,13 +461,40 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -3947,7 +4012,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +495,247 @@
+@@ -155,13 +504,247 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);
