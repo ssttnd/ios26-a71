@@ -2294,3 +2294,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   event 0x4002 per channel), en0 present; wifid asks en0 SIOCGIFCLAT46ADDR (0xc02869c9) and two others
   repeatedly (logged, not answered; harmless so far). Owner: Wi-Fi first showed "unavailable", then appeared.
   Joining a network pending.
+- Wi-Fi: Settings shows Wi-Fi on but no networks while wland hears 6 per scan. Cause in the log: `apple80211:
+  wifid sets 10 (SCAN_REQ), 5528 bytes: error 22` x5. iOS 26 wifid's scan request is 5528 bytes; the kernel
+  (redwood_apple80211.c set_scan) required exactly the iOS 16.5 size 5456. Also CURRENT_NETWORK (103) is asked
+  with 2272 bytes (iOS 16.5 result layout 1164) -> the scan-result layout probably changed too (open).
+  xnu 2128 (`30c828a`): accept longer scan requests, read the iOS 16.5 part, scan all channels if the channels
+  do not decode, log size/version. Kernel CI `45224271413`. Next: pack 2126-wifi options with that kernel,
+  flash boot, see whether wifid then asks SCAN_RESULT (11) and with what size.
