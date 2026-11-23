@@ -1800,3 +1800,18 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   configuration and working framebuffer copies. Wallpaper visibility and
   chooser still need visual confirmation. The owner said they will do
   any next reboot themselves. Logger remains running.
+- Owner confirms wallpaper returned after reboot. Pulling down Notification
+  Center visibly overlays another wallpaper. Settings chooser still fails.
+  Without the verbose flags, Mercury PID 373 again hit the 10 s scene-create
+  watchdog (lines 90032-90066), even though both Logical Activate actions
+  reported success earlier. CoverSheet subscribed to al|ah and received the
+  same space.two lock path for those locations (lines 77616-77621). That
+  identifies the poster configuration, not which textures were composited.
+- Added opt-in metadata-only draw logging (flag
+  /var/local/sweet-native-drawlog-metadata-only) to keep draw and render-target
+  IDs and report full-screen slot 3 IOSurface IDs without per-draw GPU
+  readbacks. Intended capture: home -> partially lowered cover sheet ->
+  fully lowered -> dismiss, then home-page swipe -> App Library return.
+  This distinguishes repeat sampling of one surface from two surface IDs
+  while providing glass draw counts. Generated patch applies to the local
+  mip/blur base. Device still uses the quiet editor build.

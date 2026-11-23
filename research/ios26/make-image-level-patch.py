@@ -3085,6 +3085,23 @@ native_drawlog_texstat(unsigned seq, id t)
 	        seq, nm.label, nm.vfn, nm.ffn, prim, start, count,
 	        indexed ? (index_type ? "u32" : "u16") : "-", index_offset, instances, rt, ds,
 	        tx[0] ? tx : "-");
+	static dispatch_once_t metadata_once;
+	static bool metadata_only;
+	dispatch_once(&metadata_once, ^{
+		metadata_only = access("/var/local/sweet-native-drawlog-metadata-only", F_OK) == 0;
+	});
+	if (metadata_only) {
+		/* Cover Sheet can composite a snapshot and a live wallpaper in one frame.
+		 * The IOSurface ID identifies the producer's surface across processes. */
+		if (ntextures > 3 && textures[3] != nil && [textures[3] width] >= 600 &&
+		    [textures[3] height] >= 1200) {
+			id t = textures[3];
+			void *surface = [t respondsToSelector:@selector(iosurface)] ? (void *)[t iosurface] : NULL;
+			fprintf(stderr, "SweetNativeMetal: DRAW %u full-screen source IOSurface %u\\n",
+			        seq, rwd_surface_id(surface));
+		}
+		return;
+	}
 	if (!strncmp(nm.ffn, "glass_background", 16) && ntextures > 3)
 		native_drawlog_texstat(seq, textures[3]);
 	/* Mercury's glass arc samples its blur pyramid (texture 7, blurredBackground) at a
