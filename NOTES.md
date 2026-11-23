@@ -2049,3 +2049,13 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   recently uploaded object. Commit 8d3d9d7 keeps the matching upload
   identity on each texture instead. Metal CI 45203006744. Evaluate
   when available, coordinating any next reboot with a progress message.
+- Per-texture CI 45203006744 succeeded (artifact 14832856935). All
+  six hashes and both test signatures verified. Wrote
+  build/a71-ios26-cover-sheet-per-texture.payload (9,039,872 bytes);
+  TWRP readback SHA-256
+  f1c71a2ab52493befa9785c721b32bb33b5a0d7c09085b752f3021485b4cbe4f.
+  Booted into iOS with both repeat and per-texture overlay tests.
+  USB 512868 and 512901 show the CPU-uploaded layer was skipped after
+  IOSurface 39. Framebuffer continued (604 swaps by 148 s, USB 523484).
+  Visual result for Cover Sheet is pending. 2126 screenshot CI
+  45202143188 still building XNU; ramdisk artifact exists.
