@@ -1972,3 +1972,12 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   sampler view ranges and image slots/levels/format, no pixel readback).
   Metal CI 45196487100 started. The trace records bound slots, not the
   shader-selected slot for each invocation.
+- Overlay A/B boot applied 13/13 with errno/sync/clear zero (USB line
+  252852). Eight logged skips followed live IOSurface 60 (270831-270903),
+  proving the narrow flag reached the observed second-layer sequence.
+  Framebuffer reached 888 swaps at 157 s. In the same boot, remaining
+  adjacent same-source opaque/source-over pairs used surfaces 55/56/57.
+  The skip experiment addresses the distinct CPU-upload sequence only.
+  Other non-adjacent CPU texture draws remain, e.g. 1839/1870. Visual
+  comparison is still unavailable. Legacy HFS allocation warnings
+  occur in this boot and in the pre-test logs (see 2026-11-19 survey).
