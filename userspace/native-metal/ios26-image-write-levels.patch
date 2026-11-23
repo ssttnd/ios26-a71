@@ -3577,7 +3577,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,263 @@
+@@ -121,11 +121,274 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -3751,13 +3751,24 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	const size_t len = name != NULL ? strlen(name->label) : 0;
 +	const bool xrg = len > 5 && !strcmp(name->label + len - 5, "_Ixrg") &&
 +	                 !strncmp(name->label, "com.apple.coreanimation.", 24);
++	/* The home screen also composites the same live wallpaper surface with the plain
++	 * source-over image shader right after its opaque pass; with Mercury's alpha < 1 the two
++	 * mixed (a double wallpaper, wrong tones; Cover Sheet, which has no such pass, was
++	 * right). A surface CoreAnimation has drawn as opaque is opaque in that pass too. */
++	const bool over = name != NULL &&
++		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
 +	pthread_mutex_unlock(&native_drawlog_lock);
-+	if (!xrg || ![source respondsToSelector:@selector(iosurface)] || [source iosurface] == NULL ||
-+	    ![source respondsToSelector:@selector(mesaTexture)])
++	if ((!xrg && !over) || ![source respondsToSelector:@selector(iosurface)] ||
++	    [source iosurface] == NULL || ![source respondsToSelector:@selector(mesaTexture)])
 +		return;
 +	const unsigned fmt = (unsigned)[source pixelFormat];
 +	if (fmt != 80 && fmt != 81)
 +		return;
++	if (over) {
++		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
++			rwa_texture_mark_opaque([source mesaTexture]);
++		return;
++	}
 +	rwa_texture_mark_opaque([source mesaTexture]);
 +	if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
 +		return;
@@ -3841,7 +3852,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +391,40 @@
+@@ -139,13 +402,40 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -3884,7 +3895,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +434,247 @@
+@@ -155,13 +445,247 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);

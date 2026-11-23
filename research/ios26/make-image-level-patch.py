@@ -3301,13 +3301,24 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 	const size_t len = name != NULL ? strlen(name->label) : 0;
 	const bool xrg = len > 5 && !strcmp(name->label + len - 5, "_Ixrg") &&
 	                 !strncmp(name->label, "com.apple.coreanimation.", 24);
+	/* The home screen also composites the same live wallpaper surface with the plain
+	 * source-over image shader right after its opaque pass; with Mercury's alpha < 1 the two
+	 * mixed (a double wallpaper, wrong tones; Cover Sheet, which has no such pass, was
+	 * right). A surface CoreAnimation has drawn as opaque is opaque in that pass too. */
+	const bool over = name != NULL &&
+		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
 	pthread_mutex_unlock(&native_drawlog_lock);
-	if (!xrg || ![source respondsToSelector:@selector(iosurface)] || [source iosurface] == NULL ||
-	    ![source respondsToSelector:@selector(mesaTexture)])
+	if ((!xrg && !over) || ![source respondsToSelector:@selector(iosurface)] ||
+	    [source iosurface] == NULL || ![source respondsToSelector:@selector(mesaTexture)])
 		return;
 	const unsigned fmt = (unsigned)[source pixelFormat];
 	if (fmt != 80 && fmt != 81)
 		return;
+	if (over) {
+		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
+			rwa_texture_mark_opaque([source mesaTexture]);
+		return;
+	}
 	rwa_texture_mark_opaque([source mesaTexture]);
 	if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
 		return;
