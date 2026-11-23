@@ -1890,3 +1890,18 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Focused trace build queued as Metal CI 45190631078 at 785f8a5. The
   regenerated patch passed git apply --check on the mip/blur base.
   Boot-side trace remains disabled pending validation.
+- Focused CI 45190631078 succeeded, artifact 14826346604. All six file
+  hashes and the WALLDRAW signature verified. TWRP readback for the
+  9,043,968-byte focused-wallpaper payload matched SHA-256
+  7c8bb61f54fc6bfe2a9f7af03190a396983e59d7f0cbfd194379d28e2046f976.
+  Boot 2125 applied 13/13 with errno/sync/clear zero (USB line 166430).
+  Owner confirmed performing the gesture. At 78 s the frame count was
+  423 (~31 swaps/s in the sampled second), then 465 at 88 s.
+- In this capture, adjacent draws to the same target included 13
+  source-over/source-over pairs with distinct full pointers, each
+  sampling Mercury IOSurface 31 and the same second shader-read
+  texture with no IOSurface ID or parent. Example draws 832/833.
+  Also counted 31 opaque/source-over pairs reusing the same full
+  pointer and IOSurface (24/25/26/29 depending on the frame).
+  This confirms both compositor paths across two builds. The second
+  texture content and creation/transfer path are still unverified.
