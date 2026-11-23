@@ -2274,3 +2274,9 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   overbright, clock visible with discs in front (depth effect). Also carries MERCURYOCCL trace (flag
   `/var/local/sweet-native-mercury-occl`). Backend change syntax-checked in the VM (only the pre-existing
   DRM_FORMAT_MOD_LINEAR header error). Metal CI `45221227810`.
+- Depth build installed: Metal CI `45221227810` (5b102f2), six hashes ok; `build/a71-ios26-depth.payload`
+  (bundle + wallpaper-depth + mercury-occl flags) VERIFY OK `f29542be...`, 12/12 (USB from 964515).
+  MERCURYOCCL: every Mercury render has wantsOcclusion=1 (828x1792 bg=0 and 414x896 bg=1 passes, 4x MSAA fmt
+  81). backboardd: Ixrg IOSurface 26 alpha 1, "depth pass IOSurface 26 straight alpha" active. No crashes.
+  Home screenshot `build/a71-depth-1.png`: not overexposed, tones close to the reference. Cover Sheet/clock
+  check pending (owner must wake the screen with the button; it does not turn on by itself after boot).
