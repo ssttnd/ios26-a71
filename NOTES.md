@@ -1870,3 +1870,13 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   3f5b3171d436d0deb0f199057218cb99eefbeb164bb4e0698584e7e0a09d8f97.
   It moves the drawlog trigger aside. Reboot and verify applied 1/1 and
   normal frame swaps. This rollback payload has not been written yet.
+- After the owner entered TWRP, adb confirmed recovery and the rollback
+  write matched SHA-256 3f5b3171d436d0deb0f199057218cb99eefbeb164bb4e0698584e7e0a09d8f97.
+  Boot 2125 applied 1/1 with errno/sync/clear all zero (USB line 142170).
+  SpringBoard and Mercury started. Framebuffer swaps rose from 14 at
+  uptime 48 s to 127 at 88 s (USB line 154934). No new DRAWLOG armed
+  in this boot. Physical display responsiveness remains unconfirmed.
+- Same two input wrappers and IOSurface IDs repeat at draw pairs
+  1138/1139, 1257/1258, 1263/1264, 1395/1396 and 1506/1507 in the
+  captured diagnostic boot. The 0 value is no reported IOSurface ID,
+  not a second shared IOSurface identifier.
