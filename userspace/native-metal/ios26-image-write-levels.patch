@@ -1340,7 +1340,29 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  /* a constant i1/i32 argument, which these intrinsics use as flags */
  static bool
  tex_flag(struct air_ctx *c, const struct air_inst *in, unsigned operand, uint64_t *out)
-@@ -1573,6 +1741,54 @@
+@@ -1457,8 +1625,19 @@
+          unsigned n = comps ? comps :
+             (t->dim == GLSL_SAMPLER_DIM_1D || t->dim == GLSL_SAMPLER_DIM_BUF ? 1 :
+              t->dim == GLSL_SAMPLER_DIM_3D ? 3 : 2) + (t->is_array ? 1 : 0);
+-         return nir_image_size(&c->b, n, 32, index, lod ? lod : nir_imm_int(&c->b, 0),
+-                               .image_dim = t->dim, .image_array = t->is_array);
++         nir_def *size0 = nir_image_size(&c->b, n, 32, index, nir_imm_int(&c->b, 0),
++                                         .image_dim = t->dim, .image_array = t->is_array);
++         if (!lod || (nir_src_is_const(nir_src_for_ssa(lod)) &&
++                      nir_src_as_uint(nir_src_for_ssa(lod)) == 0))
++            return size0;
++         nir_def *ch[4];
++         const unsigned dims = n - (t->is_array ? 1 : 0);
++         for (unsigned k = 0; k < n; k++) {
++            ch[k] = nir_channel(&c->b, size0, k);
++            if (k < dims)
++               ch[k] = nir_umax(&c->b, nir_ushr(&c->b, ch[k], lod), nir_imm_int(&c->b, 1));
++         }
++         return nir_vec(&c->b, ch, n);
+       }
+       case nir_texop_query_levels:
+          return nir_image_levels(&c->b, 32, index, .image_dim = t->dim,
+@@ -1573,6 +1752,54 @@
     return coord;
  }
  
@@ -1395,7 +1417,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
  static bool
  texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *n)
  {
-@@ -1584,6 +1800,48 @@
+@@ -1584,6 +1811,48 @@
     if (!strncmp(n->part[0], "get_null_", 9) && in->base.type->kind == AIR_TYPE_POINTER) {
        struct air_ptr p = { .class = AIR_PTR_NONE };
        air_set(c, &in->base, air_val_ptr(c, p));
@@ -1444,7 +1466,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
        return true;
     }
     struct air_tex_name t;
-@@ -1700,19 +1958,30 @@
+@@ -1700,19 +1969,30 @@
        nir_def *coord = tex_coord_and_layer(c, in, &t, n, &arg, ncoord);
        if (!coord)
           return false;
@@ -1483,7 +1505,7 @@ diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
                        nir_pad_vector(&c->b, nir_u2u32(&c->b, coord), 4),
                        nir_imm_int(&c->b, 0), nir_pad_vector(&c->b, value, 4),
                        nir_imm_int(&c->b, 0),
-@@ -1991,6 +2260,18 @@
+@@ -1991,6 +2271,18 @@
  
     if (!strcmp(n.part[0], "is_function_constant_defined"))
        return fc_defined_op(c, in);

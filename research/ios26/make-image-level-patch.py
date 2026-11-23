@@ -1399,7 +1399,27 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
             r = nir_f2f16(&c->b, r);
       }
    } else if (!strcmp(op, "unpack") && n->num >= 2 &&
-              !strcmp(n->part[1], "unorm4x8")) {'''))
+              !strcmp(n->part[1], "unorm4x8")) {'''),
+     # Size of a written texture at a mip level (A71 2026-11-23, wallpaper glass): an image
+     # binding is a single-level view of level 0, so nir_image_size ignored the level and
+     # Mercury's VariableBlurrer::downsample (uv = (gid + 0.5) / get_width(target, lod))
+     # built every level from the top-left corner of the one before: L2..L9 converged to
+     # one corner texel (pale, alpha 0). Metal's size at level k is max(1, size0 >> k).
+     ('''         return nir_image_size(&c->b, n, 32, index, lod ? lod : nir_imm_int(&c->b, 0),
+                               .image_dim = t->dim, .image_array = t->is_array);''',
+      '''         nir_def *size0 = nir_image_size(&c->b, n, 32, index, nir_imm_int(&c->b, 0),
+                                         .image_dim = t->dim, .image_array = t->is_array);
+         if (!lod || (nir_src_is_const(nir_src_for_ssa(lod)) &&
+                      nir_src_as_uint(nir_src_for_ssa(lod)) == 0))
+            return size0;
+         nir_def *ch[4];
+         const unsigned dims = n - (t->is_array ? 1 : 0);
+         for (unsigned k = 0; k < n; k++) {
+            ch[k] = nir_channel(&c->b, size0, k);
+            if (k < dims)
+               ch[k] = nir_umax(&c->b, nir_ushr(&c->b, ch[k], lod), nir_imm_int(&c->b, 1));
+         }
+         return nir_vec(&c->b, ch, n);'''))
 
 edit('tools/mesa/air/air_metal.c',
      ('''   unsigned old_images=device->native_pending_images[stage];
