@@ -1,4 +1,4 @@
-A71: behind a separate opt-in, open Cover Sheet and sample scanout over ACM.
+A71: behind a separate opt-in, drag Cover Sheet and sample scanout before releasing the gesture.
 Use the existing HID input path and do not bypass unlock state.
 
 diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
@@ -34,9 +34,9 @@ diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
 +		sweet_hid_touch(0, 1, x, top + (bottom - top) * i / steps);
 +		ud_sleep_ms(16);
 +	}
-+	sweet_hid_touch(0, 0, x, bottom);
-+	ud_sleep_ms(350);
++	ud_sleep_ms(100);
 +	ud_acm_capture();
++	sweet_hid_touch(0, 0, x, bottom);
 +}
 +
  extern void sweet_reboot_set_mode(int mode);    /* bsd/dev/sweet_reboot.c (2122) */
