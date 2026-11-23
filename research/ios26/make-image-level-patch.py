@@ -3358,8 +3358,10 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 	 * image shader, after the clock. Mercury's rgb is not premultiplied and its alpha is an
 	 * occlusion mask (rasterizeBackgroundFragment: alpha = wantsOcclusion ? 0 : 1), so this
 	 * pass blends rgb*a + dst*(1-a): discs over the clock, nothing added twice. */
-	const bool over = name != NULL &&
-		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
+	/* any source-over image pass (transitions use variants, e.g. _Xhfn_) */
+	const bool over = name != NULL && len > 5 &&
+		!strncmp(name->label, "com.apple.coreanimation.PBGRABsovXm_Timg", 40) &&
+		!strcmp(name->label + len - 5, "_Isrc");
 	pthread_mutex_unlock(&native_drawlog_lock);
 	if ((!xrg && !over) || ![source respondsToSelector:@selector(iosurface)] ||
 	    [source iosurface] == NULL || ![source respondsToSelector:@selector(mesaTexture)])
@@ -3368,7 +3370,14 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 	if (fmt != 80 && fmt != 81)
 		return;
 	if (over) {
-		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil) {
+		int rwd_surface_straight_alpha(void *);
+		static char straight_key;   /* per texture: the surface's tag, read once */
+		NSNumber *straight = objc_getAssociatedObject(source, &straight_key);
+		if (straight == nil) {
+			straight = rwd_surface_straight_alpha((void *)[source iosurface]) ? @YES : @NO;
+			objc_setAssociatedObject(source, &straight_key, straight, OBJC_ASSOCIATION_RETAIN);
+		}
+		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil || [straight boolValue]) {
 			rwa_render_straight_alpha_next(true);
 			static unsigned told_depth;
 			if (__atomic_fetch_add(&told_depth, 1, __ATOMIC_RELAXED) < 8)
@@ -4020,7 +4029,30 @@ edit('userland/src/redwooddrawable.m',
       "    case 94:fourcc='l10r';bpp=4;break;   /* little-endian ARGB2101010 */\n"
       "    case 115:fourcc='RGhA';bpp=8;break;\n"
       "    case 53:case 54:case 55:   /* R32Uint/Sint/Float over a 4-byte surface */\n"
-      "        fourcc=(surface_format=='RGBA'||surface_format=='BGRA')?surface_format:'BGRA';bpp=4;break;\n"))
+      "        fourcc=(surface_format=='RGBA'||surface_format=='BGRA')?surface_format:'BGRA';bpp=4;break;\n"),
+     # Straight-alpha surfaces (A71 2026-11-23): Mercury writes non-premultiplied rgb with an occlusion
+     # mask in alpha into every surface it renders. Tag those surfaces (an IOSurface value, visible to
+     # backboardd), so backboardd blends any image pass of them as straight alpha from the first frame,
+     # including transitions where a surface is shown before it was ever drawn opaque.
+     ("uint32_t rwd_surface_id(void *surface) {return surface?IOSurfaceGetID((IOSurfaceRef)surface):0;}\n",
+      "uint32_t rwd_surface_id(void *surface) {return surface?IOSurfaceGetID((IOSurfaceRef)surface):0;}\n"
+      "int rwd_surface_straight_alpha(void *surface);\n"
+      "int rwd_surface_straight_alpha(void *surface)\n"
+      "{\n"
+      "    if(!surface)return 0;\n"
+      "    CFTypeRef v=IOSurfaceCopyValue((IOSurfaceRef)surface,CFSTR(\"SweetA71StraightAlpha\"));\n"
+      "    const int yes=v!=NULL && CFEqual(v,kCFBooleanTrue);\n"
+      "    if(v)CFRelease(v);\n"
+      "    return yes;\n"
+      "}\n"),
+     ("    if(!device || !s || !want)REFUSE(\"IOSurface import requires a device, surface and descriptor\");\n",
+      "    if(!device || !s || !want)REFUSE(\"IOSurface import requires a device, surface and descriptor\");\n"
+      "    if((want->usage&4u) && getprogname() && !strcmp(getprogname(),\"MercuryPosterExtension\") &&\n"
+      "       access(\"/var/local/sweet-native-wallpaper-depth\",F_OK)==0) {\n"
+      "        IOSurfaceSetValue(s,CFSTR(\"SweetA71StraightAlpha\"),kCFBooleanTrue);\n"
+      "        static unsigned told_straight;\n"
+      "        if(told_straight++<8)fprintf(stderr,\"SweetNativeMetal: XRGALPHA tagged IOSurface %u (straight alpha)\\n\",IOSurfaceGetID(s));\n"
+      "    }\n"))
 
 Path('userspace/native-metal/ios26-image-write-levels.patch').write_text(''.join(changes), encoding='utf-8',
                                                                          newline='\n')

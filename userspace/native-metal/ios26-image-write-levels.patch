@@ -3635,7 +3635,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,333 @@
+@@ -121,11 +121,342 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -3815,8 +3815,10 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	 * image shader, after the clock. Mercury's rgb is not premultiplied and its alpha is an
 +	 * occlusion mask (rasterizeBackgroundFragment: alpha = wantsOcclusion ? 0 : 1), so this
 +	 * pass blends rgb*a + dst*(1-a): discs over the clock, nothing added twice. */
-+	const bool over = name != NULL &&
-+		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
++	/* any source-over image pass (transitions use variants, e.g. _Xhfn_) */
++	const bool over = name != NULL && len > 5 &&
++		!strncmp(name->label, "com.apple.coreanimation.PBGRABsovXm_Timg", 40) &&
++		!strcmp(name->label + len - 5, "_Isrc");
 +	pthread_mutex_unlock(&native_drawlog_lock);
 +	if ((!xrg && !over) || ![source respondsToSelector:@selector(iosurface)] ||
 +	    [source iosurface] == NULL || ![source respondsToSelector:@selector(mesaTexture)])
@@ -3825,7 +3827,14 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	if (fmt != 80 && fmt != 81)
 +		return;
 +	if (over) {
-+		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil) {
++		int rwd_surface_straight_alpha(void *);
++		static char straight_key;   /* per texture: the surface's tag, read once */
++		NSNumber *straight = objc_getAssociatedObject(source, &straight_key);
++		if (straight == nil) {
++			straight = rwd_surface_straight_alpha((void *)[source iosurface]) ? @YES : @NO;
++			objc_setAssociatedObject(source, &straight_key, straight, OBJC_ASSOCIATION_RETAIN);
++		}
++		if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil || [straight boolValue]) {
 +			rwa_render_straight_alpha_next(true);
 +			static unsigned told_depth;
 +			if (__atomic_fetch_add(&told_depth, 1, __ATOMIC_RELAXED) < 8)
@@ -3969,7 +3978,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +461,40 @@
+@@ -139,13 +470,40 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -4012,7 +4021,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +504,247 @@
+@@ -155,13 +513,247 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);
@@ -4499,7 +4508,36 @@ diff --git a/userland/src/SweetNativeLibrary.inc b/userland/src/SweetNativeLibra
 diff --git a/userland/src/redwooddrawable.m b/userland/src/redwooddrawable.m
 --- a/userland/src/redwooddrawable.m
 +++ b/userland/src/redwooddrawable.m
-@@ -136,7 +136,10 @@
+@@ -8,6 +8,15 @@
+ #include "sweet_native_ext.h"
+ 
+ uint32_t rwd_surface_id(void *surface) {return surface?IOSurfaceGetID((IOSurfaceRef)surface):0;}
++int rwd_surface_straight_alpha(void *surface);
++int rwd_surface_straight_alpha(void *surface)
++{
++    if(!surface)return 0;
++    CFTypeRef v=IOSurfaceCopyValue((IOSurfaceRef)surface,CFSTR("SweetA71StraightAlpha"));
++    const int yes=v!=NULL && CFEqual(v,kCFBooleanTrue);
++    if(v)CFRelease(v);
++    return yes;
++}
+ int rwd_import_available(void) {return rwa_native_abi()==SWEET_NATIVE_METAL_ABI;}
+ struct rwa_texture *rwd_texture_for_surface(struct rwa_device *device,void *surface,unsigned long plane,
+     const struct rwd_texture_shape *want,struct rwd_surface *took,char *why,size_t n)
+@@ -16,6 +25,12 @@
+     if(took)memset(took,0,sizeof(*took));
+ #define REFUSE(...) do {snprintf(why,n,__VA_ARGS__);return NULL;} while(0)
+     if(!device || !s || !want)REFUSE("IOSurface import requires a device, surface and descriptor");
++    if((want->usage&4u) && getprogname() && !strcmp(getprogname(),"MercuryPosterExtension") &&
++       access("/var/local/sweet-native-wallpaper-depth",F_OK)==0) {
++        IOSurfaceSetValue(s,CFSTR("SweetA71StraightAlpha"),kCFBooleanTrue);
++        static unsigned told_straight;
++        if(told_straight++<8)fprintf(stderr,"SweetNativeMetal: XRGALPHA tagged IOSurface %u (straight alpha)\n",IOSurfaceGetID(s));
++    }
+     {   /* 26b9c: every IOSurface texture request, first 48 per process (wallpaper / snapshot formats unknown) */
+         static unsigned told_req;
+         if(IOSurfaceGetPixelFormat(s)!=0x26424741u && told_req++<48)fprintf(stderr,"SweetNativeMetal: IOSurface texture request: surface %u %#x planes %zu plane %lu Metal format %u %ux%u type %u usage %#x\n",
+@@ -136,7 +151,10 @@
      case 30:fourcc='LA08';bpp=2;break;
      case 70:case 71:fourcc='RGBA';bpp=4;break;
      case 80:case 81:fourcc='BGRA';bpp=4;break;
