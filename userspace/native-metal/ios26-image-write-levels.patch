@@ -2326,10 +2326,11 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (num_ssbo)
        pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);
     unsigned old_views=device->native_pending_views[stage];
-@@ -4015,6 +4468,42 @@
+@@ -4014,6 +4467,42 @@
+             old_views>num_views?old_views-num_views:0, false, views);
        device->native_views_ns+=native_now_ns()-began;
        memcpy(device->native_views[stage],views,sizeof(views));device->native_views_valid[stage]=true;
-    }
++   }
 +   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {
 +      static int enabled = -1;
 +      static unsigned budget;
@@ -2365,74 +2366,10 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +         }
 +         fprintf(stderr, "SweetNativeMetal: ARCBIND %s%s\n", name, details);
 +      }
-+   }
+    }
     unsigned old_images=device->native_pending_images[stage];
     if (device->in_command && device->native_images_valid[stage] &&
-        !memcmp(device->native_images[stage],images,sizeof(images)))device->native_binding_reused++;
-@@ -4175,6 +4664,62 @@
-    };
-    pipe->launch_grid(pipe, &grid);
-    pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);
-+
-+   /* The first four Mercury dispatches go to an intermediate, L1 of
-+    * the pyramid, another intermediate, then L2 of the pyramid. Sample
-+    * each expected destination once so we can locate the alpha loss. */
-+   if (strstr(name, "VariableBlurrer::downsample") && bindings->texture_count > 1) {
-+      static int enabled = -1;
-+      static unsigned budget;
-+      int trace = __atomic_load_n(&enabled, __ATOMIC_RELAXED);
-+      if (trace < 0) {
-+         FILE *flag = fopen("/var/local/sweet-native-arc-texels", "r");
-+         trace = flag != NULL;
-+         if (flag)
-+            fclose(flag);
-+         __atomic_store_n(&enabled, trace, __ATOMIC_RELAXED);
-+      }
-+      if (trace && __atomic_load_n(&budget, __ATOMIC_RELAXED) < 4) {
-+         const unsigned step = __atomic_fetch_add(&budget, 1, __ATOMIC_RELAXED);
-+         struct rwa_texture *dst = bindings->textures[1];
-+         if (step < 4 && dst && dst->res->target == PIPE_TEXTURE_2D &&
-+             (dst->res->format == PIPE_FORMAT_B8G8R8A8_UNORM ||
-+              dst->res->format == PIPE_FORMAT_B8G8R8A8_SRGB)) {
-+            const unsigned relative_level = step % 2 ? (step + 1) / 2 : 0;
-+            if (relative_level < dst->level_count) {
-+               const unsigned level = dst->first_level + relative_level;
-+               const unsigned width = u_minify(dst->res->width0, level);
-+               const unsigned height = u_minify(dst->res->height0, level);
-+               struct pipe_box box = {0, 0, 0, width, height, 1};
-+               struct pipe_transfer *transfer = NULL;
-+               const uint8_t *data = pipe->texture_map(pipe, dst->res, level,
-+                                                        PIPE_MAP_READ, &box, &transfer);
-+               if (data) {
-+                  unsigned sums[4] = {0};
-+                  unsigned zero_alpha = 0;
-+                  for (unsigned y = 1; y <= 8; y++) {
-+                     for (unsigned x = 1; x <= 8; x++) {
-+                        const uint8_t *pixel = data + (size_t)(height * y / 9) * transfer->stride
-+                                              + 4 * (width * x / 9);
-+                        for (unsigned channel = 0; channel < 4; channel++)
-+                           sums[channel] += pixel[channel];
-+                        zero_alpha += pixel[3] == 0;
-+                     }
-+                  }
-+                  pipe->texture_unmap(pipe, transfer);
-+                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u dst %p L%u %ux%u BGRA %u,%u,%u,%u zero_alpha %u/64\n",
-+                          step, (void *)dst->res, level, width, height,
-+                          sums[0] / 64, sums[1] / 64, sums[2] / 64, sums[3] / 64, zero_alpha);
-+               } else {
-+                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u L%u map failed\n", step, level);
-+               }
-+            } else {
-+               fprintf(stderr, "SweetNativeMetal: ARCTEX step %u expected L%u but found %u levels\n",
-+                       step, relative_level, dst->level_count);
-+            }
-+         }
-+      }
-+   }
- 
-    /* Waited for here, and not left to rwa_finish, because this is the call that can
-     * say which dispatch did not come back -- and because the buffers are mapped the
-@@ -5383,6 +5928,8 @@
+@@ -5383,6 +5872,8 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2441,7 +2378,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6509,12 +7056,12 @@
+@@ -6509,12 +7000,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2457,7 +2394,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6645,6 +7192,9 @@
+@@ -6645,6 +7136,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2467,7 +2404,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7687,58 @@
+@@ -7137,7 +7631,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2527,7 +2464,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7815,10 @@
+@@ -7214,6 +7759,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2538,7 +2475,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7912,7 @@
+@@ -7307,6 +7856,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -3323,12 +3260,17 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          .native_color_levels=work->nativeColorLevels,
          .native_viewport={work->nativeViewport[0],work->nativeViewport[1],work->nativeViewport[2],work->nativeViewport[3]},
          .native_scissor={work->nativeScissor[0],work->nativeScissor[1],work->nativeScissor[2],work->nativeScissor[3]},
-@@ -3909,6 +4446,12 @@
+@@ -3909,6 +4446,17 @@
  		return NO;
  	}
  
 +	native_glassstat([work->render render]);
 +	if (native_skip_luma_boost([work->render render]))
++		return YES;
++	if (native_wall_skip_repeated_surface(self, [work->render render], work->color,
++	                                      work->colorCount, work->textures, work->textureCount,
++	                                      work->depth != nil, work->vertexCount,
++	                                      work->nativeFlags, work->nativeViewport, work->nativeScissor))
 +		return YES;
 +	if (native_wall_skip_uploaded_overlay(self, [work->render render], work->color,
 +	                                      work->colorCount, work->textures, work->textureCount))
@@ -3336,7 +3278,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	const unsigned dl = native_drawlog_next();
  	{
  		if (dl)
-@@ -3944,6 +4487,9 @@
+@@ -3944,6 +4492,9 @@
  
  - (void)failWith:(const char *)reason
  { NATIVE_OBJECT_LOCK; 
@@ -3346,7 +3288,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	_error = [[NSError errorWithDomain:@"SweetNativeMetal" code:4
  				  userInfo:@{ NSLocalizedDescriptionKey:
  					      [NSString stringWithUTF8String:reason] }] retain];
-@@ -3960,6 +4506,7 @@
+@@ -3960,6 +4511,7 @@
  		return;
  	}
      atomic_fetch_add(&native_wait_until_completed,1);
@@ -3354,7 +3296,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (mesa.finish([[_queue device] mesaDevice], why, sizeof(why)) != 0) {
  		rw_print("THE GPU DID NOT FINISH: %s\n", why);
  		_error = [[NSError errorWithDomain:@"SweetNativeMetal" code:3
-@@ -3971,7 +4518,7 @@
+@@ -3971,7 +4523,7 @@
  	_status = RW_CB_COMPLETED;   /* the fence has been paid, and only now */
  }
  
@@ -3363,7 +3305,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  /*
   * HANDLERS, AND WHERE THEY RUN.
-@@ -4023,6 +4570,7 @@
+@@ -4023,6 +4575,7 @@
  
  - (void)addCompletedHandler:(void (^)(id))handler
  { NATIVE_OBJECT_LOCK; 
@@ -3371,7 +3313,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (handler == NULL) {
  		return;
  	}
-@@ -4132,6 +4680,7 @@
+@@ -4132,6 +4685,7 @@
  	BOOL _hasDepthRange;
      float _nativeViewport[4], _nativeBlend[4];
      unsigned _nativeScissor[4], _nativeFlags;
@@ -3379,7 +3321,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      unsigned _nativeClearMask;
      unsigned _nativeColorLevels[8];
      float _nativeClearColors[8][4];
-@@ -4144,6 +4693,9 @@
+@@ -4144,6 +4698,9 @@
  	unsigned _vertexBufferCount, _fragmentBufferCount;
  	unsigned _fragmentTextureCount, _fragmentSamplerCount;
  	BOOL _complained;
@@ -3389,7 +3331,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (instancetype)initWithRedwoodCommandBuffer:(SweetNativeMetalCommandBuffer *)commandBuffer
-@@ -4181,7 +4733,15 @@
+@@ -4181,7 +4738,15 @@
  		 */
  		NSUInteger store = [attachment storeAction];
  
@@ -3406,7 +3348,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		    store == MTLStoreActionStoreAndMultisampleResolve ||
  		    [attachment resolveTexture] != nil) {
  			rw_print("colour attachment %u asks for a multisample "
-@@ -4362,9 +4922,21 @@
+@@ -4362,9 +4927,21 @@
      if(r.x>UINT32_MAX||r.y>UINT32_MAX||r.width>UINT32_MAX||r.height>UINT32_MAX){[_commandBuffer failWith:"scissor exceeds 32-bit range"];return;}
      _nativeScissor[0]=r.x;_nativeScissor[1]=r.y;_nativeScissor[2]=r.width;_nativeScissor[3]=r.height;_nativeFlags|=2;
  }
@@ -3431,7 +3373,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  /* The depth/stencil state, recorded like the pipeline state: nothing runs at encode time,
   * so what a draw tests against is whatever was bound when that draw was encoded. A state
-@@ -4396,6 +4968,7 @@
+@@ -4396,6 +4973,7 @@
        baseInstance:(NSUInteger)baseInstance
  { NATIVE_OBJECT_LOCK; 
  	SweetNativeMetalWork *work = [[SweetNativeMetalWork alloc] init];
@@ -3439,7 +3381,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  	if (_pipeline == nil || (_colorCount == 0 && _depth == nil)) {
  		rw_print("this draw has %s and is dropped\n",
-@@ -4453,6 +5026,7 @@
+@@ -4453,6 +5031,7 @@
      memcpy(work->nativeScissor,_nativeScissor,sizeof _nativeScissor);
      memcpy(work->nativeBlend,_nativeBlend,sizeof _nativeBlend);
      work->nativeFlags=_nativeFlags;
@@ -3447,7 +3389,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      memcpy(work->nativeColorLevels, _nativeColorLevels, sizeof _nativeColorLevels);
      work->nativeClearMask=_nativeClearMask;
      memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
-@@ -5454,6 +6028,8 @@
+@@ -5454,6 +6033,8 @@
   */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 
@@ -3456,7 +3398,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      if(_nativeClearMask || _clearsDepth || _clearsStencil) {
          SweetNativeMetalWork *work=[SweetNativeMetalWork new];work->nativeClearOnly=YES;
          work->colorCount=_colorCount;for(unsigned i=0;i<8;i++)work->color[i]=_color[i];
-@@ -5463,6 +6039,41 @@
+@@ -5463,6 +6044,41 @@
          work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
          [_commandBuffer recordWork:work];[work release];
          _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
@@ -3498,7 +3440,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      }
      [super endEncoding];
  }
-@@ -5618,6 +6229,32 @@
+@@ -5618,6 +6234,32 @@
  	work->size[1] = (unsigned)size.height;
  	work->size[2] = (unsigned)size.depth;
  	work->threadgroupBytes = (unsigned)_threadgroupLength;
@@ -3531,7 +3473,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	[_commandBuffer recordWork:work];
  	[work release];
  }
-@@ -5629,9 +6266,20 @@
+@@ -5629,9 +6271,20 @@
  { NATIVE_OBJECT_LOCK; 
  	MTLSize groups;
  
@@ -3555,7 +3497,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		rw_print("%lux%lux%lu threads do not divide into groups of "
  		         "%lux%lux%lu, and this driver does not have the partial-group support "
  		         "that would need\n", (unsigned long)threads.width,
-@@ -5813,6 +6461,7 @@
+@@ -5813,6 +6466,7 @@
   * this half is the same fix made before it is measured, not after. */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 
@@ -3566,7 +3508,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,134 @@
+@@ -121,11 +121,198 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -3642,6 +3584,70 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	}
 +}
 +
++/* Test only the adjacent opaque/source-over pair seen in the wallpaper trace. */
++static bool
++native_wall_skip_repeated_surface(const void *commands, const void *render,
++                                  id const *colors, unsigned ncolors,
++                                  id const *textures, unsigned ntextures,
++                                  bool has_depth, unsigned count, unsigned flags,
++                                  const float viewport[4], const unsigned scissor[4])
++{
++	static dispatch_once_t once;
++	static bool enabled;
++	dispatch_once(&once, ^{
++		const char *process = getprogname();
++		enabled = process != NULL && !strcmp(process, "backboardd") &&
++		          access("/var/local/sweet-native-wallpaper-repeat-test", F_OK) == 0;
++	});
++	if (!enabled)
++		return false;
++
++	static _Thread_local const void *previous_commands;
++	static _Thread_local uintptr_t previous_source;
++	static _Thread_local uintptr_t previous_targets[2];
++	const uintptr_t old_source = previous_source;
++	previous_source = 0;
++	if (has_depth || count != 6 || ncolors != 2 || ntextures <= 3 ||
++	    colors[0] == nil || colors[1] == nil || textures[3] == nil)
++		return false;
++
++	id source = textures[3];
++	id target = colors[0];
++	if ([target width] != 828 || [target height] != 1792 ||
++	    [source width] != 828 || [source height] != 1792 ||
++	    ![source respondsToSelector:@selector(iosurface)] || [source iosurface] == NULL ||
++	    ((flags & 1) && (viewport[0] || viewport[1] || viewport[2] != 828 ||
++	                     viewport[3] != 1792)) ||
++	    ((flags & 2) && (scissor[0] || scissor[1] || scissor[2] != 828 ||
++	                     scissor[3] != 1792)))
++		return false;
++
++	pthread_mutex_lock(&native_drawlog_lock);
++	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
++	const bool fixed = name != NULL && !strcmp(name->vfn, "fixed_vert_lph_spc") &&
++	                   !strcmp(name->ffn, "fixed_frag_lph_cph");
++	const bool opaque = fixed &&
++		!strcmp(name->label, "com.apple.coreanimation.PBGRAXm_TimgA2Xhf_Ixrg");
++	const bool source_over = fixed &&
++		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
++	pthread_mutex_unlock(&native_drawlog_lock);
++	if (opaque) {
++		previous_commands = commands;
++		previous_source = (uintptr_t)source;
++		previous_targets[0] = (uintptr_t)target;
++		previous_targets[1] = (uintptr_t)colors[1];
++	}
++	if (!source_over || old_source != (uintptr_t)source || previous_commands != commands ||
++	    previous_targets[0] != (uintptr_t)target || previous_targets[1] != (uintptr_t)colors[1])
++		return false;
++
++	static unsigned skipped;
++	if (__atomic_fetch_add(&skipped, 1, __ATOMIC_RELAXED) < 8)
++		fprintf(stderr, "SweetNativeMetal: skipped repeated wallpaper IOSurface %u\n",
++		        rwd_surface_id((void *)[source iosurface]));
++	return true;
++}
++
 +/* Optional A/B experiment for the 23G90 image-upload site above. */
 +static bool
 +native_wall_skip_uploaded_overlay(const void *commands, const void *render,
@@ -3701,7 +3707,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +262,39 @@
+@@ -139,13 +326,39 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -3743,7 +3749,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +304,173 @@
+@@ -155,13 +368,173 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);

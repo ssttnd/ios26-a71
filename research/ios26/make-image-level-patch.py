@@ -1402,68 +1402,6 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
               !strcmp(n->part[1], "unorm4x8")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
-     ('''   pipe->launch_grid(pipe, &grid);
-   pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);
-''',
-      '''   pipe->launch_grid(pipe, &grid);
-   pipe->memory_barrier(pipe, PIPE_BARRIER_ALL);
-
-   /* The first four Mercury dispatches go to an intermediate, L1 of
-    * the pyramid, another intermediate, then L2 of the pyramid. Sample
-    * each expected destination once so we can locate the alpha loss. */
-   if (strstr(name, "VariableBlurrer::downsample") && bindings->texture_count > 1) {
-      static int enabled = -1;
-      static unsigned budget;
-      int trace = __atomic_load_n(&enabled, __ATOMIC_RELAXED);
-      if (trace < 0) {
-         FILE *flag = fopen("/var/local/sweet-native-arc-texels", "r");
-         trace = flag != NULL;
-         if (flag)
-            fclose(flag);
-         __atomic_store_n(&enabled, trace, __ATOMIC_RELAXED);
-      }
-      if (trace && __atomic_load_n(&budget, __ATOMIC_RELAXED) < 4) {
-         const unsigned step = __atomic_fetch_add(&budget, 1, __ATOMIC_RELAXED);
-         struct rwa_texture *dst = bindings->textures[1];
-         if (step < 4 && dst && dst->res->target == PIPE_TEXTURE_2D &&
-             (dst->res->format == PIPE_FORMAT_B8G8R8A8_UNORM ||
-              dst->res->format == PIPE_FORMAT_B8G8R8A8_SRGB)) {
-            const unsigned relative_level = step % 2 ? (step + 1) / 2 : 0;
-            if (relative_level < dst->level_count) {
-               const unsigned level = dst->first_level + relative_level;
-               const unsigned width = u_minify(dst->res->width0, level);
-               const unsigned height = u_minify(dst->res->height0, level);
-               struct pipe_box box = {0, 0, 0, width, height, 1};
-               struct pipe_transfer *transfer = NULL;
-               const uint8_t *data = pipe->texture_map(pipe, dst->res, level,
-                                                        PIPE_MAP_READ, &box, &transfer);
-               if (data) {
-                  unsigned sums[4] = {0};
-                  unsigned zero_alpha = 0;
-                  for (unsigned y = 1; y <= 8; y++) {
-                     for (unsigned x = 1; x <= 8; x++) {
-                        const uint8_t *pixel = data + (size_t)(height * y / 9) * transfer->stride
-                                              + 4 * (width * x / 9);
-                        for (unsigned channel = 0; channel < 4; channel++)
-                           sums[channel] += pixel[channel];
-                        zero_alpha += pixel[3] == 0;
-                     }
-                  }
-                  pipe->texture_unmap(pipe, transfer);
-                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u dst %p L%u %ux%u BGRA %u,%u,%u,%u zero_alpha %u/64\\n",
-                          step, (void *)dst->res, level, width, height,
-                          sums[0] / 64, sums[1] / 64, sums[2] / 64, sums[3] / 64, zero_alpha);
-               } else {
-                  fprintf(stderr, "SweetNativeMetal: ARCTEX step %u L%u map failed\\n", step, level);
-               }
-            } else {
-               fprintf(stderr, "SweetNativeMetal: ARCTEX step %u expected L%u but found %u levels\\n",
-                       step, relative_level, dst->level_count);
-            }
-         }
-      }
-   }
-'''),
      ('''   unsigned old_images=device->native_pending_images[stage];
 ''',
       '''   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {
@@ -2774,6 +2712,11 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
      ('\tconst unsigned dl = native_drawlog_next();\n',
       '\tnative_glassstat([work->render render]);\n'
       '\tif (native_skip_luma_boost([work->render render]))\n\t\treturn YES;\n'
+      '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
+      '\t                                      work->colorCount, work->textures, work->textureCount,\n'
+      '\t                                      work->depth != nil, work->vertexCount,\n'
+      '\t                                      work->nativeFlags, work->nativeViewport, work->nativeScissor))\n'
+      '\t\treturn YES;\n'
       '\tif (native_wall_skip_uploaded_overlay(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount))\n'
       '\t\treturn YES;\n'
@@ -3198,6 +3141,70 @@ native_wall_texture_event(const char *operation, id texture, const void *caller)
 		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller unknown\\n",
 		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height]);
 	}
+}
+
+/* Test only the adjacent opaque/source-over pair seen in the wallpaper trace. */
+static bool
+native_wall_skip_repeated_surface(const void *commands, const void *render,
+                                  id const *colors, unsigned ncolors,
+                                  id const *textures, unsigned ntextures,
+                                  bool has_depth, unsigned count, unsigned flags,
+                                  const float viewport[4], const unsigned scissor[4])
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-wallpaper-repeat-test", F_OK) == 0;
+	});
+	if (!enabled)
+		return false;
+
+	static _Thread_local const void *previous_commands;
+	static _Thread_local uintptr_t previous_source;
+	static _Thread_local uintptr_t previous_targets[2];
+	const uintptr_t old_source = previous_source;
+	previous_source = 0;
+	if (has_depth || count != 6 || ncolors != 2 || ntextures <= 3 ||
+	    colors[0] == nil || colors[1] == nil || textures[3] == nil)
+		return false;
+
+	id source = textures[3];
+	id target = colors[0];
+	if ([target width] != 828 || [target height] != 1792 ||
+	    [source width] != 828 || [source height] != 1792 ||
+	    ![source respondsToSelector:@selector(iosurface)] || [source iosurface] == NULL ||
+	    ((flags & 1) && (viewport[0] || viewport[1] || viewport[2] != 828 ||
+	                     viewport[3] != 1792)) ||
+	    ((flags & 2) && (scissor[0] || scissor[1] || scissor[2] != 828 ||
+	                     scissor[3] != 1792)))
+		return false;
+
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	const bool fixed = name != NULL && !strcmp(name->vfn, "fixed_vert_lph_spc") &&
+	                   !strcmp(name->ffn, "fixed_frag_lph_cph");
+	const bool opaque = fixed &&
+		!strcmp(name->label, "com.apple.coreanimation.PBGRAXm_TimgA2Xhf_Ixrg");
+	const bool source_over = fixed &&
+		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
+	pthread_mutex_unlock(&native_drawlog_lock);
+	if (opaque) {
+		previous_commands = commands;
+		previous_source = (uintptr_t)source;
+		previous_targets[0] = (uintptr_t)target;
+		previous_targets[1] = (uintptr_t)colors[1];
+	}
+	if (!source_over || old_source != (uintptr_t)source || previous_commands != commands ||
+	    previous_targets[0] != (uintptr_t)target || previous_targets[1] != (uintptr_t)colors[1])
+		return false;
+
+	static unsigned skipped;
+	if (__atomic_fetch_add(&skipped, 1, __ATOMIC_RELAXED) < 8)
+		fprintf(stderr, "SweetNativeMetal: skipped repeated wallpaper IOSurface %u\\n",
+		        rwd_surface_id((void *)[source iosurface]));
+	return true;
 }
 
 /* Optional A/B experiment for the 23G90 image-upload site above. */
