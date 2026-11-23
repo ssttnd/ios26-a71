@@ -2150,3 +2150,11 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Series check passed. Metal CI `45210012076` building. Expect: Cover Sheet and home screen not washed.
 - Owner said "kernel ready": XNU CI `45205742994` (aa20183, 2127 gesture, capture after release) succeeded.
   2b90329 (capture before release) was never built. Not packed or flashed; the owner opens Cover Sheet by hand.
+- **Brightness fixed (owner confirmed).** Metal CI `45210012076` (a213472) succeeded; six hashes match build.json.
+  `build/a71-ios26-xrg-alpha.payload` (bundle + `/var/local/sweet-native-xrg-alpha-one`), TWRP VERIFY OK
+  `176a26f07692cafc2bc41f881384bd7a3686e30209854aa2e1a8ca3ae7c08322`, boot still 2126; applied 12/12 errno=0
+  (boot from USB line 654840). Log: `XRGALPHA enabled`, then IOSurfaces 25, 26, 27 (828x1792) set to alpha one
+  (rc 0). Owner: "brightness is normal". No backboardd/SpringBoard crash or panic seen at 80 s.
+- Still installed and now probably unnecessary: wallpaper repeat-skip test, single-layer test, luma-boost skip,
+  drawlog-every + metadata-only, wall-regions. Next: confirm Cover Sheet and app launches by screenshot, then
+  remove the A/B test flags one at a time and make the Ixrg alpha-one behaviour default (no flag).
