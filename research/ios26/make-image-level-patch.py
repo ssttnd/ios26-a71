@@ -1402,6 +1402,46 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
               !strcmp(n->part[1], "unorm4x8")) {'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('''   unsigned old_images=device->native_pending_images[stage];
+''',
+      '''   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {
+      static int enabled = -1;
+      static unsigned budget;
+      int trace = __atomic_load_n(&enabled, __ATOMIC_RELAXED);
+      if (trace < 0) {
+         FILE *flag = fopen("/var/local/sweet-native-arc-bindings", "r");
+         trace = flag != NULL;
+         if (flag)
+            fclose(flag);
+         __atomic_store_n(&enabled, trace, __ATOMIC_RELAXED);
+      }
+      if (trace && __atomic_fetch_add(&budget, 1, __ATOMIC_RELAXED) < 8) {
+         char details[640] = {0};
+         size_t used = 0;
+         for (unsigned i = 0; i < num_views && used < sizeof(details) - 1; i++) {
+            if (views[i]) {
+               int n = snprintf(details + used, sizeof(details) - used,
+                                " s%u=%p/L%u-%u:%u", i, (void *)views[i]->texture,
+                                views[i]->u.tex.first_level, views[i]->u.tex.last_level,
+                                views[i]->format);
+               if (n > 0)
+                  used += MIN2((size_t)n, sizeof(details) - used - 1);
+            }
+         }
+         for (unsigned i = 0; i < num_images && used < sizeof(details) - 1; i++) {
+            if (images[i].resource) {
+               int n = snprintf(details + used, sizeof(details) - used,
+                                " i%u=%p/L%u:%u", i, (void *)images[i].resource,
+                                images[i].u.tex.level, images[i].format);
+               if (n > 0)
+                  used += MIN2((size_t)n, sizeof(details) - used - 1);
+            }
+         }
+         fprintf(stderr, "SweetNativeMetal: ARCBIND %s%s\\n", name, details);
+      }
+   }
+   unsigned old_images=device->native_pending_images[stage];
+'''),
      # Mercury draws Space 4x and resolves into its drawable. pipe->blit of a 4x source is
      # refused by the fd6 2D engine and falls back to u_blitter, whose
      # util_blitter_is_blit_supported asks is_format_supported(nr_samples, nr_storage_samples)
@@ -2190,6 +2230,19 @@ edit('tools/mesa/air/air_run.c',
    for (unsigned i = 0; i < info.num_resources; i++) {'''))
 
 edit('userland/src/redwoodmetal.m',
+     ('	struct rwa_compute_info _info;\n',
+      '	struct rwa_compute_info _info;\n	NSString *_nativeFunctionName;\n'),
+     ('- (struct rwa_compute *)compute;\n',
+      '- (struct rwa_compute *)compute;\n- (NSString *)nativeFunctionName;\n'),
+     ('	_compute = compute;\n	_info = *info;\n',
+      '	_compute = compute;\n	_info = *info;\n'
+      '	_nativeFunctionName = [[[descriptor computeFunction] name] copy];\n'),
+     ('	if (_compute != NULL) {\n		mesa.compute_destroy(_compute);\n	}\n',
+      '	if (_compute != NULL) {\n		mesa.compute_destroy(_compute);\n	}\n'
+      '	[_nativeFunctionName release];\n'),
+     ('- (struct rwa_compute *)compute\n{',
+      '- (NSString *)nativeFunctionName { return _nativeFunctionName; }\n\n'
+      '- (struct rwa_compute *)compute\n{'),
      ('''	return [[SweetNativeMetalTexture alloc] initWithRedwoodDevice:self
 							 texture:texture
 							   shape:&shape];
@@ -2228,8 +2281,8 @@ edit('userland/src/redwoodmetal.m',
 \t\t\t\tif (c != NULL)
 \t\t\t\t\tmemcpy(b0, c + _offsets[0], sizeof b0);
 \t\t\t}
-\t\t\tconst char *pl = [_pipeline respondsToSelector:@selector(label)] && [_pipeline label] != nil ?
-\t\t\t                 [[_pipeline label] UTF8String] : "?";
+\t\t\tNSString *name = [_pipeline nativeFunctionName];
+\t\t\tconst char *pl = name != nil ? [name UTF8String] : "?";
 \t\t\tfprintf(stderr, "SweetNativeMetal[%s %d] DISPATCH %s groups %ux%ux%u of %ux%ux%u tex0 %s tex1 %s "
 \t\t\t        "b0 %d %d %d %d same %d\\n", getprogname(), getpid(), pl, work->groups[0], work->groups[1],
 \t\t\t        work->groups[2], work->size[0], work->size[1], work->size[2], tx[0], tx[1],

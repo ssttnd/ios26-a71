@@ -2326,7 +2326,50 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (num_ssbo)
        pipe->set_shader_buffers(pipe, stage, 0, num_ssbo, sb, writable);
     unsigned old_views=device->native_pending_views[stage];
-@@ -5383,6 +5836,8 @@
+@@ -4014,6 +4467,42 @@
+             old_views>num_views?old_views-num_views:0, false, views);
+       device->native_views_ns+=native_now_ns()-began;
+       memcpy(device->native_views[stage],views,sizeof(views));device->native_views_valid[stage]=true;
++   }
++   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {
++      static int enabled = -1;
++      static unsigned budget;
++      int trace = __atomic_load_n(&enabled, __ATOMIC_RELAXED);
++      if (trace < 0) {
++         FILE *flag = fopen("/var/local/sweet-native-arc-bindings", "r");
++         trace = flag != NULL;
++         if (flag)
++            fclose(flag);
++         __atomic_store_n(&enabled, trace, __ATOMIC_RELAXED);
++      }
++      if (trace && __atomic_fetch_add(&budget, 1, __ATOMIC_RELAXED) < 8) {
++         char details[640] = {0};
++         size_t used = 0;
++         for (unsigned i = 0; i < num_views && used < sizeof(details) - 1; i++) {
++            if (views[i]) {
++               int n = snprintf(details + used, sizeof(details) - used,
++                                " s%u=%p/L%u-%u:%u", i, (void *)views[i]->texture,
++                                views[i]->u.tex.first_level, views[i]->u.tex.last_level,
++                                views[i]->format);
++               if (n > 0)
++                  used += MIN2((size_t)n, sizeof(details) - used - 1);
++            }
++         }
++         for (unsigned i = 0; i < num_images && used < sizeof(details) - 1; i++) {
++            if (images[i].resource) {
++               int n = snprintf(details + used, sizeof(details) - used,
++                                " i%u=%p/L%u:%u", i, (void *)images[i].resource,
++                                images[i].u.tex.level, images[i].format);
++               if (n > 0)
++                  used += MIN2((size_t)n, sizeof(details) - used - 1);
++            }
++         }
++         fprintf(stderr, "SweetNativeMetal: ARCBIND %s%s\n", name, details);
++      }
+    }
+    unsigned old_images=device->native_pending_images[stage];
+    if (device->in_command && device->native_images_valid[stage] &&
+@@ -5383,6 +5872,8 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2335,7 +2378,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6509,12 +6964,12 @@
+@@ -6509,12 +7000,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2351,7 +2394,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6645,6 +7100,9 @@
+@@ -6645,6 +7136,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2361,7 +2404,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7137,7 +7595,58 @@
+@@ -7137,7 +7631,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2421,7 +2464,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7723,10 @@
+@@ -7214,6 +7759,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2432,7 +2475,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7820,7 @@
+@@ -7307,6 +7856,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
@@ -2470,7 +2513,23 @@ diff --git a/tools/mesa/air/air_run.c b/tools/mesa/air/air_run.c
 diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 --- a/userland/src/redwoodmetal.m
 +++ b/userland/src/redwoodmetal.m
-@@ -830,8 +830,10 @@
+@@ -734,6 +734,7 @@
+ 	SweetNativeMetalDevice *_owner;
+ 	struct rwa_compute *_compute;
+ 	struct rwa_compute_info _info;
++	NSString *_nativeFunctionName;
+ }
+ @end
+ 
+@@ -746,6 +747,7 @@
+ 				info:(const struct rwa_compute_info *)info
+ 			  descriptor:(id)descriptor;
+ - (struct rwa_compute *)compute;
++- (NSString *)nativeFunctionName;
+ @end
+ 
+ @interface SweetNativeMetalCommandQueue : _MTLCommandQueue
+@@ -830,8 +832,10 @@
  	unsigned stencilReference[2];
  	float depthRange[2];
  	BOOL hasDepthRange;
@@ -2481,7 +2540,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      BOOL nativeClearOnly, nativeBarrier;
      unsigned nativeClearMask;
      unsigned nativeColorLevels[8];
-@@ -937,6 +939,193 @@
+@@ -937,6 +941,193 @@
  
  #include "SweetNativeLibrary.inc"
  
@@ -2675,7 +2734,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  @implementation SweetNativeMetalDevice
  
  + (void)load
-@@ -1537,15 +1726,24 @@
+@@ -1537,15 +1728,24 @@
  		.sample_count = (unsigned)[descriptor sampleCount],
  		.usage = (unsigned)[descriptor usage],
  	};
@@ -2703,7 +2762,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  /* The sampler's own base class exists and owes its protocol nothing, so this is the cheapest
-@@ -2108,16 +2306,23 @@
+@@ -2108,16 +2308,23 @@
  
  /* Heaps are suballocation of one big allocation, and nothing here suballocates yet. Metal's
   * contract allows nil and a zero size-and-align, so these decline rather than lie. */
@@ -2732,7 +2791,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  /* Everything else the two protocols require and this driver has not built. Each returns the
-@@ -2165,7 +2370,21 @@
+@@ -2165,7 +2372,21 @@
  		return nil;
  	}
      SweetNativeMetalTexture *result=[[SweetNativeMetalTexture alloc] initWithRedwoodDevice:self texture:texture shape:&shape];
@@ -2755,7 +2814,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  - (id)newBufferWithIOSurface:(void *)surface        { NATIVE_OBJECT_LOCK;  (void)surface; return nil; }
  - (id)newBufferWithBytesNoCopy:(void *)bytes
-@@ -2173,8 +2392,23 @@
+@@ -2173,8 +2394,23 @@
  		       options:(NSUInteger)options
  		   deallocator:(void (^)(void *, NSUInteger))deallocator
  { NATIVE_OBJECT_LOCK; 
@@ -2781,7 +2840,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  - (id)newIndirectCommandBufferWithDescriptor:(id)d
  			      maxCommandCount:(NSUInteger)count
-@@ -2348,6 +2582,50 @@
+@@ -2348,6 +2584,50 @@
  		memcpy([buffer contents], bytes, length);
  	}
  	return buffer;
@@ -2832,7 +2891,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  /* Profile 0's own table says maxVertexAmplificationCount is 1, so anything above one is
-@@ -2634,6 +2912,7 @@
+@@ -2634,6 +2914,7 @@
  			     (unsigned)region.size.depth };
  
  	(void)image;
@@ -2840,7 +2899,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (mesa.texture_write(_texture, (unsigned)level, (unsigned)slice, origin, size, bytes,
  			       stride, why, sizeof(why)) != 0) {
  		rw_print("writing texels: %s\n", why);
-@@ -2794,10 +3073,20 @@
+@@ -2794,10 +3075,20 @@
  			     levels:(NSRange)levels
  			     slices:(NSRange)slices
  			    swizzle:(MTLTextureSwizzleChannels)swizzle
@@ -2865,7 +2924,27 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  - (id)newSharedTextureHandle { NATIVE_OBJECT_LOCK;  return nil; }   /* nothing here is shared between processes */
  
-@@ -3123,6 +3412,7 @@
+@@ -3005,6 +3296,7 @@
+ 	_owner = [device retain];
+ 	_compute = compute;
+ 	_info = *info;
++	_nativeFunctionName = [[[descriptor computeFunction] name] copy];
+ 	/* and the same for a kernel with a set, for the same reason */
+ 	if (_info.argbuf_mask != 0) {
+ 		RW_ONCE("a compute pipeline declares argument buffers at Metal buffer indices "
+@@ -3019,8 +3311,11 @@
+ 	if (_compute != NULL) {
+ 		mesa.compute_destroy(_compute);
+ 	}
++	[_nativeFunctionName release];
+ 	[_owner release];[super dealloc];
+ }
++
++- (NSString *)nativeFunctionName { return _nativeFunctionName; }
+ 
+ - (struct rwa_compute *)compute
+ { NATIVE_OBJECT_LOCK; 
+@@ -3123,6 +3418,7 @@
  - (void)dealloc { NATIVE_OBJECT_LOCK; 
      [pipeline release];[render release];[depth release];[depthStencilState release];[indexBuffer release];
      for(unsigned i=0;i<8;i++)[color[i] release];
@@ -2873,7 +2952,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      for(unsigned i=0;i<RW_MAX_BUFFERS;i++){[vertexBuffers[i] release];[buffers[i] release];[textures[i] release];[samplers[i] release];}
      [super dealloc];
  }
-@@ -3292,11 +3582,25 @@
+@@ -3292,11 +3588,25 @@
  
  - (id)commandBuffer
  {
@@ -2900,7 +2979,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	return [self commandBuffer];
  }
  
-@@ -3473,6 +3777,200 @@
+@@ -3473,6 +3783,200 @@
  	RW_CB_ERROR        = 5,
  };
  
@@ -3101,7 +3180,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  @implementation SweetNativeMetalCommandBuffer {
  	SweetNativeMetalCommandQueue *_queue;
  	NSMutableArray *_work;
-@@ -3588,14 +4086,37 @@
+@@ -3588,14 +4092,37 @@
  - (NSError *)error { NATIVE_OBJECT_LOCK;  return _error; }
  - (BOOL)retainedReferences { NATIVE_OBJECT_LOCK;  return YES; }
  
@@ -3141,7 +3220,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (descriptor == nil) {
  		rw_print("a render pass needs a descriptor\n");
  		return nil;
-@@ -3614,7 +4135,11 @@
+@@ -3614,7 +4141,11 @@
  /* The rest of what MTLCommandBuffer requires of a driver. Each declines rather than being
   * absent, for the reason the device's own 44 were answered: a missing selector aborts the
   * caller, and these are the four that were still missing. */
@@ -3154,7 +3233,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  - (id)resourceStateCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (id)accelerationStructureCommandEncoder { NATIVE_OBJECT_LOCK;  return nil; }
  - (void)encodeSignalEvent:(id)event value:(uint64_t)value { NATIVE_OBJECT_LOCK;  (void)value;if(event)[self failWith:"interface: shared events are not implemented"]; }
-@@ -3644,6 +4169,7 @@
+@@ -3644,6 +4175,7 @@
  - (void)commit
  { NATIVE_OBJECT_LOCK; 
  	char why[512] = { 0 };
@@ -3162,7 +3241,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
      if(_status==RW_CB_ERROR){[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;}
      if(_status>=RW_CB_COMMITTED){[self failWith:"command buffer committed twice"];return;}
-@@ -3652,6 +4178,10 @@
+@@ -3652,6 +4184,10 @@
          [self failWith:why];[self redwoodReturnSlot];[self redwoodDeliverHandlers];return;
      }
  	for (SweetNativeMetalWork *work in _work) {
@@ -3173,7 +3252,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          if(work->nativeBarrier) {
              if(rwa_barrier([[_queue device] mesaDevice],why,sizeof why)){[self failWith:why];goto done;}
              continue;
-@@ -3896,6 +4426,7 @@
+@@ -3896,6 +4432,7 @@
  		.fragment_buffer_table = fragment_table,
  		.fragment_buffer_table_count = work->count,
          .native_flags=work->nativeFlags,
@@ -3181,7 +3260,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
          .native_color_levels=work->nativeColorLevels,
          .native_viewport={work->nativeViewport[0],work->nativeViewport[1],work->nativeViewport[2],work->nativeViewport[3]},
          .native_scissor={work->nativeScissor[0],work->nativeScissor[1],work->nativeScissor[2],work->nativeScissor[3]},
-@@ -3909,6 +4440,12 @@
+@@ -3909,6 +4446,12 @@
  		return NO;
  	}
  
@@ -3194,7 +3273,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	const unsigned dl = native_drawlog_next();
  	{
  		if (dl)
-@@ -3944,6 +4481,9 @@
+@@ -3944,6 +4487,9 @@
  
  - (void)failWith:(const char *)reason
  { NATIVE_OBJECT_LOCK; 
@@ -3204,7 +3283,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	_error = [[NSError errorWithDomain:@"SweetNativeMetal" code:4
  				  userInfo:@{ NSLocalizedDescriptionKey:
  					      [NSString stringWithUTF8String:reason] }] retain];
-@@ -3960,6 +4500,7 @@
+@@ -3960,6 +4506,7 @@
  		return;
  	}
      atomic_fetch_add(&native_wait_until_completed,1);
@@ -3212,7 +3291,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (mesa.finish([[_queue device] mesaDevice], why, sizeof(why)) != 0) {
  		rw_print("THE GPU DID NOT FINISH: %s\n", why);
  		_error = [[NSError errorWithDomain:@"SweetNativeMetal" code:3
-@@ -3971,7 +4512,7 @@
+@@ -3971,7 +4518,7 @@
  	_status = RW_CB_COMPLETED;   /* the fence has been paid, and only now */
  }
  
@@ -3221,7 +3300,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  /*
   * HANDLERS, AND WHERE THEY RUN.
-@@ -4023,6 +4564,7 @@
+@@ -4023,6 +4570,7 @@
  
  - (void)addCompletedHandler:(void (^)(id))handler
  { NATIVE_OBJECT_LOCK; 
@@ -3229,7 +3308,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (handler == NULL) {
  		return;
  	}
-@@ -4132,6 +4674,7 @@
+@@ -4132,6 +4680,7 @@
  	BOOL _hasDepthRange;
      float _nativeViewport[4], _nativeBlend[4];
      unsigned _nativeScissor[4], _nativeFlags;
@@ -3237,7 +3316,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      unsigned _nativeClearMask;
      unsigned _nativeColorLevels[8];
      float _nativeClearColors[8][4];
-@@ -4144,6 +4687,9 @@
+@@ -4144,6 +4693,9 @@
  	unsigned _vertexBufferCount, _fragmentBufferCount;
  	unsigned _fragmentTextureCount, _fragmentSamplerCount;
  	BOOL _complained;
@@ -3247,7 +3326,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (instancetype)initWithRedwoodCommandBuffer:(SweetNativeMetalCommandBuffer *)commandBuffer
-@@ -4181,7 +4727,15 @@
+@@ -4181,7 +4733,15 @@
  		 */
  		NSUInteger store = [attachment storeAction];
  
@@ -3264,7 +3343,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		    store == MTLStoreActionStoreAndMultisampleResolve ||
  		    [attachment resolveTexture] != nil) {
  			rw_print("colour attachment %u asks for a multisample "
-@@ -4362,9 +4916,21 @@
+@@ -4362,9 +4922,21 @@
      if(r.x>UINT32_MAX||r.y>UINT32_MAX||r.width>UINT32_MAX||r.height>UINT32_MAX){[_commandBuffer failWith:"scissor exceeds 32-bit range"];return;}
      _nativeScissor[0]=r.x;_nativeScissor[1]=r.y;_nativeScissor[2]=r.width;_nativeScissor[3]=r.height;_nativeFlags|=2;
  }
@@ -3289,7 +3368,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  /* The depth/stencil state, recorded like the pipeline state: nothing runs at encode time,
   * so what a draw tests against is whatever was bound when that draw was encoded. A state
-@@ -4396,6 +4962,7 @@
+@@ -4396,6 +4968,7 @@
        baseInstance:(NSUInteger)baseInstance
  { NATIVE_OBJECT_LOCK; 
  	SweetNativeMetalWork *work = [[SweetNativeMetalWork alloc] init];
@@ -3297,7 +3376,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  	if (_pipeline == nil || (_colorCount == 0 && _depth == nil)) {
  		rw_print("this draw has %s and is dropped\n",
-@@ -4453,6 +5020,7 @@
+@@ -4453,6 +5026,7 @@
      memcpy(work->nativeScissor,_nativeScissor,sizeof _nativeScissor);
      memcpy(work->nativeBlend,_nativeBlend,sizeof _nativeBlend);
      work->nativeFlags=_nativeFlags;
@@ -3305,7 +3384,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      memcpy(work->nativeColorLevels, _nativeColorLevels, sizeof _nativeColorLevels);
      work->nativeClearMask=_nativeClearMask;
      memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
-@@ -5454,6 +6022,8 @@
+@@ -5454,6 +6028,8 @@
   */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 
@@ -3314,7 +3393,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      if(_nativeClearMask || _clearsDepth || _clearsStencil) {
          SweetNativeMetalWork *work=[SweetNativeMetalWork new];work->nativeClearOnly=YES;
          work->colorCount=_colorCount;for(unsigned i=0;i<8;i++)work->color[i]=_color[i];
-@@ -5463,6 +6033,41 @@
+@@ -5463,6 +6039,41 @@
          work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
          [_commandBuffer recordWork:work];[work release];
          _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
@@ -3356,7 +3435,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      }
      [super endEncoding];
  }
-@@ -5618,6 +6223,32 @@
+@@ -5618,6 +6229,32 @@
  	work->size[1] = (unsigned)size.height;
  	work->size[2] = (unsigned)size.depth;
  	work->threadgroupBytes = (unsigned)_threadgroupLength;
@@ -3378,8 +3457,8 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 +				if (c != NULL)
 +					memcpy(b0, c + _offsets[0], sizeof b0);
 +			}
-+			const char *pl = [_pipeline respondsToSelector:@selector(label)] && [_pipeline label] != nil ?
-+			                 [[_pipeline label] UTF8String] : "?";
++			NSString *name = [_pipeline nativeFunctionName];
++			const char *pl = name != nil ? [name UTF8String] : "?";
 +			fprintf(stderr, "SweetNativeMetal[%s %d] DISPATCH %s groups %ux%ux%u of %ux%ux%u tex0 %s tex1 %s "
 +			        "b0 %d %d %d %d same %d\n", getprogname(), getpid(), pl, work->groups[0], work->groups[1],
 +			        work->groups[2], work->size[0], work->size[1], work->size[2], tx[0], tx[1],
@@ -3389,7 +3468,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	[_commandBuffer recordWork:work];
  	[work release];
  }
-@@ -5629,9 +6260,20 @@
+@@ -5629,9 +6266,20 @@
  { NATIVE_OBJECT_LOCK; 
  	MTLSize groups;
  
@@ -3413,7 +3492,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		rw_print("%lux%lux%lu threads do not divide into groups of "
  		         "%lux%lux%lu, and this driver does not have the partial-group support "
  		         "that would need\n", (unsigned long)threads.width,
-@@ -5813,6 +6455,7 @@
+@@ -5813,6 +6461,7 @@
   * this half is the same fix made before it is measured, not after. */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 
