@@ -1,0 +1,133 @@
+A71: opt-in low-resolution USB scanout snapshot. Reuse the framebuffer shot helper.
+Send the shot directly over ACM so the image stays out of the persistent console ring.
+
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -14,6 +14,7 @@
+ #include <sys/param.h>
+ #include <sys/systm.h>
+ #include <kern/clock.h>
++#include <kern/kalloc.h>
+ #include <kern/thread.h>
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+@@ -602,7 +603,67 @@
+  * phone into that mode, so a PC can get from iOS to TWRP with no hand on the phone.
+  * Only noted here (event context); ud_acm_cmd_thread does the reboot.
+  */
+-static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader */
++static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader, 4 screenshot */
++#define UD_SHOT_RAW_CAP (1024u * 1024u)
++static char *ud_shot_data;
++static size_t ud_shot_size, ud_shot_offset, ud_shot_capacity;
++extern int sweet_fb_shot_copy(uint8_t *, size_t, uint32_t, uint32_t *, uint32_t *);
++
++static void
++ud_acm_capture(void)
++{
++	int enabled = 0;
++	if (!PE_parse_boot_argn("sweetusbshot", &enabled, sizeof(enabled)) || !enabled) {
++		printf("SWEET USB: screenshot request disabled\n");
++		return;
++	}
++
++	lck_mtx_lock(ud.lock);
++	bool busy = ud_shot_data != NULL;
++	lck_mtx_unlock(ud.lock);
++	if (busy) {
++		return;
++	}
++
++	uint8_t *raw = kalloc_data(UD_SHOT_RAW_CAP, Z_WAITOK);
++	if (raw == NULL) {
++		return;
++	}
++	uint32_t width = 0, height = 0;
++	int err = sweet_fb_shot_copy(raw, UD_SHOT_RAW_CAP, 6, &width, &height);
++	if (err != 0) {
++		kfree_data(raw, UD_SHOT_RAW_CAP);
++		printf("SWEET USB: screenshot failed (%d)\n", err);
++		return;
++	}
++
++	size_t pixels = (size_t)width * height;
++	size_t capacity = pixels * 6 + 64;
++	char *packet = kalloc_data(capacity, Z_WAITOK);
++	if (packet == NULL) {
++		kfree_data(raw, UD_SHOT_RAW_CAP);
++		return;
++	}
++	size_t size = (size_t)snprintf(packet, capacity, "\nA71SHOT %u %u ", width, height);
++	static const char hex[] = "0123456789abcdef";
++	for (size_t i = 0; i < pixels; i++) {
++		for (unsigned channel = 0; channel < 3; channel++) {
++			uint8_t byte = raw[i * 4 + 2 - channel];  /* BGRA -> RGB */
++			packet[size++] = hex[byte >> 4];
++			packet[size++] = hex[byte & 15];
++		}
++	}
++	packet[size++] = '\n';
++	kfree_data(raw, UD_SHOT_RAW_CAP);
++
++	lck_mtx_lock(ud.lock);
++	ud_shot_data = packet;
++	ud_shot_size = size;
++	ud_shot_offset = 0;
++	ud_shot_capacity = capacity;
++	lck_mtx_unlock(ud.lock);
++}
++
+ extern void sweet_reboot_set_mode(int mode);    /* bsd/dev/sweet_reboot.c (2122) */
+ extern int reboot_kernel(int howto, char *message);
+ 
+@@ -610,7 +671,7 @@
+ ud_acm_take_command(const char *p, uint32_t len)
+ {
+ 	static const struct { const char *word; int cmd; } words[] = {
+-		{ "a71:recovery", 2 }, { "a71:bootloader", 3 }, { "a71:reboot", 1 },
++		{ "a71:recovery", 2 }, { "a71:bootloader", 3 }, { "a71:reboot", 1 }, { "a71:shot", 4 },
+ 	};
+ 	for (uint32_t i = 0; i < len; i++) {
+ 		for (unsigned w = 0; w < sizeof(words) / sizeof(words[0]); w++) {
+@@ -633,6 +694,10 @@
+ 			continue;
+ 		}
+ 		ud_cmd = 0;
++		if (cmd == 4) {
++			ud_acm_capture();
++			continue;
++		}
+ 		printf("SWEET USB: host asked for a reboot into %s"
+ 		    "\n",
+ 		    cmd == 2 ? "recovery" : cmd == 3 ? "bootloader" : "normal");
+@@ -1667,6 +1732,29 @@
+ 			ud_sleep_ms(2);
+ 			continue;
+ 		}
++		/* Send the screenshot straight to USB, outside the persistent console ring. */
++		if (ud_shot_data != NULL) {
++			size_t n = MIN(ud_shot_size - ud_shot_offset, (size_t)2047);
++			if ((n % 512) == 0) {
++				n--;
++			}
++			memcpy((char *)(ud.dma + UD_TX), ud_shot_data + ud_shot_offset, n);
++			ud_shot_offset += n;
++			char *done = NULL;
++			size_t capacity = 0;
++			if (ud_shot_offset == ud_shot_size) {
++				done = ud_shot_data;
++				capacity = ud_shot_capacity;
++				ud_shot_data = NULL;
++			}
++			ud.tx_busy = true;
++			ud_start_trb(EP_TX, UD_TRB_TX, UD_TX, (uint32_t)n, TRBCTL_NORMAL);
++			lck_mtx_unlock(ud.lock);
++			if (done != NULL) {
++				kfree_data(done, capacity);
++			}
++			continue;
++		}
+ 		uint32_t n = sweet_log_copy(&pos, (char *)(ud.dma + UD_TX), 2047);
+ 		if (n == 0) {
+ 			lck_mtx_unlock(ud.lock);

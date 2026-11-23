@@ -8,6 +8,7 @@ The phone's address: --host, or A71_HOST, or build/sweetdbg.host, or a scan of t
   a71-dbg.py get /var/mobile/x.plist out.plist      fetch a file
   a71-dbg.py put local.bin /var/local/bin/x [755]   send a file (atomic rename on the phone)
   a71-dbg.py ls /var/local | rm PATH | mkdir PATH | ps | kill PID [SIG]
+  a71-dbg.py shot-log LOG [out.png]                extract the last USB scanout snapshot
   a71-dbg.py shot [out.png]                         screenshot of the frame being shown (default build/shot.png)
   a71-dbg.py tap X Y | swipe X1 Y1 X2 Y2 [MS] | key power|volup|voldown|home [MS]   (panel pixels 1080x2400)
   a71-dbg.py rd PA [COUNT] | wr PA VALUE | sysctl NAME
@@ -125,6 +126,34 @@ def png(path, w, h, stride, data):
                 chunk(b"IDAT", zlib.compress(bytes(rows), 6)) + chunk(b"IEND", b""))
 
 
+def shot_from_log(log_path, output):
+    latest = None
+    with open(log_path, "rb") as log:
+        for line in log:
+            if not line.startswith(b"A71SHOT "):
+                continue
+            try:
+                _, width_raw, height_raw, packed = line.split()
+                width, height = int(width_raw), int(height_raw)
+                if not (0 < width <= 1024 and 0 < height <= 1024):
+                    continue
+                if len(packed) != width * height * 6:
+                    continue
+                rgb = bytes.fromhex(packed.decode("ascii"))
+            except (ValueError, UnicodeError):
+                continue
+            latest = width, height, rgb
+    if latest is None:
+        sys.exit("no complete A71SHOT frame in the USB log")
+    width, height, rgb = latest
+    bgra = bytearray(width * height * 4)
+    bgra[0::4] = rgb[2::3]
+    bgra[1::4] = rgb[1::3]
+    bgra[2::4] = rgb[0::3]
+    png(output, width, height, width * 4, bgra)
+    print(f"{width}x{height} -> {output}")
+
+
 def main():
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
@@ -134,6 +163,12 @@ def main():
         os.makedirs(os.path.dirname(KEYF), exist_ok=True)
         open(KEYF, "w").write(secrets.token_hex(24) + "\n")
         print("new key in", KEYF)
+        return
+    if args[0] == "shot-log":
+        if len(args) not in (2, 3):
+            sys.exit("usage: a71-dbg.py shot-log LOG [out.png]")
+        output = args[2] if len(args) == 3 else os.path.join(ROOT, "build", "shot.png")
+        shot_from_log(args[1], output)
         return
     h = host(args)
     cmd, rest = args[0], args[1:]

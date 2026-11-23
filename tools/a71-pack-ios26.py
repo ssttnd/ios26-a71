@@ -63,6 +63,8 @@ def main():
     parser.add_argument('--fb-scale', type=int, choices=(1, 2), default=1,
                         help='1 fits the canvas inside the panel, 2 fills the panel')
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
+    parser.add_argument('--usb-shot', action='store_true',
+                        help='allow scanout snapshots over USB ACM (xnu 2126; requires --usb)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
 
@@ -115,8 +117,12 @@ def main():
         cmdline += f' sweetpayloaddelay={args.payload_delay_ms}'
     if args.cpufreq:  # the first copy of a boot-arg wins: replace, do not append
         cmdline = cmdline.replace('sweetcpufreq=0', 'sweetcpufreq=1')
+    if args.usb_shot and not args.usb:
+        parser.error('--usb-shot requires --usb')
     if args.usb:
         cmdline = cmdline.replace('sweetusb=0', 'sweetusb=3')
+    if args.usb_shot:
+        cmdline += ' sweetusbshot=1'
     # A71 ports in the kernel (xnu 2108-2115) switch their boot-args on; the first copy of an argument wins.
     if args.adreno_firmware and b'SWEET RENDER: restarted SpringBoard' in kernel:
         cmdline += ' sweetm2restart=2'
