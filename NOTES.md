@@ -2325,3 +2325,8 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   normal values that we render wrong? Metal CI `45225763347` (with Mercury surface tagging a039da5).
 - Next install plan (one TWRP visit): boot = 2126-wifi options with kernel 45225448467; package = Metal
   45225763347 + glass-uniforms flag, mercury-occl flag moved aside.
+- The 2126-wifi image has no sweetusbshot (left out for the 607-byte limit): `SWEET USB: screenshot request
+  disabled`; an extracted "shot" then is an OLD frame from the log. Room found: `sweetfb_hz=0` (kernel default is
+  10; 0 and >=60 both give flushticks 1) is one byte shorter than `=60`, enough for `--usb-shot` (607/607).
+  Next Wi-Fi image: `--fb-hz 0 --usb-shot --wifi`.
+- Owner: blur has a hard edge at its top (lock screen and Settings). Not yet captured (no USB shots this boot).
