@@ -2263,3 +2263,14 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   background rgb: either CA's shader premultiplies (function constant) and our driver drops that, or the
   occlusion render is a separate surface whose background rgb is 0. Next: compare surfaces 24/25/26 roles and
   the Isrc pipeline's function constants.
+- WALLREGION data (boot 749492) settles the colour question: snapshot surfaces 29/36/67 (`Isrc`, A=255) carry
+  exactly the same RGB as live surfaces 24/25 per cell; only alpha differs (live: 0 at the top background, 255 on
+  the discs, partial on the arc). Owner: snapshot tones are right -> Mercury's RGB is right; the composite is
+  wrong. Mercury's blend state is disabled for all its pipelines (logged), so (rgb, 0) background is by design.
+- `5b102f2` (supersedes trace-only `39139d8`, its CI cancelled): flag `/var/local/sweet-native-wallpaper-depth`
+  (replaces the xrg flag): Ixrg passes sample alpha 1 per draw; the following `Isrc` pass of the same live
+  surface binds a straight-alpha variant of the pipeline blend state (rgb src factor SRC_ALPHA, backend
+  `rwa_render_straight_alpha_next`, `render->blend_straight`) = rgb*a + dst*(1-a). Expect: right tones, no
+  overbright, clock visible with discs in front (depth effect). Also carries MERCURYOCCL trace (flag
+  `/var/local/sweet-native-mercury-occl`). Backend change syntax-checked in the VM (only the pre-existing
+  DRM_FORMAT_MOD_LINEAR header error). Metal CI `45221227810`.
