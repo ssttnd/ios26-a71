@@ -2202,7 +2202,36 @@ null_texture_view(struct rwa_device *device)
 '''),
      ('      [AIR_SAMPLER_LINEAR] = RWA_FILTER_LINEAR,\n   };\n',
       '      [AIR_SAMPLER_LINEAR] = RWA_FILTER_LINEAR,\n'
-      '      [AIR_SAMPLER_BICUBIC] = RWA_FILTER_LINEAR,   /* approximation, see above */\n   };\n'))
+      '      [AIR_SAMPLER_BICUBIC] = RWA_FILTER_LINEAR,   /* approximation, see above */\n   };\n'),
+     # Per-draw opaque view (A71 2026-11-23): CoreAnimation's _Ixrg image shaders mean "ignore
+     # this layer's alpha". The frontend marks the texture of such a draw; only that draw
+     # samples it through a view with alpha = 1. A persistent swizzle on the texture fixed the
+     # wallpaper brightness but every other pass that reads Mercury's surface lost its alpha
+     # too (the lock-screen clock vanished).
+     ('   unsigned char mtl_swizzle[4];    /* MTLTextureSwizzle r, g, b, a; all 0 = none set */\n',
+      '   unsigned char mtl_swizzle[4];    /* MTLTextureSwizzle r, g, b, a; all 0 = none set */\n'
+      '   struct pipe_sampler_view *view_opaque;   /* alpha = 1, for a draw marked opaque */\n'),
+     ('int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);\n',
+      '/* The texture the next draw on this thread samples as opaque (alpha 1), or NULL. */\n'
+      'static _Thread_local struct rwa_texture *rwa_opaque_texture;\n'
+      'void rwa_texture_mark_opaque(struct rwa_texture *texture);\n'
+      'void\n'
+      'rwa_texture_mark_opaque(struct rwa_texture *texture)\n'
+      '{\n'
+      '   rwa_opaque_texture = texture;\n'
+      '}\n\n'
+      'int rwa_texture_set_swizzle(struct rwa_texture *texture, const unsigned char swizzle[4]);\n'),
+     ('            struct pipe_sampler_view *use = t->view;\n',
+      '            struct pipe_sampler_view *use = t->view;\n'
+      '            if (t == rwa_opaque_texture) {\n'
+      '               if (!t->view_opaque) {\n'
+      '                  struct pipe_sampler_view tmpl = *t->view;\n'
+      '                  tmpl.swizzle_a = PIPE_SWIZZLE_1;\n'
+      '                  t->view_opaque = pipe->create_sampler_view(pipe, t->res, &tmpl);\n'
+      '               }\n'
+      '               if (t->view_opaque)\n'
+      '                  use = t->view_opaque;\n'
+      '            }\n'))
 
 # newBufferWithBytesNoCopy: Mercury's KTX loader makes its staging buffer this way and the
 # driver answered nil ("Failed to create staging buffer"). The GPU cannot map the caller's
@@ -2733,6 +2762,10 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
      # uber_fragment then ran with no texture bound. A heap here is bookkeeping: each resource
      # it hands out is an ordinary allocation of the device's, so aliasing never shares memory
      # (contents of an aliased resource are undefined in Metal anyway).
+     ('\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {\n',
+      '\tconst int native_draw_rc = mesa.render_draw([work->render render], &draw, why, size);\n'
+      '\tnative_xrg_clear();\n'
+      '\tif (native_draw_rc != 0) {\n'),
      ('@implementation SweetNativeMetalDevice\n',
       r'''@interface SweetNativeMetalHeap : NSObject {
 	id _device;
@@ -3221,9 +3254,13 @@ native_wall_skip_repeated_surface(const void *commands, const void *render,
 
 static char native_xrg_done_key;
 
+/* Called for every draw: marks the slot-3 texture of an _Ixrg draw for the backend
+ * (rwa_texture_mark_opaque), so only that draw samples it with alpha 1; any other draw
+ * clears the mark. native_xrg_clear() runs after the backend draw. */
 static void
 native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 {
+	void rwa_texture_mark_opaque(struct rwa_texture *);
 	static dispatch_once_t once;
 	static bool enabled;
 	dispatch_once(&once, ^{
@@ -3231,13 +3268,14 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 		enabled = process != NULL && !strcmp(process, "backboardd") &&
 		          access("/var/local/sweet-native-xrg-alpha-one", F_OK) == 0;
 		if (enabled)
-			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg IOSurface layers sample alpha 1\\n");
+			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg IOSurface draws sample alpha 1 (per draw)\\n");
 	});
-	if (!enabled || ntextures <= 3 || textures[3] == nil)
+	if (!enabled)
+		return;
+	rwa_texture_mark_opaque(NULL);
+	if (ntextures <= 3 || textures[3] == nil)
 		return;
 	id source = textures[3];
-	if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
-		return;
 	pthread_mutex_lock(&native_drawlog_lock);
 	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
 	const size_t len = name != NULL ? strlen(name->label) : 0;
@@ -3250,15 +3288,22 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 	const unsigned fmt = (unsigned)[source pixelFormat];
 	if (fmt != 80 && fmt != 81)
 		return;
-	int rwa_texture_set_swizzle(struct rwa_texture *, const unsigned char [4]);
-	const unsigned char sw[4] = { 2, 3, 4, 1 };   /* red, green, blue, one */
-	const int rc = rwa_texture_set_swizzle([source mesaTexture], sw);
+	rwa_texture_mark_opaque([source mesaTexture]);
+	if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
+		return;
 	objc_setAssociatedObject(source, &native_xrg_done_key, @YES, OBJC_ASSOCIATION_RETAIN);
 	static unsigned told;
 	if (__atomic_fetch_add(&told, 1, __ATOMIC_RELAXED) < 16)
-		fprintf(stderr, "SweetNativeMetal: XRGALPHA IOSurface %u texture %p %ux%u -> alpha one (%d)\\n",
+		fprintf(stderr, "SweetNativeMetal: XRGALPHA IOSurface %u texture %p %ux%u opaque in Ixrg draws\\n",
 		        rwd_surface_id((void *)[source iosurface]), (void *)source,
-		        (unsigned)[source width], (unsigned)[source height], rc);
+		        (unsigned)[source width], (unsigned)[source height]);
+}
+
+static void
+native_xrg_clear(void)
+{
+	void rwa_texture_mark_opaque(struct rwa_texture *);
+	rwa_texture_mark_opaque(NULL);
 }
 
 /* Optional A/B experiment for the 23G90 image-upload site above. */
