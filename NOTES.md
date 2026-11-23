@@ -2059,3 +2059,8 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   IOSurface 39. Framebuffer continued (604 swaps by 148 s, USB 523484).
   Visual result for Cover Sheet is pending. 2126 screenshot CI
   45202143188 still building XNU; ramdisk artifact exists.
+- Owner's visual result for the per-texture Cover Sheet test: unchanged.
+  They also see the second wallpaper appear briefly during app launches.
+  Logs confirm the A/B skipped some candidate passes, so that alone is
+  insufficient. Do not attribute the symptom only to Cover Sheet.
+  Compare transitions and check premultiplied color and blend inputs.
