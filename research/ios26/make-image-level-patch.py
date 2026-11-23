@@ -2659,6 +2659,9 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
      ('\tconst unsigned dl = native_drawlog_next();\n',
       '\tnative_glassstat([work->render render]);\n'
       '\tif (native_skip_luma_boost([work->render render]))\n\t\treturn YES;\n'
+      '\tif (native_wall_skip_uploaded_overlay(self, [work->render render], work->color,\n'
+      '\t                                      work->colorCount, work->textures, work->textureCount))\n'
+      '\t\treturn YES;\n'
       '\tconst unsigned dl = native_drawlog_next();\n'),
      # MTLHeap: Mercury's look preview allocates its textures from a heap. The device answered
      # nil (and a zero size-and-align), Mercury logged "unable to create heap: 0", and
@@ -3046,7 +3049,9 @@ edit('userland/src/SweetNativeDrawLog.inc',
      # stops sending glass draws (its own decision, e.g. late frames) or keeps sending them
      # (then the picture is wrong here).
      ('static void\nnative_drawlog_draw(unsigned seq,',
-      '''static void
+      '''static uintptr_t native_wall_uploaded_texture;
+
+static void
 native_wall_texture_event(const char *operation, id texture, const void *caller)
 {
 	if (texture == nil)
@@ -3066,6 +3071,10 @@ native_wall_texture_event(const char *operation, id texture, const void *caller)
 	Dl_info image = {0};
 	if (dladdr(caller, &image) && image.dli_fname != NULL && image.dli_fbase != NULL) {
 		const char *base = strrchr(image.dli_fname, '/');
+		const uintptr_t offset = (uintptr_t)caller - (uintptr_t)image.dli_fbase;
+		if (base != NULL && !strcmp(base + 1, "QuartzCore") &&
+		    offset == 0x10af34 && !strcmp(operation, "upload"))
+			__atomic_store_n(&native_wall_uploaded_texture, (uintptr_t)texture, __ATOMIC_RELAXED);
 		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller %s+0x%lx\\n",
 		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height],
 		        base ? base + 1 : image.dli_fname,
@@ -3074,6 +3083,61 @@ native_wall_texture_event(const char *operation, id texture, const void *caller)
 		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller unknown\\n",
 		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height]);
 	}
+}
+
+/* Optional A/B experiment for the 23G90 image-upload site above. */
+static bool
+native_wall_skip_uploaded_overlay(const void *commands, const void *render,
+                                  id const *colors, unsigned ncolors,
+                                  id const *textures, unsigned ntextures)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-wallpaper-single-layer-test", F_OK) == 0;
+	});
+	if (!enabled)
+		return false;
+
+	static _Thread_local const void *previous_commands;
+	static _Thread_local uintptr_t previous_target;
+	static _Thread_local uint32_t previous_surface;
+	const void *old_commands = previous_commands;
+	const uintptr_t old_target = previous_target;
+	const uint32_t old_surface = previous_surface;
+	previous_surface = 0;
+
+	id source = ntextures > 3 ? textures[3] : nil;
+	id target = ncolors ? colors[0] : nil;
+	if (source == nil || target == nil || [source width] != 828 ||
+	    [source height] != 1792 || [target width] != 828 || [target height] != 1792)
+		return false;
+
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	const bool source_over = name != NULL &&
+		!strcmp(name->label, "com.apple.coreanimation.PBGRABsovXm_TimgA2Xhf_Isrc");
+	pthread_mutex_unlock(&native_drawlog_lock);
+	if (!source_over)
+		return false;
+
+	void *surface = [source respondsToSelector:@selector(iosurface)] ?
+	                (void *)[source iosurface] : NULL;
+	previous_commands = commands;
+	previous_target = (uintptr_t)target;
+	previous_surface = rwd_surface_id(surface);
+	if (previous_surface != 0 || old_surface == 0 || old_commands != commands ||
+	    old_target != (uintptr_t)target ||
+	    (uintptr_t)source != __atomic_load_n(&native_wall_uploaded_texture, __ATOMIC_RELAXED))
+		return false;
+
+	static unsigned skipped;
+	if (__atomic_fetch_add(&skipped, 1, __ATOMIC_RELAXED) < 8)
+		fprintf(stderr, "SweetNativeMetal: skipped uploaded wallpaper test layer after IOSurface %u\\n",
+		        old_surface);
+	return true;
 }
 
 static void
