@@ -2718,6 +2718,7 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
      ('\tconst unsigned dl = native_drawlog_next();\n',
       '\tnative_glassstat([work->render render]);\n'
       '\tif (native_skip_luma_boost([work->render render]))\n\t\treturn YES;\n'
+      '\tnative_xrg_alpha_one([work->render render], work->textures, work->textureCount);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3204,6 +3205,60 @@ native_wall_skip_repeated_surface(const void *commands, const void *render,
 		fprintf(stderr, "SweetNativeMetal: skipped repeated wallpaper IOSurface %u\\n",
 		        rwd_surface_id((void *)[source iosurface]));
 	return true;
+}
+
+/* XRGALPHA (opt-in, /var/local/sweet-native-xrg-alpha-one, backboardd): CoreAnimation's
+ * `_Ixrg` image shaders mean "this layer is opaque, ignore its alpha". Mercury's live
+ * wallpaper IOSurface carries alpha 0..255 (WALLREGION, 2026-11-23), and here the Ixrg pass
+ * wrote that alpha into the frame. Cover Sheet's next full-screen pass
+ * (PBGRAXm_TimgBdsoA2Xhfn_Isrc, a 256x1 gradient) then showed through wherever the frame
+ * alpha was low, and the home screen's source-over repeat of the same surface added it to
+ * itself. Give such an IOSurface texture the Metal swizzle (r, g, b, one) once, the first
+ * time CoreAnimation draws it as opaque. */
+@interface NSObject (SweetNativeXrgMesa)
+- (struct rwa_texture *)mesaTexture;
+@end
+
+static char native_xrg_done_key;
+
+static void
+native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-xrg-alpha-one", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: XRGALPHA enabled: Ixrg IOSurface layers sample alpha 1\\n");
+	});
+	if (!enabled || ntextures <= 3 || textures[3] == nil)
+		return;
+	id source = textures[3];
+	if (objc_getAssociatedObject(source, &native_xrg_done_key) != nil)
+		return;
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	const size_t len = name != NULL ? strlen(name->label) : 0;
+	const bool xrg = len > 5 && !strcmp(name->label + len - 5, "_Ixrg") &&
+	                 !strncmp(name->label, "com.apple.coreanimation.", 24);
+	pthread_mutex_unlock(&native_drawlog_lock);
+	if (!xrg || ![source respondsToSelector:@selector(iosurface)] || [source iosurface] == NULL ||
+	    ![source respondsToSelector:@selector(mesaTexture)])
+		return;
+	const unsigned fmt = (unsigned)[source pixelFormat];
+	if (fmt != 80 && fmt != 81)
+		return;
+	int rwa_texture_set_swizzle(struct rwa_texture *, const unsigned char [4]);
+	const unsigned char sw[4] = { 2, 3, 4, 1 };   /* red, green, blue, one */
+	const int rc = rwa_texture_set_swizzle([source mesaTexture], sw);
+	objc_setAssociatedObject(source, &native_xrg_done_key, @YES, OBJC_ASSOCIATION_RETAIN);
+	static unsigned told;
+	if (__atomic_fetch_add(&told, 1, __ATOMIC_RELAXED) < 16)
+		fprintf(stderr, "SweetNativeMetal: XRGALPHA IOSurface %u texture %p %ux%u -> alpha one (%d)\\n",
+		        rwd_surface_id((void *)[source iosurface]), (void *)source,
+		        (unsigned)[source width], (unsigned)[source height], rc);
 }
 
 /* Optional A/B experiment for the 23G90 image-upload site above. */
