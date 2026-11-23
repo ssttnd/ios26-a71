@@ -1821,3 +1821,17 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   used the same source texture within each pair. This predates the current
   Notification Center gesture, so confirm in a timed capture. Owner is
   handling phone reboots. No device changes in this follow-up.
+- Owner clarified the second wallpaper appears across the entire physical
+  display when lowering Notification Center. Treat this as a full-screen
+  compositor symptom. The prior two-pass capture is a lead, not a capture
+  of that exact gesture. Distinguish a repeated IOSurface ID from two IDs.
+- Owner also confirms the glass arc within the wallpaper is wrong. Old USB
+  capture lines 1210785-1210795 show arc nominal drawing with slot 7 bound
+  to 414x896 fmt 81, ten levels. L0/L1 mean A=120; L2-L8 have different
+  nonzero RGB values with 100% zero alpha, and L9 reads back zero. The
+  compute dispatches alternate pyramid and intermediate textures; their
+  trace shows no actual mip binding or kernel name. Next inspect the L1
+  input to the first dispatch generating L2, the intermediate output from
+  it, and the actual image-view mip of the copy back into the pyramid.
+  The latest quiet USB log confirms both compute pipelines were created
+  and the arc stages linked, with no new per-mip readback.
