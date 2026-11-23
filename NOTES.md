@@ -2290,3 +2290,7 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - **Wi-Fi test** `build/a71-ios26-2126-wifi.img` flashed in TWRP (readback VERIFY OK `75ed4e9a...`; fallback
   2126 `8f1d44cf...`), boot from USB line 995548. Observed: `SWEET SMMU: WLAN 0x240/0x1 -> CB4 via SMR6 ... ok`
   (missing in all earlier iOS 26 Wi-Fi boots), ADSP audio bank ok, `exec wifid`, `exec wland`.
+- Wi-Fi boot result so far: NO reset (first time on iOS 26). wland radio up, scans 2.4/5 GHz channels (WMI
+  event 0x4002 per channel), en0 present; wifid asks en0 SIOCGIFCLAT46ADDR (0xc02869c9) and two others
+  repeatedly (logged, not answered; harmless so far). Owner: Wi-Fi first showed "unavailable", then appeared.
+  Joining a network pending.
