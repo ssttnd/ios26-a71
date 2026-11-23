@@ -2345,3 +2345,5 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Owner: the wallpaper editor shows no buttons at all; everything in it is broken. Not investigated.
 - Metal CI `45225763347` succeeded (six hashes ok); package `build/a71-ios26-tag-glassu.payload` (bundle +
   glass-uniforms flag, mercury-occl moved aside) SHA-256 `f54dda8a...` built, not written yet.
+- Owner: taking a screenshot on the phone (buttons) no longer shows the thumbnail in the bottom-left corner as it
+  did before. Not investigated.
