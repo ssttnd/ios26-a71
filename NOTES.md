@@ -1918,3 +1918,20 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   PID 671 stopped in __semwait_signal via nanosleep/usleep. These are
   observed wait sites, not yet the bottleneck. Keep editor investigation
   independent of the full-screen wallpaper producer trace.
+
+- Origin CI 45192830597 succeeded (artifact 14826443938); six hashes and
+  WALLTEX signature verified. TWRP readback matched the 9,019,392-byte
+  wallpaper-origin payload SHA-256
+  09c2bdd4c7c325fcb9f7557e771049def82cd970710e6a4d57fb101394445a26.
+  On 2125 it applied 9/9 with errno/sync/clear zero (USB line 206278).
+  Framebuffer reached 263 swaps at 72 s.
+- Second source pointer 0x13bcb8a00 in WALLDRAW 1606 also appears in
+  WALLTEX allocate and upload (USB lines 228293-228294, 228396-228397).
+  The preceding WALLDRAW 1605 samples IOSurface 33 into the same target.
+  QuartzCore called newTextureWithDescriptor at +0x10adc8 and
+  replaceRegion at +0x10af34, both in unslid func_183fddbf0 (23G90).
+  Local disassembly shows that helper receives an image label, can
+  upload a mip chain, and is called by multiple image binding paths
+  including create_image_binding in ogl-metal.mm. The source file or
+  snapshot identity is not established. This is a CPU image upload
+  separate from the live Mercury IOSurface.
