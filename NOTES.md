@@ -2342,3 +2342,6 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Owner: Settings hangs when it is opened, sent to the background and opened again. Not investigated.
 - Pending builds: kernel `45225448467` (2128+2129+2130), Metal `45225763347` (surface tagging + GLASSU). Next
   Wi-Fi image must be packed with `--fb-hz 0 --usb-shot --wifi` (607 bytes).
+- Owner: the wallpaper editor shows no buttons at all; everything in it is broken. Not investigated.
+- Metal CI `45225763347` succeeded (six hashes ok); package `build/a71-ios26-tag-glassu.payload` (bundle +
+  glass-uniforms flag, mercury-occl moved aside) SHA-256 `f54dda8a...` built, not written yet.
