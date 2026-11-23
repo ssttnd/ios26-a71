@@ -1,0 +1,44 @@
+A71 iOS 26 Wi-Fi join: iOS 26's wifid sends ASSOCIATE (20) as 908 bytes, with mode and authentication widened
+to 32 bits and the rest of iOS 16.5's layout (SSID length .. key) 4 bytes later (Bergamota's decoding of IO80211
+1565.3, docs/WIFI_IOS26.md). Re-read such a request in that shape before it is checked and handed to wland.
+
+diff --git a/bsd/dev/redwood_apple80211.c b/bsd/dev/redwood_apple80211.c
+index 045e9a9..ae85892 100644
+--- a/bsd/dev/redwood_apple80211.c
++++ b/bsd/dev/redwood_apple80211.c
+@@ -603,6 +603,35 @@ set_join(const struct apple80211req *request, char *said, size_t said_size)
+ 		error = asked == NULL || what == NULL ? ENOMEM : error;
+ 		goto out;
+ 	}
++	/*
++	 * 2129: iOS 26 (IO80211 1565.3) sends 908 bytes: version @0, mode u32 @4, auth lower u32 @8 / upper u32 @0xc,
++	 * then SSID length @0x10, SSID @0x14, BSSID @0x34, key {version, length, cipher, flags, index} @0x3c, key @0x4c
++	 * (Bergamota's decoding, docs/WIFI_IOS26.md). That is iOS 16.5's layout from the SSID length on, 4 bytes later,
++	 * with the mode and authentication fields widened. Re-read such a request in that shape.
++	 */
++	if (request->req_len >= 908) {
++		uint8_t *raw = kalloc_data(0x4c + 64, Z_WAITOK | Z_ZERO);
++		if (raw == NULL) {
++			error = ENOMEM;
++			goto out;
++		}
++		if ((error = copyin(request->req_data, raw, 0x4c + 64)) != 0) {
++			kfree_data(raw, 0x4c + 64);
++			goto out;
++		}
++		uint32_t mode, lower, upper;
++		memcpy(&mode, raw + 4, 4);
++		memcpy(&lower, raw + 8, 4);
++		memcpy(&upper, raw + 0xc, 4);
++		asked->mode = (uint16_t)mode;
++		asked->auth_lower = (uint16_t)lower;
++		asked->auth_upper = (uint16_t)upper;
++		/* iOS 16.5 ssid_length @0xc .. key end @0x88  <-  iOS 26 @0x10 .. @0x8c */
++		memcpy((uint8_t *)asked + offsetof(struct apple80211_assoc, ssid_length), raw + 0x10,
++		    offsetof(struct apple80211_assoc, rest) - offsetof(struct apple80211_assoc, ssid_length));
++		memset_s(raw, 0x4c + 64, 0, 0x4c + 64);
++		kfree_data(raw, 0x4c + 64);
++	}
+ 	/* (lengths and kinds only: the name, the access point and the key stay out of the log) */
+ 	snprintf(said, said_size, " (a join: a name of %u bytes, %s access point, authentication %#x/%#x, a key of %u bytes of kind %u)",
+ 	    asked->ssid_length, asked->bssid[0] | asked->bssid[1] | asked->bssid[2] | asked->bssid[3] | asked->bssid[4] |
