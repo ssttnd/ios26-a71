@@ -1960,3 +1960,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   latest USB log likewise shows glass submissions near gate timeouts,
   but no visual marker for those specific frames. Check backdrop color
   and which completed frame is presented before changing the frame gate.
+- Overlay A/B CI 45195263691 succeeded, artifact 14827448695. Six
+  hashes and test signature verified. Installed 9,043,968-byte
+  wallpaper-overlay-ab, TWRP readback SHA-256
+  ba9aa310b1742655c9039c6b51652da2625cdb6640c8b32a085add0d5c8c37f7.
+  Requested 2125 system reboot. Verify application and search for
+  "skipped uploaded wallpaper test layer". Rollback package
+  build/a71-ios26-stop-wallpaper-overlay-ab.payload moves the opt-in flag.
+- Commit e3be5d8 adds actual compute entry names to DISPATCH and a
+  separate opt-in ARCBIND trace (first eight VariableBlurrer bindings,
+  sampler view ranges and image slots/levels/format, no pixel readback).
+  Metal CI 45196487100 started. The trace records bound slots, not the
+  shader-selected slot for each invocation.
