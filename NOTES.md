@@ -2284,3 +2284,9 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   flag `/var/local/sweet-native-wallpaper-depth`). Still installed: sweet-native-mercury-occl (trace, 400 lines,
   can go), sweet-mtl-skip-luma-boost (old test, effect unknown now). The alpha-one/repeat/single-layer flags are
   `*.a71-off-1123`. To do: make the depth behaviour default (no flag) once stable; editor long-press watchdog.
+- Owner (depth build): when lowering Cover Sheet, brightness doubles for about a second, then returns to normal.
+  Recorded only; not investigated (likely a transition pass over the live surface that is neither the Ixrg nor
+  the matched Isrc pass, e.g. the Bdso gradient or a snapshot cross-fade).
+- **Wi-Fi test** `build/a71-ios26-2126-wifi.img` flashed in TWRP (readback VERIFY OK `75ed4e9a...`; fallback
+  2126 `8f1d44cf...`), boot from USB line 995548. Observed: `SWEET SMMU: WLAN 0x240/0x1 -> CB4 via SMR6 ... ok`
+  (missing in all earlier iOS 26 Wi-Fi boots), ADSP audio bank ok, `exec wifid`, `exec wland`.
