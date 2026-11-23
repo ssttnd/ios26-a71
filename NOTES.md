@@ -2001,3 +2001,18 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   dispatch. The mapping is synchronous and may alter timings, so use it
   for texel contents only. Patch applies locally. Metal CI 45198864092
   started. No need for a gesture to generate these dispatches on boot.
+- ARCTEX CI 45198864092 succeeded (artifact 14830467420). Verified six
+  file hashes and ARCTEX signature. TWRP readback matched the 9,043,968
+  byte arc-texels payload SHA-256
+  352428eee649012a7123213595ce202252c703e66cd700af452cc904ed523852.
+  Applied 13/13 (USB line 331617), including moving the overlay test
+  flag aside. Owner saw black on Earth, then changed selection and
+  reported yellow. The USB log also recorded repeated Mercury SIGSEGV
+  immediately after the first instrumented dispatch. Discard ARCTEX
+  readings (the two zeros in lines 370999-371001 are inconclusive).
+- Wrote the 8,192-byte stop-arc-texels package, verified readback
+  d6176370a1842288ebeb164501c2cd8fcb685400fcb156f6d6335262baa6ca09,
+  and requested system reboot. Owner said the reboot interrupted
+  wallpaper selection. Pause device commands while the owner
+  selects the wallpaper. Passive USB observation only until they
+  finish. Do not re-enable the synchronous ARCTEX measurement.
