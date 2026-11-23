@@ -2200,3 +2200,13 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Before flashing, in TWRP: check that live `/System/Library/xpc/launchd.plist` still has the wland job and
   that the wland/netsvc/firmware files from the wifi payload exist (launchd.plist was restored to the original
   once after the Wi-Fi payload, 2026-11-20). Expect `SWEET SMMU: WLAN 0x240/... -> CB.. via SMR.. -> ok`.
+- Glass+clock build: Metal CI `45213963180` (d2a9846 = 328065b size fix + a9b6ab0 per-draw Ixrg) succeeded,
+  six hashes ok. `build/a71-ios26-glass-clock.payload` (bundle only) TWRP VERIFY OK
+  `95cf91416e3123f67e821f09e7fc150d728aced7549d8f65104e3882a73bf025`, boot unchanged 2126, applied 9/9
+  (USB from line 727786). Owner: first boot had no wallpaper (no crash; backboardd drew no full-size wallpaper
+  surface). After the owner's reboot (line 749492) the wallpaper is drawn: WALLREGION of IOSurface 26 is much
+  darker in the arc/right cells (e.g. r0c1 53,25,18 vs 112,64,51 before; r1c2 78,40,25 vs 161,108,86), alpha
+  pattern unchanged. Home shot `build/a71-glass-fix-1.png`. Owner's visual verdict and Cover Sheet clock pending.
+- TWRP read-only check (same visit): live launchd.plist (693 jobs) has org.ios-sweet.wland (`/var/local/bin/wland
+  auto`, RunAtLoad); /var/local/bin/{wland 250256, netsvc 88160}, /var/local/fw/{modem,rmtfs,rw}. Copy of the
+  plist in ignored research/wifi26/.
