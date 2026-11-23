@@ -2171,3 +2171,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Mercury's blur pyramid (blurredBackground, 414x896 fmt 81) had L2-L8 near-white with A=0 — that matches both
   the flat pale arc and the low alpha WALLREGION found exactly in that area. Next real fix is in Mercury's
   VariableBlurrer downsample chain (why levels >= 2 are white and transparent), not in backboardd.
+- Clock fix attempt `a9b6ab0`: the alpha-one swizzle is now per draw. Frontend marks the slot-3 IOSurface texture
+  of each `_Ixrg` draw with `rwa_texture_mark_opaque` (thread-local, cleared after `mesa.render_draw`); the
+  backend binds a separate `view_opaque` (alpha = 1) for that draw only, so every other pass (clock vibrancy,
+  `Tbds`, blur) sees Mercury's real alpha again, as before the fix. Same flag file
+  (`/var/local/sweet-native-xrg-alpha-one`). Backend draws bind synchronously (bind_stage in render_draw).
+  Known leak: `view_opaque` is not released when the texture is destroyed (one view per Mercury surface).
+  Series check passed. Metal CI `45212718081` building. Expect: normal brightness AND visible clock.
