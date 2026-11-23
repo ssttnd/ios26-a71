@@ -1,0 +1,38 @@
+A71 iOS 26 Wi-Fi: iOS 26's wifid sends SCAN_REQ (10) with 5528 bytes; the iOS 16.5 layout is 5456 and the
+kernel answered EINVAL, so wifid never scanned and Settings listed no network although wland heard six.
+Accept a longer request, read its iOS 16.5 part, scan every channel when its channels do not decode, and log
+the request's size and version so the iOS 26 layout can be learned.
+
+diff --git a/bsd/dev/redwood_apple80211.c b/bsd/dev/redwood_apple80211.c
+index ecb1fe0..045e9a9 100644
+--- a/bsd/dev/redwood_apple80211.c
++++ b/bsd/dev/redwood_apple80211.c
+@@ -533,7 +533,11 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
+ 	unsigned unknown = 0;
+ 	int error;
+ 
+-	if (request->req_len != sizeof(*asked)) {
++	/* 2128: iOS 26's wifid sends 5528 bytes (iOS 16.5: 5456) and got EINVAL, so it never scanned and
++	 * Settings listed no network although the radio heard six. Read the iOS 16.5 part of a longer
++	 * request; if its channels do not decode, scan every channel instead of refusing. */
++	const bool longer = request->req_len > sizeof(*asked);
++	if (request->req_len < sizeof(*asked)) {
+ 		return EINVAL;
+ 	}
+ 	if (!redwood_sta_present()) {
+@@ -561,10 +565,11 @@ set_scan(const struct apple80211req *request, char *said, size_t said_size)
+ 			unknown++;
+ 		}
+ 	}
+-	snprintf(said, said_size, " (a scan: type %u, %u channels of which %u are not the radio's, %u ms on each, a name of %u bytes, "
+-	    "%u more names, flags %#llx)", asked->scan_type, asked->channel_count, unknown, asked->dwell_ms, asked->ssid_length,
+-	    asked->name_count, asked->flags);
+-	if (asked->channel_count != 0 && asked->channel_count <= 64 && what->frequency_count == 0) {
++	snprintf(said, said_size, " (a scan of %u bytes: version %u, type %u, %u channels of which %u are not the radio's, %u ms on each, "
++	    "a name of %u bytes, %u more names, flags %#llx)", request->req_len, asked->version, asked->scan_type, asked->channel_count,
++	    unknown, asked->dwell_ms, asked->ssid_length, asked->name_count, asked->flags);
++	/* (a longer request whose channels did not decode: frequency_count 0, every channel the radio has) */
++	if (!longer && asked->channel_count != 0 && asked->channel_count <= 64 && what->frequency_count == 0) {
+ 		error = EINVAL;                 /* (nothing of what is asked for is a channel of this radio's) */
+ 	} else {
+ 		lck_mtx_lock(&apple80211_lock);
