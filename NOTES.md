@@ -1994,3 +1994,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   slot actually selected by the shader. The first L2 intermediate is
   a single-level output separate from the pyramid, useful as a
   diagnostic boundary. No per-dispatch pixel readback in this build.
+- User stepped away and asked for autonomous verification. Commit
+  4a6f960 adds opt-in ARCTEX for the first four Mercury downsample
+  destinations (intermediate L0, pyramid L1, intermediate L0, pyramid L2).
+  It maps at most four BGRA8 textures and samples an 8x8 grid after each
+  dispatch. The mapping is synchronous and may alter timings, so use it
+  for texel contents only. Patch applies locally. Metal CI 45198864092
+  started. No need for a gesture to generate these dispatches on boot.
