@@ -2347,3 +2347,18 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   glass-uniforms flag, mercury-occl moved aside) SHA-256 `f54dda8a...` built, not written yet.
 - Owner: taking a screenshot on the phone (buttons) no longer shows the thumbnail in the bottom-left corner as it
   did before. Not investigated.
+- **Installed (2026-11-23 ~22:40), not yet checked (owner asked to stop after the install):**
+  - boot `build/a71-ios26-2130-wifi.img` SHA-256 `9753e65e8d3b04e918c2beb4e0871714ad6ddc9d81e785d22085cfd551a702ce`,
+    TWRP readback VERIFY OK. Kernel CI `45225448467` (kernel `5ecd1521...`, matches SHA256SUMS) = 2128 scan
+    request, 2129 ASSOCIATE layout, 2130 frame gate 400 ms. Options = 2126 options + `--wifi --usb-shot
+    --fb-hz 0` (607/607 bytes; packer now accepts --fb-hz 0). Fallbacks: 2126-wifi `75ed4e9a...`,
+    2126 `8f1d44cf...` (no Wi-Fi).
+  - package `build/a71-ios26-tag-glassu.payload` `f54dda8a...` VERIFY OK: Metal CI `45225763347` (Mercury surface
+    tagging + GLASSU), flag sweet-native-glass-uniforms, mercury-occl moved aside. Boot from USB line 1049600.
+- **Check next session:** SWEET PAYLOAD finished 12/12; `XRGALPHA tagged IOSurface`; no brightness jump in Cover
+  Sheet/unlock transitions; no torn/wallpaper-only frames (gate 400 ms); Wi-Fi: `apple80211 ... SCAN_REQ` now
+  accepted (log line "a scan of 5528 bytes"), networks listed, then a join (ASSOCIATE 908 bytes -> wland join);
+  GLASSU lines for the lock-screen glass; screenshots work again (sweetusbshot=1).
+- Open items list: scroll-edge blur hard edge (variable_blur mask), Settings hang on reopen, wallpaper editor
+  without buttons / long-press watchdog, no screenshot thumbnail, lock-screen glass, depth flag to become
+  default, Wi-Fi join.

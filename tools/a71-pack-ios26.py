@@ -59,7 +59,7 @@ def main():
     parser.add_argument('--dtlog', help='sweetdtlog=NAME[,NAME]: their os_log on the console (donor 0205)')
     parser.add_argument('--sample', help='sample the user stacks of NAME[,NAME]')
     parser.add_argument('--sample-interval-ms', type=int, help='time between user stack samples (minimum 50 ms)')
-    parser.add_argument('--fb-hz', type=int, choices=(10, 15, 20, 30, 60), help='limit copies to the panel to this rate')
+    parser.add_argument('--fb-hz', type=int, choices=(0, 10, 15, 20, 30, 60), help='limit copies to the panel to this rate (0 = 60, one byte shorter)')
     parser.add_argument('--fb-scale', type=int, choices=(1, 2), default=1,
                         help='1 fits the canvas inside the panel, 2 fills the panel')
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
