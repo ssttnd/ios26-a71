@@ -2119,3 +2119,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   remaining wash is either already in the Mercury surface content or comes from a non-wallpaper pass that
   WALLDRAW does not log. Next: fix why DRAWLOG prints nothing on this build, or read back IOSurface 28/30
   pixel stats (left planet area vs washed right side) at the Ixrg draw, then compare with the screenshot.
+- Why DRAWLOG printed nothing: `/var/local/sweet-native-drawlog-metadata-only` (installed for the Cover Sheet
+  trace) made `native_drawlog_draw` return after WALLDRAW. `5f19bbf` keeps the DRAW line in that mode and skips
+  only the GPU readbacks (TEXSTAT), and adds opt-in WALLREGION (`/var/local/sweet-native-wall-regions`,
+  backboardd): 3x4 grid of mean BGRA and alpha-0 share of each full-size wallpaper source at WALLDRAW, at most
+  every 5 s and 40 in total. Series checked on an LF donor copy (mip-views -R, then all three). Metal CI
+  `45207554477` building. Plan: package bundle + wall-regions flag, keep metadata-only, drawlog-every and the
+  repeat/single-layer tests as they are; then screenshot Cover Sheet and compare grid cells with the shot.
