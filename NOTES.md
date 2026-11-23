@@ -1720,3 +1720,25 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - `814474e`: xnu 2125 (recopy of frames shown unfinished, sweetfb_recopy, stats recopies=N; applies after 2115) and
   Metal DISPATCH trace (grid, tex0/tex1 size/levels/usage, buffer 0 first 8 bytes, same-texture flag). Kernel CI
   `45060395051`, Metal CI `45060392095`.
+
+## 2026-11-23 — 2125 boot and Mercury dispatch trace verified
+
+- Kernel CI 45060395051 failed at 814474e. The newline fix at af8fcac built
+  successfully in 45061326006 (artifact 14770491306). Metal CI 45060392095
+  succeeded at 814474e (artifact 14769511870).
+- Phone found in TWRP. Its boot prefix matches the full 22,478,848-byte
+  build/a71-ios26-2125.img (SHA-256
+  4f4b8b4a70d249e7d0bf6bef478e45111f64bdd438a33417652df71614d327c5).
+  The preceding USB log shows 2125 enabling recopy, backboardd running and
+  11 recopies by the last sample (57 gate timeouts, 28 old frames).
+  The visual result for dock/search glass and Control Center is unverified.
+- Mercury dispatch trace is present in logs/usb-ios26-1122.txt (lines
+  1212057-1212064). The eight dispatches alternate between single-level
+  intermediates and the same-size 414x896 ten-level pyramid binding. Grid
+  dimensions shrink with the expected destination. TEXSTAT for textures
+  116, 123 and 170 shows alpha 120 at L1 and zero at L2-L8, with RGB
+  changing across some of those upper levels. The readbacks alone cannot
+  establish that every upper-level store was skipped. Next isolate the
+  first read from the mipmapped binding and the first write to it, with
+  actual sampler/image levels and resource formats in the dispatch log.
+- This session read boot and existing logs. Phone remains in TWRP.
