@@ -2280,3 +2280,7 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   81). backboardd: Ixrg IOSurface 26 alpha 1, "depth pass IOSurface 26 straight alpha" active. No crashes.
   Home screenshot `build/a71-depth-1.png`: not overexposed, tones close to the reference. Cover Sheet/clock
   check pending (owner must wake the screen with the button; it does not turn on by itself after boot).
+- **Owner confirmed (2026-11-23): wallpaper, colours and the clock are right** with the depth build (5b102f2 +
+  flag `/var/local/sweet-native-wallpaper-depth`). Still installed: sweet-native-mercury-occl (trace, 400 lines,
+  can go), sweet-mtl-skip-luma-boost (old test, effect unknown now). The alpha-one/repeat/single-layer flags are
+  `*.a71-off-1123`. To do: make the depth behaviour default (no flag) once stable; editor long-press watchdog.
