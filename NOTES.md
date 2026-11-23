@@ -1905,3 +1905,16 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   pointer and IOSurface (24/25/26/29 depending on the frame).
   This confirms both compositor paths across two builds. The second
   texture content and creation/transfer path are still unverified.
+
+## 2026-11-23 — trace second wallpaper texture to producer
+
+- Added capped WALLTEX tracing in backboardd for creation and CPU upload
+  of full-size shader-read textures. It logs the exact object pointer
+  and caller image plus image-relative offset. Match that pointer to
+  the second WALLDRAW source. Trace does not read pixels or alter draws.
+  Patch applied in local verification. Metal CI 45192830597 at 493616d.
+- Symbolicated the quiet Mercury chooser watchdogs against the 23G90
+  shared cache (slide 0x15590000). PID 373 stopped in __psynch_mutexwait;
+  PID 671 stopped in __semwait_signal via nanosleep/usleep. These are
+  observed wait sites, not yet the bottleneck. Keep editor investigation
+  independent of the full-screen wallpaper producer trace.
