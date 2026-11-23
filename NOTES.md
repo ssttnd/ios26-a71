@@ -2210,3 +2210,14 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - TWRP read-only check (same visit): live launchd.plist (693 jobs) has org.ios-sweet.wland (`/var/local/bin/wland
   auto`, RunAtLoad); /var/local/bin/{wland 250256, netsvc 88160}, /var/local/fw/{modem,rmtfs,rw}. Copy of the
   plist in ignored research/wifi26/.
+- Owner: glass transparency is now right, but the double wallpaper is back on the home screen (Cover Sheet tones
+  right, home wrong). Log of the current boot: IOSurface 25 drawn `Ixrg` then `PBGRABsovXm_TimgA2Xhf_Isrc` into
+  the same targets (~10 pairs per window). `6e6b0fa`: a texture already drawn as `Ixrg` is also sampled alpha 1
+  in that `Isrc` pass (per draw). Metal CI `45215868777`.
+- Owner: long-press on the lock screen makes everything crash (cannot delete wallpaper presets). Not in the
+  current boot's log. Known from 2026-11-22/23: PosterBoard terminates MercuryPosterExtension at its 10 s
+  scene-create watchdog (0x8BADF00D) when the editor opens (Mercury blocked in mutex/usleep waits), and
+  PosterBoard itself once aborted with NSInvalidArgumentException (nil object) after the snapshotter. Mercury
+  command buffers complete in ~130-300 ms each (async completion latency_avg ~175 ms). Plan: next package also
+  moves the backboardd diagnostics aside (drawlog-every, drawlog-metadata-only, wall-regions) to cut load,
+  then the owner long-presses once while USB logs, and the fresh crash is diagnosed.
