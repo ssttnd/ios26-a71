@@ -1880,3 +1880,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   1138/1139, 1257/1258, 1263/1264, 1395/1396 and 1506/1507 in the
   captured diagnostic boot. The 0 value is no reported IOSurface ID,
   not a second shared IOSurface identifier.
+- Follow-up search of the diagnostic boot finds #5c00 only as a sampled
+  texture, never as a recorded render target. Its provenance is unresolved
+  because the draw windows do not cover every operation. A revised
+  metadata-only trace emits just the opaque/source-over full-size wallpaper
+  candidates, with complete source, parent and target identities and usage.
+  It skips general draw formatting and logging in that mode and does not
+  read back pixels. No phone changes in this follow-up.
