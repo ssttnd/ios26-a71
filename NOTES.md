@@ -1935,3 +1935,10 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   including create_image_binding in ogl-metal.mm. The source file or
   snapshot identity is not established. This is a CPU image upload
   separate from the live Mercury IOSurface.
+- Added opt-in 23G90 A/B test (8843434, CI 45195263691). With
+  sweet-native-wallpaper-single-layer-test and metadata tracing enabled,
+  only skip a source-over draw of the tracked 828x1792 image uploaded by
+  QuartzCore+0x10af34, immediately following a live IOSurface source-over
+  draw to the same target in the same command buffer. Logs explicit skips.
+  Generated patch applies locally; no hardware result yet. Remove the
+  test flag to restore unmodified compositing.
