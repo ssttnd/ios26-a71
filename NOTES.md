@@ -2100,3 +2100,22 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   wallpaper's curved edge. The home-screen shot a minute earlier shows the same curve with a much paler wash.
   The repeat-pass and per-texture Metal tests are both still installed. This is the first captured frame of the
   overbright symptom; it is not yet matched to USB draw lines.
+- Matched the Cover Sheet shot to `logs/usb-ios26-poster-readonly.txt` (boot from line 541048, shot frame at
+  571689). Observed:
+  - The screen was static when captured: `SWEET FB` swaps stayed at 1580 from up_s 349 to 359 (571412, 571586).
+  - During the slide (570351-570424) backboardd drew source-over IOSurface 40 and the CPU-uploaded texture
+    (src 0x135278980, "IOSurface 0") into all three render targets. They do not appear after 570424.
+  - The last wallpaper draws before the screen went static: opaque `Ixrg` + source-over `Isrc` pairs of the
+    same surface into the same target (IOSurface 30/29/28, 570645-570810), ending with 10966 Ixrg 28 -> 11082
+    Bsov 28 (rt e80) and 11112 Ixrg 30 (rt e00). The repeat-pass test is active in this boot ("skipped repeated
+    wallpaper IOSurface 28" x3, "... 30" x5), but its log is capped at 8 lines, so whether 11082 was skipped is
+    not shown.
+  - Surfaces 28/29/30/40 are `BGRA` 828x1792: Mercury renders them as Metal format 81 (sRGB), backboardd samples
+    format 80 (unorm). Luma-boost draws are skipped in both processes (`/var/local/sweet-mtl-skip-luma-boost`).
+    No Mercury shader compile errors in this boot.
+  - DRAWLOG reports "armed for 800 draws" every 10 s but no `DRAW` lines appear anywhere in this boot, so the
+    non-wallpaper passes of the final frame (where glass/dim layers would show) are not in the log.
+- Guess (not proven): with the Cover Sheet layers gone from the final frame and the repeated pass skipped, the
+  remaining wash is either already in the Mercury surface content or comes from a non-wallpaper pass that
+  WALLDRAW does not log. Next: fix why DRAWLOG prints nothing on this build, or read back IOSurface 28/30
+  pixel stats (left planet area vs washed right side) at the Ixrg draw, then compare with the screenshot.
