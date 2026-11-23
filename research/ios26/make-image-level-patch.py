@@ -2768,6 +2768,8 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\tnative_glassstat([work->render render]);\n'
       '\tif (native_skip_luma_boost([work->render render]))\n\t\treturn YES;\n'
       '\tnative_xrg_alpha_one([work->render render], work->textures, work->textureCount);\n'
+      '\tnative_mercury_occl_trace([work->render render], work->color, work->colorCount,\n'
+      '\t                          work->buffers, work->bufferOffsets, work->count);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3328,6 +3330,56 @@ native_xrg_alpha_one(const void *render, id const *textures, unsigned ntextures)
 		fprintf(stderr, "SweetNativeMetal: XRGALPHA IOSurface %u texture %p %ux%u opaque in Ixrg draws\\n",
 		        rwd_surface_id((void *)[source iosurface]), (void *)source,
 		        (unsigned)[source width], (unsigned)[source height]);
+}
+
+/* MERCURYOCCL (opt-in, /var/local/sweet-native-mercury-occl, MercuryPosterExtension): for
+ * each draw of space::rasterize*Fragment, the SpaceCommonUniforms flags isBackgroundPass
+ * (byte 484) and wantsOcclusion (byte 485) of fragment buffer 0, and the colour target's
+ * IOSurface, size and format. The background writes alpha = wantsOcclusion ? 0 : 1, and
+ * backboardd draws the same surface opaque and again source-over (depth effect over the
+ * clock), so which render carries the occlusion alpha decides the composite. No readback. */
+static void
+native_mercury_occl_trace(const void *render, id const *colors, unsigned ncolors,
+                          id const *fbufs, const size_t *foffs, unsigned nfb)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "MercuryPosterExtension") &&
+		          access("/var/local/sweet-native-mercury-occl", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: MERCURYOCCL enabled\\n");
+	});
+	if (!enabled || nfb == 0 || fbufs[0] == nil)
+		return;
+	char ffn[48] = "";
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	if (name != NULL)
+		memcpy(ffn, name->ffn, sizeof(ffn));
+	pthread_mutex_unlock(&native_drawlog_lock);
+	ffn[sizeof(ffn) - 1] = 0;
+	if (strncmp(ffn, "space::rasterize", 16) != 0)
+		return;
+	static unsigned told;
+	if (__atomic_fetch_add(&told, 1, __ATOMIC_RELAXED) >= 400)
+		return;
+	const uint8_t *base = (const uint8_t *)[fbufs[0] contents];
+	const size_t len = (size_t)[fbufs[0] length], off = (size_t)foffs[0];
+	int bg = -1, occl = -1;
+	unsigned sw = 0, sh = 0;
+	if (base != NULL && off + 486 <= len) {
+		bg = base[off + 484];
+		occl = base[off + 485];
+		sw = (unsigned)base[off + 480] | (unsigned)base[off + 481] << 8;
+		sh = (unsigned)base[off + 482] | (unsigned)base[off + 483] << 8;
+	}
+	id rt = ncolors ? colors[0] : nil;
+	void *surface = rt != nil && [rt respondsToSelector:@selector(iosurface)] ? (void *)[rt iosurface] : NULL;
+	fprintf(stderr, "SweetNativeMetal: MERCURYOCCL %s bg=%d occl=%d screen=%ux%u rt %p %ux%u fmt %u samples %u IOSurface %u\\n",
+	        ffn, bg, occl, sw, sh, (void *)rt, rt ? (unsigned)[rt width] : 0, rt ? (unsigned)[rt height] : 0,
+	        rt ? (unsigned)[rt pixelFormat] : 0, rt ? (unsigned)[rt sampleCount] : 0, rwd_surface_id(surface));
 }
 
 static void
