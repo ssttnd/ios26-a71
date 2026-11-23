@@ -1942,3 +1942,21 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   draw to the same target in the same command buffer. Logs explicit skips.
   Generated patch applies locally; no hardware result yet. Remove the
   test flag to restore unmodified compositing.
+- Glass investigation during A/B build: the arcs use Mercury's slot-7
+  blur pyramid. The first anomalous level is L2. The captured passes
+  alternate between writing a single-level intermediate and copying
+  back into a mipmapped texture. The old DISPATCH log relies on the
+  optional pipeline label (always '?' for these passes) and only logs
+  buffer 0. To separate source sampling from destination binding, carry
+  the real compute function name into the trace, identify the first L2
+  intermediate and record the concrete Gallium image slot/level on the
+  copy. If the intermediate has zero alpha, inspect source sampling/
+  constants; if it has valid alpha but L2 loses it, inspect the image
+  alias and write/store path. Do not infer that sRGB math removes alpha.
+- UI glass is a different pipeline. Previous physical marker at
+  usb-ios26-drawable.txt:19995 showed glass gone while CA continued
+  submitting glass passes at 130-330/s. Another run read nonempty dark
+  gray blur input with alpha 255. A capture around 229177-230186 in the
+  latest USB log likewise shows glass submissions near gate timeouts,
+  but no visual marker for those specific frames. Check backdrop color
+  and which completed frame is presented before changing the frame gate.
