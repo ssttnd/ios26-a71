@@ -2221,3 +2221,24 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   command buffers complete in ~130-300 ms each (async completion latency_avg ~175 ms). Plan: next package also
   moves the backboardd diagnostics aside (drawlog-every, drawlog-metadata-only, wall-regions) to cut load,
   then the owner long-presses once while USB logs, and the fresh crash is diagnosed.
+- Home-wall build (6e6b0fa, CI `45215868777`, six hashes ok): `build/a71-ios26-home-wall.payload` VERIFY OK
+  `a672957d...`, applied 12/12 (USB from 827035), also moved drawlog-every, drawlog-metadata-only and
+  wall-regions to `*.a71-off-1123b`. First boot black wallpaper again (owner rebooted; second boot 845849 drew).
+  Owner: while lowering Cover Sheet the wallpaper is too bright for a second WITH the clock, then the clock
+  disappears and the wallpaper is not bright; colours still wrong. Owner: stop the alpha hacks, fix the rendering.
+- Interpretation (guess): the clock is visible while the opaque snapshot shows; when the live Mercury surfaces
+  are composited (now forced opaque in Ixrg/Isrc passes) the clock is covered. The alpha-one compositor hacks
+  are the wrong direction; the remaining wrong colours/alpha come from Mercury's own rendering.
+- Mercury rendering lead: `space::rasterizeCylinderFragment` and `space::rasterizeBackgroundFragment` log
+  "reads texture 3 and nothing is bound there: a zero texel is bound instead". In the cylinder shader texture 3
+  is `secondaryGoboTexture` (light pattern; textures 0 albedo [fc spaceEnableAlbedoTexture], 1 normals, 2 gobo,
+  3 secondaryGobo, 4/5 tertiary/quaternary [fc spaceEnableExtraGobos], 6 environmentDiffuse). Frontend binding
+  (setFragmentTextures) loops correctly, so Mercury itself bound nil there; only one 512x512 R8Unorm_sRGB upload
+  and one 512x256 f16 upload seen. Why the second gobo is nil is open (asset load or a texture creation path).
+- Owner asked to delete their wallpaper presets (editor long-press crashes). Package
+  `build/a71-ios26-presets-off.payload` (`034b3832...`, 1 entry): mv
+  `/private/var/mobile/Library/Application Support/PRBPosterExtensionDataStore` ->
+  `...PRBPosterExtensionDataStore.a71-backup-1123` (folder 61, Extensions, GalleryCache, the SQLite db). Written
+  in TWRP (VERIFY OK), boot from USB line 877774. Restore = the reverse mv.
+- Owner (important): do not reboot the phone while analysing another problem; work sequentially and announce
+  every reboot first.
