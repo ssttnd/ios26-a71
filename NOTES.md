@@ -2330,3 +2330,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   10; 0 and >=60 both give flushticks 1) is one byte shorter than `=60`, enough for `--usb-shot` (607/607).
   Next Wi-Fi image: `--fb-hz 0 --usb-shot --wifi`.
 - Owner: blur has a hard edge at its top (lock screen and Settings). Not yet captured (no USB shots this boot).
+- Owner photos (2026-11-23 22:20): the iOS 26 top scroll-edge blur (App Library under the search bar, Settings
+  under the title) is uniformly strong and ends at a hard horizontal line instead of fading out.
+  CA `variable_blur_frag` (pipeline PBGRAXm_TvrbA2Xhfn_Isrc_Isrc): per-pixel level =
+  max(0, log2(f(max_blur * saturate(mask_texture.a)))) with mask_texture in slot 4 sampled at texcoord1, source
+  sampled at that explicit level. A uniform strong blur means mask.a reads ~1 everywhere (or the level is not
+  honoured). A8Unorm is mapped correctly (PIPE_FORMAT_A8_UNORM). Next: the DRAW lines in the log split slot 4's
+  description across pieces; capture slot-4 format/size of these draws (GLASSU-style trace or DRAW with
+  rejoined pieces) and the VariableBlurUniforms (fragment buffer 1: max_blur, noise, divide, offset, dx, dy,
+  fade_mul, fade_add).
+- Owner: Settings hangs when it is opened, sent to the background and opened again. Not investigated.
+- Pending builds: kernel `45225448467` (2128+2129+2130), Metal `45225763347` (surface tagging + GLASSU). Next
+  Wi-Fi image must be packed with `--fb-hz 0 --usb-shot --wifi` (607 bytes).
