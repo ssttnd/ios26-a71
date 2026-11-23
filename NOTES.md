@@ -2242,3 +2242,24 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   in TWRP (VERIFY OK), boot from USB line 877774. Restore = the reverse mv.
 - Owner (important): do not reboot the phone while analysing another problem; work sequentially and announce
   every reboot first.
+- **Presets: first attempt broke PosterBoard, fixed.** Moving `PRBPosterExtensionDataStore` away made PosterBoard
+  (runs as mobile) fail to recreate it: `Application Support` is root 0755 (from the root build), error 513 on
+  "59", then `PBFModalRootViewController initWithScene:dataStore:` assert -> SIGTRAP loop (no new wallpapers).
+  Fix without chown: package `build/a71-ios26-presets-fresh.payload` (`321dd6ba...`) renamed an EMPTY mobile 0777
+  folder from the backup (`.../61/Extensions/com.apple.Posters.LoadingPoster/staticdescriptors`) to
+  `Application Support/PRBPosterExtensionDataStore`. PosterBoard migrated 59->60, no crash; owner: wallpaper
+  "looks perfect", clock missing. Old presets: `PRBPosterExtensionDataStore.a71-backup-1123/61/...`.
+  Lesson: never recreate mobile-owned dirs under root-owned parents with a package; rename an existing
+  mobile-owned dir instead (the installer has no chown).
+- Hacks off: package `build/a71-ios26-hacks-off.payload` (`db139684...`, 3/3) moved
+  sweet-native-xrg-alpha-one, -wallpaper-repeat-test, -wallpaper-single-layer-test to `*.a71-off-1123`
+  (sweet-mtl-skip-luma-boost still on). Owner: everything very bright again; shot `build/a71-hacks-off-2.png`.
+- **Mercury alpha is by design.** `space::rasterizeBackgroundFragment` (air2nir --ll):
+  `alpha = SpaceCommonUniforms.wantsOcclusion (byte 485) ? 0 : 1`, and `isBackgroundPass` (byte 484) applies
+  pow(rgb, 1/2.2). Background rgb is NOT premultiplied (rgb kept, alpha 0). So the surface alpha is an
+  occlusion mask for the iOS 26 depth effect: CA draws the surface opaque (`Ixrg`), then the clock, then the
+  same surface `Isrc` so the discs cover the clock. Forcing alpha 1 hid the clock; without it the alpha-0
+  background adds its rgb again (overbright). Open question = why on Apple the Isrc pass does not add the
+  background rgb: either CA's shader premultiplies (function constant) and our driver drops that, or the
+  occlusion render is a separate surface whose background rgb is 0. Next: compare surfaces 24/25/26 roles and
+  the Isrc pipeline's function constants.
