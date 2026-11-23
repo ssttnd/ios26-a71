@@ -1,9 +1,22 @@
 #!/bin/sh
-# Poster probe (A71 iOS 26): what PosterBoard has and offers, then select a dynamic poster.
+# Poster probe (A71 iOS 26): list PosterBoard configurations and available descriptors.
 # Runs as mobile from launchd job org.a71.poster-probe; log /var/local/poster.log (readable from TWRP).
-# The selection is in /var/local/poster.want: "PROVIDER DESCRIPTOR" (default: the stock iOS 26 Dynamic wallpaper).
+# To select a poster explicitly, invoke this script with --select PROVIDER DESCRIPTOR.
 T=/usr/local/bin/toybox
 P=/usr/local/bin/sweetposterset
+case $# in
+	0) ;;
+	3)
+		if [ "$1" != "--select" ]; then
+			echo "usage: $0 [--select PROVIDER DESCRIPTOR]" >&2
+			exit 2
+		fi
+		;;
+	*)
+		echo "usage: $0 [--select PROVIDER DESCRIPTOR]" >&2
+		exit 2
+		;;
+esac
 echo "poster: start uid=$(id -u 2>/dev/null)"
 $T sleep 120
 echo "== list"
@@ -15,13 +28,12 @@ for prov in com.apple.MercuryPoster com.apple.WallpaperKit.CollectionsPoster com
 	echo "== descriptors $prov"
 	$P --descriptors $prov
 done
-want="com.apple.MercuryPoster space.dynamic"
-[ -f /var/local/poster.want ] && want=$($T cat /var/local/poster.want)
+[ "$#" -eq 0 ] && exit 0
 n=0
 while [ $n -lt 4 ]; do
 	n=$((n + 1))
-	echo "== select $want (try $n)"
-	$P $want
+	echo "== select $2 $3 (try $n)"
+	$P "$2" "$3"
 	r=$?
 	echo "select rc=$r"
 	[ $r -eq 0 ] && break
@@ -30,3 +42,4 @@ done
 echo "== list after"
 $P --list
 echo "poster: end"
+exit "$r"

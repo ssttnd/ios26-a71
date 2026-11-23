@@ -1742,3 +1742,32 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   first read from the mipmapped binding and the first write to it, with
   actual sampler/image levels and resource formats in the dispatch log.
 - This session read boot and existing logs. Phone remains in TWRP.
+
+## 2026-11-23 — two wallpaper variants after manual selection
+
+- Owner saw both blue and purple variants after manually switching from blue
+  to purple. The installed poster probe is a concrete source of forced
+  selection: its recorded launchd job runs at load without arguments,
+  sleeps 120 seconds and invokes sweetposterset with /var/local/poster.want.
+  The last Sky package set that file to com.apple.MercuryPoster space.two;
+  the later USB log still identifies a space.two lock-screen configuration.
+  This does not identify the colour of that configuration or establish that
+  the probe rewrote the selection during the owner's switch. Role-specific
+  home/lock configurations and stale snapshots are also possible.
+- Made the poster probe list-only at launch. Manual selection requires
+  --select PROVIDER DESCRIPTOR. Bash syntax and mocked argument paths passed.
+  Prepared build/a71-ios26-poster-probe-readonly.payload, SHA-256
+  6b60096c4cabb40e370167df615f7ae7cfc74e6cbbd506f5fe84f5e114efeb72.
+  It replaces only /private/var/local/poster.sh. Applying it to userdata
+  awaits authorization. Keep current poster files and caches for comparison.
+- The earlier backboardd trace repeatedly uses the same surface in an opaque
+  draw followed by a source-over draw. That capture supports the brightness
+  hypothesis but cannot account for two variant identities on its own.
+  After isolating the probe, correlate role/configuration/variant and runtime
+  snapshot versus live surface at the switch and at a cover-sheet swipe.
+- For UI glass, correlate a reproduced home-page swipe and App Library
+  return with GLASSSTAT and 2125 recopy counters. If glass draws disappear
+  while frame publication continues, inspect CA backdrop/layer state; if
+  draws continue with a missing effect, inspect backdrop inputs and which
+  completed frame was published. The existing counter totals do not tie
+  the reported visual transition to a particular swap.
