@@ -1815,3 +1815,9 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   This distinguishes repeat sampling of one surface from two surface IDs
   while providing glass draw counts. Generated patch applies to the local
   mip/blur base. Device still uses the quiet editor build.
+- Metadata-only Metal CI 45187863848 at 73037cc dispatched (ios26=true).
+  Offline count of the earlier backboardd trace: 16 adjacent opaque then
+  source-over full-screen draw pairs into the same render target; all 16
+  used the same source texture within each pair. This predates the current
+  Notification Center gesture, so confirm in a timed capture. Owner is
+  handling phone reboots. No device changes in this follow-up.
