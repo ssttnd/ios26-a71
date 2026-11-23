@@ -2178,3 +2178,13 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   (`/var/local/sweet-native-xrg-alpha-one`). Backend draws bind synchronously (bind_stage in render_draw).
   Known leak: `view_opaque` is not released when the texture is destroyed (one view per Mercury surface).
   Series check passed. Metal CI `45212718081` building. Expect: normal brightness AND visible clock.
+- **Wallpaper glass cause found (offline, not yet verified on the phone).** `air2nir --ll` of Mercury's
+  `VariableBlurrer::downsample` (VM, `research/metallibs/0018.metallib`): uv = (gid + 0.5) /
+  (get_width/get_height(target, lods.y)), sample source at lods.x, write target at lods.y. For an image
+  (written texture) `query_texture` called `nir_image_size(binding, lod)` on the single-level view of level 0,
+  so the size was always level 0's: each pyramid level was built from the top-left corner of the previous one,
+  and L2..L9 converged to the top-left corner texel (pale, alpha 0). That explains the identical L2-L8 means
+  (232,226,195,0), the "rotated/zoomed" background in the arc, the flat pale arc and the low alpha WALLREGION
+  saw in the arc area. Fix: size at level k = max(1, size0 >> k) (array layer count kept). air2nir rebuilt in
+  the VM with the patched AIR sources: downsample emits ushr/umax; Mercury metallib 29 ok / 15 fail (as before).
+  Commit after `05ac94e`; Metal CI dispatched (carries the per-draw Ixrg clock fix too).
