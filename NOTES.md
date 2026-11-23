@@ -2138,3 +2138,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   - Surfaces 39 and 42 (`Isrc` only, same RGB as 35/34) are A=255 everywhere: opaque snapshots.
   - So the earlier finding holds per region: the source-over pass of a live Mercury surface over its own opaque
     pass gives src*(2-a); the top and the right side, where alpha is lowest, wash out most, as in the screenshot.
+- Second Cover Sheet shot on the WALLREGION boot: `build/a71-2126-cover-sheet-2.png` (USB line 633740), same wash.
+  Frames kept swapping (~10/s). DRAW window 632355-633739, observed per frame on the 828x1792 targets: `Ixrg` of
+  live Mercury IOSurface 35 (11227, 11324), then NOT a source-over repeat but `PBGRAXm_TimgBdsoA2Xhfn_Isrc` with
+  a 256x1 RGBA16F texture (11228, 11325), then Cover Sheet's blur/glass and text draws. Snapshot IOSurface 32
+  (A=255) is drawn `Ixrg` on the other targets. So the repeat-skip test cannot apply on Cover Sheet.
+- Guess (not proven): the Ixrg pass writes Mercury's alpha into the frame (CoreAnimation expects alpha ignored),
+  and the `Bdso` pass blends by destination alpha, so the gradient shows where Mercury alpha is low (top, right),
+  which is the washed shape. `a213472`: opt-in `/var/local/sweet-native-xrg-alpha-one` (backboardd) gives an
+  IOSurface texture the swizzle (r,g,b,one) the first time CA draws it with an `_Ixrg` shader; logs `XRGALPHA`.
+  Series check passed. Metal CI `45210012076` building. Expect: Cover Sheet and home screen not washed.
+- Owner said "kernel ready": XNU CI `45205742994` (aa20183, 2127 gesture, capture after release) succeeded.
+  2b90329 (capture before release) was never built. Not packed or flashed; the owner opens Cover Sheet by hand.
