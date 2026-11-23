@@ -69,6 +69,15 @@ Reboot once before concluding a build is broken; it has always booted the second
   (2026-11-20). Install at mount only.
 - Do not touch bootloaders, recovery, modem, persist or the backups. Other destructive steps need the owner's OK.
 
+## USB screenshots (xnu 2126)
+
+Build with `--usb --usb-shot`. With the USB logger running, send
+`a71:shot` through `logs/usb-command.txt`. The phone sends a downscaled
+RGB frame over ACM. The frame stays out of the phone's persistent log.
+Extract the last complete frame with
+`python -I -X utf8 tools/a71-dbg.py shot-log USB_LOG OUT.png`.
+Keep the USB log and screenshots in ignored directories.
+
 ## Wallpaper diagnostics
 
 - The launchd job `org.a71.poster-probe` runs `/private/var/local/poster.sh`

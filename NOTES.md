@@ -2016,3 +2016,21 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   wallpaper selection. Pause device commands while the owner
   selects the wallpaper. Passive USB observation only until they
   finish. Do not re-enable the synchronous ARCTEX measurement.
+- Owner reported all wallpaper symptoms persisted and asked for advance
+  notice of changes and autonomous screenshots. Repeat-pass test at
+  2c5aa18 is independent of the negative uploaded-overlay test. Guarded by
+  sweet-native-wallpaper-repeat-test. It skips the exact same IOSurface
+  source-over draw immediately after an opaque fixed-shader draw with the
+  same two render targets and command buffer, full viewport/scissor
+  where explicit, no depth, and six vertices. Does not prove vertex
+  coordinates match or establish a production compositor fix.
+- CI 45201385171 passed, artifact 14832920148. Six hashes, repeat
+  signature, and removal of ARCTEX verified. TWRP readback of
+  wallpaper-repeat-ab (9,039,872 bytes) matched
+  d0da34f792fe3e2c1df80c4283d5d1448cb462635be406556e4032692af34a62.
+  Requested system reboot. Confirm application and matched passes.
+- USB screenshot work cde252a (xnu 2126, CI 45202143188). Existing
+  sweetdbg screenshot client has no reachable phone service in this
+  setup. Added opt-in ACM command a71:shot, downscaled read of panel
+  scanout, and shot-log decoder. Patch applies on staged sweet_usb.c;
+  synthetic decoder test passed. Kernel and device tests pending.
