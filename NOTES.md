@@ -2301,3 +2301,14 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   xnu 2128 (`30c828a`): accept longer scan requests, read the iOS 16.5 part, scan all channels if the channels
   do not decode, log size/version. Kernel CI `45224271413`. Next: pack 2126-wifi options with that kernel,
   flash boot, see whether wifid then asks SCAN_RESULT (11) and with what size.
+- Owner's video (`20261123_220813.mp4`, 284 frames, studied frame by frame in scratch): (1) the brief ~20%
+  brighter frames come during Cover Sheet slide/unlock zoom transitions: source-over passes of a live Mercury
+  surface not yet seen in an Ixrg pass (per-texture rule missed it). `a039da5`: Mercury's driver tags every
+  IOSurface it renders into (IOSurface value SweetA71StraightAlpha); backboardd uses straight alpha for any
+  `PBGRABsovXm_Timg*_Isrc` pass of a tagged surface (tag cached per texture). Metal CI `45224924579`.
+  (2) Flicker = torn frames (black bands, frames 64-65/240-244/256) and frames with only the wallpaper and no
+  icons (53-54, 82-83): unfinished frames presented in copy mode (known frame-gate issue, xnu 2125 recopy did
+  not cover these). Not addressed yet.
+- Wi-Fi join prepared: xnu 2129 (`a5f0e9f`) re-reads iOS 26's 908-byte ASSOCIATE (mode/auth u32, SSID length
+  .. key 4 bytes later than iOS 16.5; layout from Bergamota docs/WIFI_IOS26.md). Kernel CI `45225107525`
+  (2128+2129) running alongside `45224271413` (2128 only).
