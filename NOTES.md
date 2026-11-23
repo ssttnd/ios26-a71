@@ -2188,3 +2188,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   saw in the arc area. Fix: size at level k = max(1, size0 >> k) (array layer count kept). air2nir rebuilt in
   the VM with the patched AIR sources: downsample emits ushr/umax; Mercury metallib 29 ok / 15 fail (as before).
   Commit after `05ac94e`; Metal CI dispatched (carries the per-draw Ixrg clock fix too).
+- **Wi-Fi reset cause (iOS 26, found from logs + iOS 16 history):** the 2026-11-20 Wi-Fi boots had
+  `sweetsmmuwlan=1` but no `sweetsmmuprobe=1`, and zero `SWEET SMMU` lines. In the kernel (sweet_rpmh.c, also
+  2126) `sweet_smmu_wlan_stream()` runs only inside the sweetsmmuprobe thread, so WLAN stream 0x240 had no
+  SMR when the firmware started DMA after "12 rings programmed" -> SoC reset. Same as iOS 16 wave5 -> wave6
+  (docs/ios16-notes.md). Packer `--wifi` now adds `sweetsmmuprobe=1` (this also runs the ADSP audio bank
+  setup, default sweetsmmuadsp=1, as on iOS 16).
+- `build/a71-ios26-2126-wifi.img` (22,478,848 bytes, SHA-256
+  `75ed4e9a4da024f7f5962115b8760f8c7b5e2d1a51f4e9a9b79834d5687f22c2`): 2126 kernel (83ff16df...), running
+  2126 options + `--wifi`; left out `--usb-shot` and `--dtlog` (command line 593 of 607 bytes). Not flashed.
+  Before flashing, in TWRP: check that live `/System/Library/xpc/launchd.plist` still has the wland job and
+  that the wland/netsvc/firmware files from the wifi payload exist (launchd.plist was restored to the original
+  once after the Wi-Fi payload, 2026-11-20). Expect `SWEET SMMU: WLAN 0x240/... -> CB.. via SMR.. -> ok`.

@@ -109,7 +109,10 @@ def main():
     cmdline += ' sweettouch=1 sweettouchdelay=3' if args.touch else ' sweettouch=0'
     cmdline += ' sweetkeys=1' if args.keys else ' sweetkeys=0'
     if args.wifi:
-        cmdline += ' sweetpmem=1 sweetsmmuwlan=1 sweetnull=wland'
+        # sweetsmmuwlan maps the WLAN stream 0x240 only inside the sweetsmmuprobe thread;
+        # without the probe the firmware's first DMA after "12 rings programmed" resets the
+        # SoC (iOS 16 wave5/wave6; iOS 26 Wi-Fi boots 2026-11-20 had no SWEET SMMU line).
+        cmdline += ' sweetpmem=1 sweetsmmuwlan=1 sweetsmmuprobe=1 sweetnull=wland'
     cmdline += ADRENO_ARGS if args.adreno_firmware else ' sweetgpu=0'
     if args.metal:
         cmdline += ' sweetmtl=2 sweetgles=0'
