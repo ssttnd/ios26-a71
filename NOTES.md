@@ -1887,3 +1887,6 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   candidates, with complete source, parent and target identities and usage.
   It skips general draw formatting and logging in that mode and does not
   read back pixels. No phone changes in this follow-up.
+- Focused trace build queued as Metal CI 45190631078 at 785f8a5. The
+  regenerated patch passed git apply --check on the mip/blur base.
+  Boot-side trace remains disabled pending validation.
