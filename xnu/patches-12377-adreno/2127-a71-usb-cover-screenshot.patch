@@ -1,0 +1,64 @@
+A71: behind a separate opt-in, open Cover Sheet and sample scanout over ACM.
+Use the existing HID input path and do not bypass unlock state.
+
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -603,7 +603,7 @@
+  * phone into that mode, so a PC can get from iOS to TWRP with no hand on the phone.
+  * Only noted here (event context); ud_acm_cmd_thread does the reboot.
+  */
+-static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader, 4 screenshot */
++static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader, 4 screenshot, 5 cover */
+ #define UD_SHOT_RAW_CAP (1024u * 1024u)
+ static char *ud_shot_data;
+ static size_t ud_shot_size, ud_shot_offset, ud_shot_capacity;
+@@ -664,6 +664,28 @@
+ 	lck_mtx_unlock(ud.lock);
+ }
+ 
++extern void sweet_hid_touch(int finger, int down, int x, int y);
++
++static void
++ud_acm_cover_capture(void)
++{
++	int enabled = 0;
++	if (!PE_parse_boot_argn("sweetusbui", &enabled, sizeof(enabled)) || !enabled) {
++		printf("SWEET USB: UI gesture request disabled\n");
++		return;
++	}
++
++	/* A71 panel coordinates. Start at top centre, away from Control Center. */
++	const int x = 540, top = 4, bottom = 1740, steps = 24;
++	for (int i = 0; i <= steps; i++) {
++		sweet_hid_touch(0, 1, x, top + (bottom - top) * i / steps);
++		ud_sleep_ms(16);
++	}
++	sweet_hid_touch(0, 0, x, bottom);
++	ud_sleep_ms(350);
++	ud_acm_capture();
++}
++
+ extern void sweet_reboot_set_mode(int mode);    /* bsd/dev/sweet_reboot.c (2122) */
+ extern int reboot_kernel(int howto, char *message);
+ 
+@@ -671,7 +693,7 @@
+ ud_acm_take_command(const char *p, uint32_t len)
+ {
+ 	static const struct { const char *word; int cmd; } words[] = {
+-		{ "a71:recovery", 2 }, { "a71:bootloader", 3 }, { "a71:reboot", 1 }, { "a71:shot", 4 },
++		{ "a71:recovery", 2 }, { "a71:bootloader", 3 }, { "a71:reboot", 1 }, { "a71:shot", 4 }, { "a71:cover", 5 },
+ 	};
+ 	for (uint32_t i = 0; i < len; i++) {
+ 		for (unsigned w = 0; w < sizeof(words) / sizeof(words[0]); w++) {
+@@ -694,6 +716,10 @@
+ 			continue;
+ 		}
+ 		ud_cmd = 0;
++		if (cmd == 5) {
++			ud_acm_cover_capture();
++			continue;
++		}
+ 		if (cmd == 4) {
+ 			ud_acm_capture();
+ 			continue;

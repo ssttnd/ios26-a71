@@ -65,6 +65,8 @@ def main():
     parser.add_argument('--usb', action='store_true', help='sweetusb=3: power USB up and stream the kernel log as a serial port (xnu 2101)')
     parser.add_argument('--usb-shot', action='store_true',
                         help='allow scanout snapshots over USB ACM (xnu 2126; requires --usb)')
+    parser.add_argument('--usb-ui', action='store_true',
+                        help='allow the A71 Cover Sheet test gesture (xnu 2127; requires --usb-shot)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
 
@@ -123,6 +125,10 @@ def main():
         cmdline = cmdline.replace('sweetusb=0', 'sweetusb=3')
     if args.usb_shot:
         cmdline += ' sweetusbshot=1'
+    if args.usb_ui:
+        if not args.usb_shot or b'a71:cover' not in kernel:
+            parser.error('--usb-ui requires --usb-shot and the xnu 2127 Cover Sheet command')
+        cmdline += ' sweetusbui=1'
     # A71 ports in the kernel (xnu 2108-2115) switch their boot-args on; the first copy of an argument wins.
     if args.adreno_firmware and b'SWEET RENDER: restarted SpringBoard' in kernel:
         cmdline += ' sweetm2restart=2'
