@@ -1835,3 +1835,12 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   it, and the actual image-view mip of the copy back into the pyramid.
   The latest quiet USB log confirms both compute pipelines were created
   and the arc stages linked, with no new per-mip readback.
+- Owner clarified the full-screen overlap is consistently reproducible;
+  a long wait or a volume marker is unnecessary. Metal CI 45187863848
+  succeeded (artifact 14823904335). All six bundle hashes matched the
+  manifest; SweetMetal2 contains the expected trace string. Built
+  build/a71-ios26-cover-sheet-metadata.payload (9,043,968 bytes; SHA-256
+  bf9daccec4521121fbb26072d84d415e68fcdbfbef179072bc9e5eef5631e123).
+  This enables metadata-only draw logging for backboardd. Awaiting TWRP;
+  the owner handles reboots. Capture home, fully open Cover Sheet for
+  several seconds, then home again. No writes to the phone yet.
