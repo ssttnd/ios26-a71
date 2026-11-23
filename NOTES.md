@@ -1844,3 +1844,29 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   This enables metadata-only draw logging for backboardd. Awaiting TWRP;
   the owner handles reboots. Capture home, fully open Cover Sheet for
   several seconds, then home again. No writes to the phone yet.
+
+## 2026-11-23 — metadata capture and recovery pending
+
+- Searched bytes of all 71 text log files under logs plus latest_log.txt
+  and research/bbtrace-boot.txt for wallpaper passes, chooser watchdog,
+  CoverSheet transitions, and glass arc. Older captures contain repeated
+  opaque/source-over pairs using the same texture (e.g. bbtrace 14115-14116).
+- Owner authorized autonomous reboot. USB -> TWRP succeeded and
+  cover-sheet-metadata package readback matched bf9daccec4521121fbb26072d84d415e68fcdbfbef179072bc9e5eef5631e123.
+  Boot on 2125 applied 13/13, errno/sync/clear all zero. Capture in
+  logs/usb-ios26-poster-readonly.txt, starting at line 123485.
+- New capture 139051-139054: draws 1263 and 1264 both source-over
+  to the same 828x1792 render target, sampling distinct 828x1792
+  texture wrappers (#5c08 and #5c00). The former wraps IOSurface 31,
+  imported by Mercury and backboardd (138757, 138944). The latter reports
+  no IOSurface ID. Its content and relation to the visible overlap
+  remain to be established. Draws 1266-1270 then use the composited
+  target in a backdrop blur and issue a glass background draw.
+- Owner reported UI frozen. Kernel console remained alive with 149 swaps
+  unchanged; no new panic observed. USB recovery command was accepted
+  at 139893 but did not complete within a minute and ADB never saw TWRP.
+  Requested physical restart into TWRP. Once it appears, write the ready
+  build/a71-ios26-stop-cover-sheet-metadata.payload, SHA-256
+  3f5b3171d436d0deb0f199057218cb99eefbeb164bb4e0698584e7e0a09d8f97.
+  It moves the drawlog trigger aside. Reboot and verify applied 1/1 and
+  normal frame swaps. This rollback payload has not been written yet.
