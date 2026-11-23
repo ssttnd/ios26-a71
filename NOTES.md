@@ -1981,3 +1981,16 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Other non-adjacent CPU texture draws remain, e.g. 1839/1870. Visual
   comparison is still unavailable. Legacy HFS allocation warnings
   occur in this boot and in the pre-test logs (see 2026-11-19 survey).
+- Glass CI 45196487100 succeeded (artifact 14828243003). Six hashes
+  and ARCBIND signature verified. TWRP readback SHA-256 for the
+  9,039,872-byte arc-bindings payload:
+  1d33225ca7d29e7d17cdedba963fbdf180afa7ba2f6eae8a25dcf0fca41569c3.
+  On 2125 it applied 12/12 with errno/sync/clear zero (USB 287536).
+- USB 301460-301467: all eight alternating passes are
+  VariableBlurrer::downsample. The full pyramid sampler exposes L0-L9,
+  its writable image aliases include i3=L1 and i4=L2. L1/L2 resource
+  views are present, so missing host bindings alone do not explain
+  alpha loss. Need distinguish source LOD/value from runtime image
+  slot actually selected by the shader. The first L2 intermediate is
+  a single-level output separate from the pyramid, useful as a
+  diagnostic boundary. No per-dispatch pixel readback in this build.
