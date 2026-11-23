@@ -2190,6 +2190,20 @@ edit('tools/mesa/air/air_run.c',
    for (unsigned i = 0; i < info.num_resources; i++) {'''))
 
 edit('userland/src/redwoodmetal.m',
+     ('''	return [[SweetNativeMetalTexture alloc] initWithRedwoodDevice:self
+							 texture:texture
+							   shape:&shape];
+''',
+      '''	id result = [[SweetNativeMetalTexture alloc] initWithRedwoodDevice:self
+	                                                          texture:texture shape:&shape];
+	native_wall_texture_event("allocate", result, __builtin_return_address(0));
+	return result;
+'''),
+     ('''	(void)image;
+	if (mesa.texture_write(_texture,''',
+      '''	(void)image;
+	native_wall_texture_event("upload", self, __builtin_return_address(0));
+	if (mesa.texture_write(_texture,'''),
      # DISPATCH trace (processes in /var/local/sweet-mtl-trace, own budget of 160 lines): the
      # grid, the first two textures and the first 8 bytes of buffer 0. Mercury's VariableBlurrer
      # pyramid had levels 2-8 left unwritten (identical means at every level, 2026-11-23);
@@ -3031,6 +3045,39 @@ edit('userland/src/SweetNativeDrawLog.inc',
      # per second only while something draws. It tells the two causes apart: CoreAnimation
      # stops sending glass draws (its own decision, e.g. late frames) or keeps sending them
      # (then the picture is wrong here).
+     ('static void\nnative_drawlog_draw(unsigned seq,',
+      '''static void
+native_wall_texture_event(const char *operation, id texture, const void *caller)
+{
+	if (texture == nil)
+		return;
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-drawlog-metadata-only", F_OK) == 0;
+	});
+	if (!enabled || [texture width] < 600 || [texture height] < 1200 || [texture usage] != 1)
+		return;
+	static unsigned events;
+	if (__atomic_fetch_add(&events, 1, __ATOMIC_RELAXED) >= 64)
+		return;
+	Dl_info image = {0};
+	if (dladdr(caller, &image) && image.dli_fname != NULL && image.dli_fbase != NULL) {
+		const char *base = strrchr(image.dli_fname, '/');
+		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller %s+0x%lx\\n",
+		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height],
+		        base ? base + 1 : image.dli_fname,
+		        (unsigned long)((uintptr_t)caller - (uintptr_t)image.dli_fbase));
+	} else {
+		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller unknown\\n",
+		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height]);
+	}
+}
+
+static void
+native_drawlog_draw(unsigned seq,'''),
      ('static void\nnative_drawlog_draw(unsigned seq,',
       'static void native_drawlog_texstat(unsigned seq, id t);\n\nstatic void\nnative_drawlog_draw(unsigned seq,'),
      # TEXSTAT: for a logged glass_background draw, the blur texture it samples (slot 3,
