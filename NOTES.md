@@ -2064,3 +2064,27 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Logs confirm the A/B skipped some candidate passes, so that alone is
   insufficient. Do not attribute the symptom only to Cover Sheet.
   Compare transitions and check premultiplied color and blend inputs.
+
+## 2026-11-23 — USB screenshot verified; owner handles Cover Sheet
+
+- XNU CI 45202143188 succeeded (kernel artifact 14833750517).
+  kernel.development.sweet matched
+  83ff16dffb78e927310421140ee42bb30679a7ceb4b1c273dcd384da5bacddc6.
+  Packed build/a71-ios26-2126-usb-shot.img, 22,478,848 bytes, SHA-256
+  8f1d44cf2457f0e60df38e3edadbfc491859493e4f513b42033e2d376953932b.
+  Boot args matched 2125 with only sweetusbshot=1 added. TWRP verified
+  old 2125 prefix then wrote only boot and matched the new readback.
+  Booted to iOS and reached 479 swaps at 89 s (USB log).
+- Sent a71:shot using the USB logger. Complete 180x400 RGB capture
+  extracted and visually inspected at build/a71-2126-first-screen.png
+  (ignored). It shows the home screen with wallpaper visible.
+  Use the same command to take the Cover Sheet screenshot after the
+  owner opens it. The owner explicitly said they can open it themselves
+  and asked to stop. No further device actions.
+- Optional 2127 gesture commits aa20183/2b90329 remain in Git but were
+  never flashed. CI 45205742994 for the earlier post-release variant
+  was dispatched before the owner narrowed scope. The working device
+  uses 2126; no gesture build is needed to capture the owner-opened
+  Cover Sheet. Repeat-pass Metal test remains enabled; the per-texture
+  Cover Sheet test was visually negative. App-launch overlay and both
+  glass defects remain open.
