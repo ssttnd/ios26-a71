@@ -2094,3 +2094,9 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Remote Control on. USB logger PID 1960 still appending to `logs/usb-ios26-poster-readonly.txt`; COM7 present.
 - Sent `a71:shot`; new 180x400 frame `build/a71-2126-now.png` (ignored) shows the home screen with wallpaper,
   phone clock 7:30. Waiting for the owner to open Cover Sheet, then repeat `a71:shot` to capture it.
+- Owner opened Cover Sheet; `a71:shot` captured it as `build/a71-2126-cover-sheet.png` (ignored, SHA-256
+  4137d2ce..., phone clock 7:31). Observed: lock-screen date/clock, flashlight and camera buttons are drawn; the
+  right part of the frame, from the clock to the bottom, is washed out near-white/pale blue over the Mercury
+  wallpaper's curved edge. The home-screen shot a minute earlier shows the same curve with a much paler wash.
+  The repeat-pass and per-texture Metal tests are both still installed. This is the first captured frame of the
+  overbright symptom; it is not yet matched to USB draw lines.
