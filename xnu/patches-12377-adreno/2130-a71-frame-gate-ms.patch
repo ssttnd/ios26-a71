@@ -1,0 +1,29 @@
+A71 copy mode: the frame gate's fixed 100 ms cap becomes sweetfb_gatems, default 400 (20..2000). A71 frames often
+take 130-300 ms on the GPU, so during animations frames were copied half drawn (black bands, wallpaper without
+icons; owner video 2026-11-23). A stuck GPU still cannot hold the display longer than the cap.
+
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index a69e028..60718f8 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1321,7 +1321,19 @@ AppleCLCD::takeFrame(uint8_t *rec, SweetSurface **taken, SweetSurface **dropped,
+ 	uint32_t unfinishedFence = 0;
+ 	if (!newest && !old) {
+ 		uint64_t cap;
+-		nanoseconds_to_absolutetime(100 * NSEC_PER_MSEC, &cap);
++		/*
++		 * 2130 (A71): sweetfb_gatems (default 400 on the A71, was a fixed 100). A71 frames often take 130-300 ms on the GPU, so the 100 ms cap
++		 * showed them half drawn during animations: black bands and wallpaper-only frames (owner video 2026-11-23).
++		 */
++		static uint32_t gate_ms;
++		if (gate_ms == 0) {
++			uint32_t ms = 400;
++			if (!PE_parse_boot_argn("sweetfb_gatems", &ms, sizeof(ms)) || ms < 20 || ms > 2000) {
++				ms = 400;
++			}
++			gate_ms = ms;
++		}
++		nanoseconds_to_absolutetime((uint64_t)gate_ms * NSEC_PER_MSEC, &cap);
+ 		if (now - (fOldValid ? fOldAbs : fPendAbs) <= cap) {
+ 			fSt.gpuHolds++;
+ 			return false;
