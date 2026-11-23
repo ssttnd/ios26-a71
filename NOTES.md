@@ -2312,3 +2312,16 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Wi-Fi join prepared: xnu 2129 (`a5f0e9f`) re-reads iOS 26's 908-byte ASSOCIATE (mode/auth u32, SSID length
   .. key 4 bytes later than iOS 16.5; layout from Bergamota docs/WIFI_IOS26.md). Kernel CI `45225107525`
   (2128+2129) running alongside `45224271413` (2128 only).
+- xnu 2130 (`514af8d`): frame-gate cap `sweetfb_gatems`, default 400 ms on the A71 (was fixed 100): frames of
+  130-300 ms were copied half drawn (black bands, wallpaper-only frames in the owner's video). Also expected to
+  reduce "glass vanishes after a swipe" (glass passes are the slowest part of a frame; see 2125 note).
+  Kernel CI `45225448467` = 2128 + 2129 + 2130 (superseded runs 45224271413, 45225107525 cancelled).
+- Lock-screen/system glass: CA glass shaders all translate (QuartzCore metallib, VM report: glass_background*,
+  glass_foreground*, sdf_gen*, variable_blur*, narrow_blur* ok; only imageblock/tile compute variants fail, not
+  used). `25667ee` adds GLASSU (flag `/var/local/sweet-native-glass-uniforms`): first 48 glass_* draws in
+  backboardd log GlassBackgroundUniforms (fragment buffer 1, 272 bytes, 68 floats: blur_radius,
+  refraction amounts, colour matrices face/bleed/shadow_cm*, opacities) and source/sdf texture sizes. Question
+  to answer: does CA ask for glass with zero radius/opacity (Bergamota saw radius/gate 0 every frame), or
+  normal values that we render wrong? Metal CI `45225763347` (with Mercury surface tagging a039da5).
+- Next install plan (one TWRP visit): boot = 2126-wifi options with kernel 45225448467; package = Metal
+  45225763347 + glass-uniforms flag, mercury-occl flag moved aside.
