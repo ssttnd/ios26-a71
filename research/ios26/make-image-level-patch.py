@@ -2230,6 +2230,12 @@ edit('tools/mesa/air/air_run.c',
    for (unsigned i = 0; i < info.num_resources; i++) {'''))
 
 edit('userland/src/redwoodmetal.m',
+     ('	NSUInteger _nativeParentLevel;\n	int _responsibleProcess;',
+      '	NSUInteger _nativeParentLevel;\n	bool _nativeQuartzCoreWallpaperUpload;\n'
+      '	int _responsibleProcess;'),
+     ('- (id)parentTexture                { NATIVE_OBJECT_LOCK;  return _nativeParentTexture; }\n',
+      '- (id)parentTexture                { NATIVE_OBJECT_LOCK;  return _nativeParentTexture; }\n'
+      '- (BOOL)nativeQuartzCoreWallpaperUpload { return _nativeQuartzCoreWallpaperUpload; }\n'),
      ('	struct rwa_compute_info _info;\n',
       '	struct rwa_compute_info _info;\n	NSString *_nativeFunctionName;\n'),
      ('- (struct rwa_compute *)compute;\n',
@@ -2255,7 +2261,7 @@ edit('userland/src/redwoodmetal.m',
      ('''	(void)image;
 	if (mesa.texture_write(_texture,''',
       '''	(void)image;
-	native_wall_texture_event("upload", self, __builtin_return_address(0));
+	_nativeQuartzCoreWallpaperUpload |= native_wall_texture_event("upload", self, __builtin_return_address(0));
 	if (mesa.texture_write(_texture,'''),
      # DISPATCH trace (processes in /var/local/sweet-mtl-trace, own budget of 160 lines): the
      # grid, the first two textures and the first 8 bytes of buffer 0. Mercury's VariableBlurrer
@@ -3107,13 +3113,11 @@ edit('userland/src/SweetNativeDrawLog.inc',
      # stops sending glass draws (its own decision, e.g. late frames) or keeps sending them
      # (then the picture is wrong here).
      ('static void\nnative_drawlog_draw(unsigned seq,',
-      '''static uintptr_t native_wall_uploaded_texture;
-
-static void
+      '''static bool
 native_wall_texture_event(const char *operation, id texture, const void *caller)
 {
 	if (texture == nil)
-		return;
+		return false;
 	static dispatch_once_t once;
 	static bool enabled;
 	dispatch_once(&once, ^{
@@ -3122,25 +3126,20 @@ native_wall_texture_event(const char *operation, id texture, const void *caller)
 		          access("/var/local/sweet-native-drawlog-metadata-only", F_OK) == 0;
 	});
 	if (!enabled || [texture width] < 600 || [texture height] < 1200 || [texture usage] != 1)
-		return;
-	static unsigned events;
-	if (__atomic_fetch_add(&events, 1, __ATOMIC_RELAXED) >= 64)
-		return;
+		return false;
 	Dl_info image = {0};
-	if (dladdr(caller, &image) && image.dli_fname != NULL && image.dli_fbase != NULL) {
-		const char *base = strrchr(image.dli_fname, '/');
-		const uintptr_t offset = (uintptr_t)caller - (uintptr_t)image.dli_fbase;
-		if (base != NULL && !strcmp(base + 1, "QuartzCore") &&
-		    offset == 0x10af34 && !strcmp(operation, "upload"))
-			__atomic_store_n(&native_wall_uploaded_texture, (uintptr_t)texture, __ATOMIC_RELAXED);
+	const bool found = dladdr(caller, &image) && image.dli_fname != NULL &&
+	                   image.dli_fbase != NULL;
+	const char *base = found ? strrchr(image.dli_fname, '/') : NULL;
+	const char *image_name = !found ? "unknown" : base ? base + 1 : image.dli_fname;
+	const uintptr_t offset = found ? (uintptr_t)caller - (uintptr_t)image.dli_fbase : 0;
+	static unsigned events;
+	if (__atomic_fetch_add(&events, 1, __ATOMIC_RELAXED) < 64)
 		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller %s+0x%lx\\n",
 		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height],
-		        base ? base + 1 : image.dli_fname,
-		        (unsigned long)((uintptr_t)caller - (uintptr_t)image.dli_fbase));
-	} else {
-		fprintf(stderr, "SweetNativeMetal: WALLTEX %s %p %ux%u caller unknown\\n",
-		        operation, (void *)texture, (unsigned)[texture width], (unsigned)[texture height]);
-	}
+		        image_name, (unsigned long)offset);
+	return !strcmp(image_name, "QuartzCore") && offset == 0x10af34 &&
+	       !strcmp(operation, "upload");
 }
 
 /* Test only the adjacent opaque/source-over pair seen in the wallpaper trace. */
@@ -3208,6 +3207,10 @@ native_wall_skip_repeated_surface(const void *commands, const void *render,
 }
 
 /* Optional A/B experiment for the 23G90 image-upload site above. */
+@interface NSObject (SweetNativeWallUpload)
+- (BOOL)nativeQuartzCoreWallpaperUpload;
+@end
+
 static bool
 native_wall_skip_uploaded_overlay(const void *commands, const void *render,
                                   id const *colors, unsigned ncolors,
@@ -3252,7 +3255,8 @@ native_wall_skip_uploaded_overlay(const void *commands, const void *render,
 	previous_surface = rwd_surface_id(surface);
 	if (previous_surface != 0 || old_surface == 0 || old_commands != commands ||
 	    old_target != (uintptr_t)target ||
-	    (uintptr_t)source != __atomic_load_n(&native_wall_uploaded_texture, __ATOMIC_RELAXED))
+	    ![source respondsToSelector:@selector(nativeQuartzCoreWallpaperUpload)] ||
+	    ![source nativeQuartzCoreWallpaperUpload])
 		return false;
 
 	static unsigned skipped;
