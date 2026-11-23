@@ -2088,3 +2088,9 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Cover Sheet. Repeat-pass Metal test remains enabled; the per-texture
   Cover Sheet test was visually negative. App-launch overlay and both
   glass defects remain open.
+
+## 2026-11-23 20:31 — new session; device still on 2126
+
+- Remote Control on. USB logger PID 1960 still appending to `logs/usb-ios26-poster-readonly.txt`; COM7 present.
+- Sent `a71:shot`; new 180x400 frame `build/a71-2126-now.png` (ignored) shows the home screen with wallpaper,
+  phone clock 7:30. Waiting for the owner to open Cover Sheet, then repeat `a71:shot` to capture it.
