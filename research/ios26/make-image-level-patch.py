@@ -2850,6 +2850,11 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\t                   work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
       '\t                   work->vertexStart, work->vertexCount, work->indexBuffer != nil);\n'
       '\tnative_vblur_mask_copy([work->render render], work->textures, work->textureCount);\n'
+      '\tnative_vblur_capture([work->render render], work->color, work->colorCount, work->buffers,\n'
+      '\t                     work->bufferOffsets, work->count, work->textures, work->textureCount,\n'
+      '\t                     work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
+      '\t                     work->primitive, work->vertexStart, work->vertexCount, work->baseVertex,\n'
+      '\t                     work->indexBuffer, work->indexType, work->indexBufferOffset);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3794,6 +3799,131 @@ native_vblur_mask_copy(const void *render, id *textures, unsigned ntextures)
 		return;
 	[textures[4] release];
 	textures[4] = use;
+}
+
+#include <errno.h>
+#include <fcntl.h>
+/* VBCAP (opt-in, /var/local/sweet-native-vblur-capture, backboardd): the inputs of ONE
+ * variable_blur_frag* draw on a large target (App Library / Settings scroll edge, rt height
+ * >= 100, mask wider than 1) written to the pre-created /var/local/vblur-capture.bin (0666;
+ * backboardd runs as mobile), to be replayed offline on softpipe through the same backend
+ * (air_metal.c) and compared with the phone. Layout, little-endian u32 unless noted:
+ *   "VBCAP1\0\0", rt w h fmt, primitive vstart vcount baseVertex indexType nindices,
+ *   index bytes, then for vertex buffers 1 2 3: index, length, bytes (from the offset),
+ *   for fragment buffers 1 5 6: index, length, bytes, then textures 3 and 4: slot w h fmt
+ *   levels, each level w>>l * h>>l * 4 bytes. Once per process. */
+static void
+native_vblur_capture(const void *render, id const *colors, unsigned ncolors, id const *fbufs,
+                     const size_t *foffs, unsigned nfb, id const *textures, unsigned ntextures,
+                     id const *vbufs, const size_t *voffs, unsigned nvb, unsigned primitive,
+                     unsigned vstart, unsigned vcount, int base_vertex, id index_buffer,
+                     unsigned index_type, size_t index_offset)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-vblur-capture", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: VBCAP armed\\n");
+	});
+	static int done;
+	if (!enabled || __atomic_load_n(&done, __ATOMIC_RELAXED))
+		return;
+	char ffn[48] = "";
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	if (name != NULL)
+		memcpy(ffn, name->ffn, sizeof(ffn));
+	pthread_mutex_unlock(&native_drawlog_lock);
+	ffn[sizeof(ffn) - 1] = 0;
+	if (strncmp(ffn, "variable_blur_frag", 18) != 0)
+		return;
+	id rt = ncolors ? colors[0] : nil;
+	id src = ntextures > 3 ? textures[3] : nil, mask = ntextures > 4 ? textures[4] : nil;
+	if (rt == nil || src == nil || mask == nil || [rt height] < 100 || [mask width] < 2 || nvb < 4 ||
+	    vbufs[1] == nil || vbufs[2] == nil || vbufs[3] == nil)
+		return;
+	if (__atomic_exchange_n(&done, 1, __ATOMIC_RELAXED))
+		return;
+	int fd = open("/var/local/vblur-capture.bin", O_WRONLY | O_TRUNC);
+	if (fd < 0) {
+		fprintf(stderr, "SweetNativeMetal: VBCAP cannot open /var/local/vblur-capture.bin: %d\\n", errno);
+		return;
+	}
+	size_t total = 0;
+	bool ok = true;
+#define VB_PUT(ptr, len) do { if (ok && (len) && write(fd, (ptr), (len)) != (ssize_t)(len)) ok = false; total += (len); } while (0)
+#define VB_U32(v) do { uint32_t vb_u = (uint32_t)(v); VB_PUT(&vb_u, 4); } while (0)
+	VB_PUT("VBCAP1\0\0", 8);
+	VB_U32([rt width]); VB_U32([rt height]); VB_U32([rt pixelFormat]);
+	const unsigned isize = index_type == 1 ? 4 : 2;
+	VB_U32(primitive); VB_U32(vstart); VB_U32(vcount); VB_U32((uint32_t)base_vertex);
+	VB_U32(index_buffer != nil ? index_type : 0xffffffffu);
+	unsigned max_index = vstart + vcount;
+	if (index_buffer != nil) {
+		const uint8_t *ib = (const uint8_t *)[index_buffer contents] + index_offset;
+		VB_U32(vcount);
+		VB_PUT(ib, (size_t)vcount * isize);
+		max_index = 0;
+		for (unsigned k = 0; k < vcount; k++) {
+			unsigned v = isize == 4 ? ((const uint32_t *)ib)[k] : ((const uint16_t *)ib)[k];
+			if (v + 1 > max_index)
+				max_index = v + 1;
+		}
+		max_index += (unsigned)(base_vertex > 0 ? base_vertex : 0);
+	} else {
+		VB_U32(0);
+	}
+	const unsigned vb_index[3] = { 1, 2, 3 };
+	const size_t vb_len[3] = { (size_t)max_index * 48, 64, 32 };
+	for (unsigned i = 0; i < 3; i++) {
+		id b = vbufs[vb_index[i]];
+		const size_t blen = (size_t)[b length], off = voffs[vb_index[i]];
+		const size_t len = off < blen ? (vb_len[i] < blen - off ? vb_len[i] : blen - off) : 0;
+		VB_U32(vb_index[i]); VB_U32(len);
+		VB_PUT((const uint8_t *)[b contents] + off, len);
+	}
+	const unsigned fb_index[3] = { 1, 5, 6 };
+	for (unsigned i = 0; i < 3; i++) {
+		const unsigned k = fb_index[i];
+		id b = k < nfb ? fbufs[k] : nil;
+		size_t len = 0;
+		if (b != nil) {
+			const size_t blen = (size_t)[b length], off = foffs[k];
+			len = off < blen ? (blen - off < 64 ? blen - off : 64) : 0;
+		}
+		VB_U32(k); VB_U32(len);
+		if (len)
+			VB_PUT((const uint8_t *)[b contents] + foffs[k], len);
+	}
+	id tex[2] = { src, mask };
+	for (unsigned i = 0; i < 2; i++) {
+		id t = tex[i];
+		unsigned levels = (unsigned)[t mipmapLevelCount];
+		levels = levels == 0 ? 1 : levels > 12 ? 12 : levels;
+		VB_U32(i == 0 ? 3 : 4); VB_U32([t width]); VB_U32([t height]); VB_U32([t pixelFormat]); VB_U32(levels);
+		for (unsigned l = 0; l < levels && ok; l++) {
+			unsigned w = (unsigned)[t width] >> l, h = (unsigned)[t height] >> l;
+			w = w ? w : 1;
+			h = h ? h : 1;
+			uint8_t *px = malloc((size_t)w * h * 4);
+			if (px == NULL) {
+				ok = false;
+				break;
+			}
+			[t getBytes:px bytesPerRow:w * 4 fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:l];
+			VB_PUT(px, (size_t)w * h * 4);
+			free(px);
+		}
+	}
+#undef VB_U32
+#undef VB_PUT
+	fsync(fd);
+	close(fd);
+	fprintf(stderr, "SweetNativeMetal: VBCAP %s: %s rt %ux%u, %zu bytes, %s\\n", ok ? "written" : "FAILED", ffn,
+	        (unsigned)[rt width], (unsigned)[rt height], total, ok ? "ok" : "short write");
 }
 
 static void
