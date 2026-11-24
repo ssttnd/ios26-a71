@@ -2397,3 +2397,15 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   (`air2nir --ll` in the VM) before drawing any conclusion; not done yet.
 - Next: owner opens Settings, sends it to the background, opens it again (reopen hang) while the USB logger runs;
   then decode GLASSU against the shader's uniform layout.
+- **Settings reopen hang reproduced (owner, wifi-bb boot):** owner opened Settings, sent it to the background,
+  reopened: hang. Preferences[396] os_log (sweetdtlog=Preferences) is normal through the backgrounding
+  (06:43:03 local: `Deactivation reason added`, `invalidateConnection (appDidSuspend)`, `didEnterBackground`,
+  RunningBoard `unknown-NotVisible`), last line 06:43:06.577 (an XPC connection cancelled). **Nothing at all is
+  logged by Preferences on the reopen**: no crash, no scene activation. Guess (not proven): Preferences stays
+  suspended (RunningBoard task hold never released) or is never told to foreground. SpringBoard's os_log is not on
+  the console, and the kernel has no suspend/resume trace.
+- xnu 2131 (`b9a79b6`): wraps place_task_hold/release_task_hold (task_suspend, task_suspend2, pid_suspend and
+  resumes) and prints `SWEET TASKHOLD: hold|release NAME[pid] mode M -> kr: user_stop .. legacy .. pidsuspended ..
+  by CALLER[pid]` for processes named in sweetdtlog (at most 400 lines, no new boot-arg). Applies to the staged
+  task.c (no other patch touches it). Kernel CI `45417662219` (adreno=true). Plan: pack it with the wifi-bb
+  options, flash boot, owner repeats open/background/reopen; expect a hold by runningboardd without a release.
