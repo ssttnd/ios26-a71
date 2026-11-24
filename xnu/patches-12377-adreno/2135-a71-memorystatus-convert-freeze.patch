@@ -1,0 +1,44 @@
+A71: memorystatus commands runningboardd needs on a kernel without jetsam or freezer. 2134 logged
+CONVERT_MEMLIMIT_MB (28) -> EINVAL for every process and SET_PROCESS_IS_FREEZABLE (18) -> EINVAL; after
+the first, RunningBoard treats the app as not managed (never suspended, killed on reopen).
+
+diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
+index 539feda..188caab 100644
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -9527,6 +9527,35 @@ memorystatus_control(struct proc *p, struct memorystatus_control_args *args, int
+ 		error = 0;
+ 		sweet_memstat_log(p, args, 0, " (jetsam setter: no-op)");
+ 		break;
++#endif
++#if defined(ARM64_BOARD_CONFIG_SWEET) && !CONFIG_JETSAM
++	/*
++	 * 2135: runningboardd asks every process's limit in MB (2134 log: cmd 28 -> EINVAL ~300 times,
++	 * Settings included) and then stops managing the process. Answer as an iOS kernel with no
++	 * per-process limit: the limit given, or "no limit" for 0 / -1.
++	 */
++	case MEMORYSTATUS_CMD_CONVERT_MEMLIMIT_MB: {
++		proc_t cp = proc_find(args->pid);
++		if (cp == PROC_NULL) {
++			error = ESRCH;
++			break;
++		}
++		proc_rele(cp);
++		*ret = (int32_t)args->flags > 0 ? (int32_t)args->flags : INT32_MAX;
++		error = 0;
++		break;
++	}
++#endif
++#if defined(ARM64_BOARD_CONFIG_SWEET) && !CONFIG_FREEZE
++	/* 2135: no freezer here: opting in or out is accepted, nothing is freezable or frozen. */
++	case MEMORYSTATUS_CMD_SET_PROCESS_IS_FREEZABLE:
++		error = 0;
++		break;
++	case MEMORYSTATUS_CMD_GET_PROCESS_IS_FREEZABLE:
++	case MEMORYSTATUS_CMD_GET_PROCESS_IS_FROZEN:
++		*ret = 0;
++		error = 0;
++		break;
+ #endif
+ 	default:
+ 		error = EINVAL;
