@@ -2855,3 +2855,17 @@ on hold (state above).
   diagnostic shader only. No default blend behavior changed. Generated patch applied
   cleanly. Metal CI `45463281101` started, and the local watcher is set to verify and
   package its output. No new patch installed at this checkpoint.
+
+- CI `45463281101` passed at `6587fa1`, artifact `14953064298`, ZIP and six file hashes
+  verified. TWRP wrote and verified `build/a71-ios26-glass-no-blend.payload` (9,068,544 bytes,
+  SHA-256 `fc910e9b313e96f542a12411497e7c7e3c82dfaed70f3c85885fb29715b1adac`).
+  It retains the earlier control and GLASSPX flags and adds the no-blend flag. The 2135-pay
+  boot was verified and unchanged. USB line 865718 reports 11/11 applied with errno/sync/clear zero.
+- At 871899 the fullscreen control originally had RGB/alpha factors 1/19, add; the
+  opt-in bypass was 1. At 871984 its draw showed blend0=0, write0=0xf, no depth/stencil
+  or culling. The entire 256x234 color0 scissor stayed unchanged (871982/871985), again
+  with nonblack background later (872499/872501). Disabling blending did not restore
+  this draw. Next determine actual transformed vertex coverage and output-store execution,
+  separately from the small offscreen passes. No fresh owner screenshot yet on the bypass build.
+- Local `build/a71-ios26-glass-no-blend-off.payload` pauses just the no-blend flag by rename,
+  SHA-256 `dee5c2ffbc2cffe1bdb5c9c04deaf2c67d255d180c01911aee20821b1ce166cc`.
