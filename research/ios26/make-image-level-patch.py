@@ -2822,7 +2822,9 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\tnative_glass_uniform_trace(0, [work->render render], work->buffers, work->bufferOffsets, work->count,\n'
       '\t                           work->textures, work->textureCount);\n'
       '\tnative_vblur_trace([work->render render], work->color, work->colorCount, work->buffers,\n'
-      '\t                   work->bufferOffsets, work->count, work->textures, work->textureCount);\n'
+      '\t                   work->bufferOffsets, work->count, work->textures, work->textureCount,\n'
+      '\t                   work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
+      '\t                   work->vertexStart, work->vertexCount, work->indexBuffer != nil);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3513,7 +3515,9 @@ native_glass_uniform_trace(unsigned seq_hint, const void *render, id const *fbuf
  * 64 draws max. */
 static void
 native_vblur_trace(const void *render, id const *colors, unsigned ncolors, id const *fbufs,
-                   const size_t *foffs, unsigned nfb, id const *textures, unsigned ntextures)
+                   const size_t *foffs, unsigned nfb, id const *textures, unsigned ntextures,
+                   id const *vbufs, const size_t *voffs, unsigned nvb, unsigned vstart, unsigned vcount,
+                   bool indexed)
 {
 	static dispatch_once_t once;
 	static bool enabled;
@@ -3561,6 +3565,29 @@ native_vblur_trace(const void *render, id const *colors, unsigned ncolors, id co
 			               (unsigned)[t sampleCount]);
 	}
 	fprintf(stderr, "%s\\n", line);
+	/* The mask coordinate is texcoord1 = in.texcoord1 * texmat[1].xy + texmat[1].zw (vertex
+	 * buffer 3 holds texmat, declared float4 but read as two); vertex inputs 0-2 come from
+	 * the vertex buffers. First 6 main-pass draws: 32 floats of vertex buffers 0-3. */
+	if (!down && n < 6) {
+		fprintf(stderr, "SweetNativeMetal: VBLUR %u verts start %u count %u indexed %d vbufs %u\\n", n, vstart,
+		        vcount, (int)indexed, nvb);
+		for (unsigned b = 0; b < nvb && b < 4; b++) {
+			if (vbufs[b] == nil) {
+				fprintf(stderr, "SweetNativeMetal: VBLUR %u vb%u -\\n", n, b);
+				continue;
+			}
+			const uint8_t *vbase = (const uint8_t *)[vbufs[b] contents];
+			const size_t vlen = (size_t)[vbufs[b] length], voff = voffs[b];
+			at = snprintf(line, sizeof(line), "SweetNativeMetal: VBLUR %u vb%u (%zu@%zu):", n, b, vlen, voff);
+			for (unsigned k = 0; vbase != NULL && k < 32 && voff + (k + 1) * 4 <= vlen && at > 0 &&
+			                     (size_t)at < sizeof(line); k++) {
+				float v;
+				memcpy(&v, vbase + voff + k * 4, sizeof(v));
+				at += snprintf(line + at, sizeof(line) - at, " %.4g", v);
+			}
+			fprintf(stderr, "%s\\n", line);
+		}
+	}
 	if (nfb > 1 && fbufs[1] != nil) {
 		const uint8_t *base = (const uint8_t *)[fbufs[1] contents];
 		const size_t len = (size_t)[fbufs[1] length], off = foffs[1];
