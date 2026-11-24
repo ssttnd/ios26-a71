@@ -2725,3 +2725,18 @@ on hold (state above).
   changes across the corresponding draw. The center SDF tile is all zero in all three samples.
   These are only 16x16 regions and none yet has a disappearance marker on this boot. They do not
   show whether the full SDF or actual glass coverage is empty.
+
+## 2026-11-24 — marked GLASSPX repro
+
+- Owner marked disappearance at USB line 793167 on the readback build. GLASSU 15 and 16
+  surround the marker and both request the same glass background with radius 3.2. The
+  nearest sampled draw after the marker (793388–793393) had nonblack source data and
+  nonzero SDF center data (first RGBA16F texel includes distance -3.25 and alpha 1).
+  Both destination 16x16 tile hashes were identical before/after this draw, repeated
+  at 794140–794145. This rules out a completely empty SDF for those draws, but the SDF
+  center is not necessarily the location sampled by that target tile.
+- `a4c9cbd` expands the optional probe to the full clipped render region and logs the
+  count of negative-distance, positive-alpha SDF texels. The probe retains its
+  three-second sampling buckets and bounds each read to 1.5 Mi texels. The generated patch
+  passed apply check. Metal CI `45457948390` was in progress. The new build has not been
+  installed, and no visual fix was verified.
