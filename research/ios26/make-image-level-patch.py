@@ -2354,8 +2354,22 @@ null_texture_view(struct rwa_device *device)
       '   struct pipe_blend_state blend_tmpl;   /* what blend was made from */\n'
       '   void *blend_straight;                 /* rgb source factor SRC_ALPHA, made on demand */\n'),
      ('   render->blend = device->pipe->create_blend_state(device->pipe, &blend);\n',
-      '   render->blend = device->pipe->create_blend_state(device->pipe, &blend);\n'
-      '   render->blend_tmpl = blend;\n'),
+      r'''   if (render->glass_control) {
+      FILE *flag = fopen("/var/local/sweet-native-glass-control-no-blend", "r");
+      fprintf(stderr, "SweetNativeMetal: GLASS control blend %p enable %u rgb %u/%u/%u alpha %u/%u/%u bypass %u\n",
+              (void *)render, (unsigned)blend.rt[0].blend_enable, (unsigned)blend.rt[0].rgb_src_factor,
+              (unsigned)blend.rt[0].rgb_dst_factor, (unsigned)blend.rt[0].rgb_func,
+              (unsigned)blend.rt[0].alpha_src_factor, (unsigned)blend.rt[0].alpha_dst_factor,
+              (unsigned)blend.rt[0].alpha_func, flag != NULL);
+      if (flag) {
+         fclose(flag);
+         blend.rt[0].blend_enable = false;
+         out.blend_enabled_mask &= ~1u;
+      }
+   }
+   render->blend = device->pipe->create_blend_state(device->pipe, &blend);
+   render->blend_tmpl = blend;
+'''),
      ('   if (render->blend) {\n      pipe->bind_blend_state(pipe, NULL);\n      pipe->delete_blend_state(pipe, render->blend);\n',
       '   if (render->blend_straight) {\n'
       '      pipe->bind_blend_state(pipe, NULL);\n'
@@ -2948,7 +2962,8 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
      # it hands out is an ordinary allocation of the device's, so aliasing never shares memory
      # (contents of an aliased resource are undefined in Metal anyway).
      ('\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {\n',
-      '\tconst bool probe_glass = native_glass_pixels_should_sample([work->render render]);\n'
+      '\tconst bool probe_glass = native_glass_pixels_should_sample([work->render render],\n'
+      '\t                                                           work->colorCount ? work->color[0] : nil);\n'
       '\tif (probe_glass)\n'
       '\t\tnative_glass_pixels("before", work->color, work->colorCount, work->textures, work->textureCount,\n'
       '\t\t                    work->nativeScissor, work->nativeFlags);\n'
@@ -3631,7 +3646,7 @@ native_glass_uniform_trace(const void *render, id const *colors, unsigned ncolor
 /* Opt-in paired readback. Keep it separate from GLASSU since readback can
  * synchronize GPU work and change the timing of the symptom. */
 static bool
-native_glass_pixels_should_sample(const void *render)
+native_glass_pixels_should_sample(const void *render, id target)
 {
 	static dispatch_once_t once;
 	static bool enabled;
@@ -3653,10 +3668,12 @@ native_glass_pixels_should_sample(const void *render)
 	struct timespec now;
 	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
 		return false;
-	static uint64_t last_tick;
+	/* A full-screen draw should not consume the offscreen sample budget. */
+	const unsigned large_target = [target height] >= 1200;
+	static uint64_t last_tick[2];
 	const uint64_t tick = (uint64_t)now.tv_sec / 3 + 1;
-	uint64_t last = __atomic_load_n(&last_tick, __ATOMIC_RELAXED);
-	return last < tick && __atomic_compare_exchange_n(&last_tick, &last, tick, false,
+	uint64_t last = __atomic_load_n(&last_tick[large_target], __ATOMIC_RELAXED);
+	return last < tick && __atomic_compare_exchange_n(&last_tick[large_target], &last, tick, false,
 	                                                 __ATOMIC_RELAXED, __ATOMIC_RELAXED);
 }
 
