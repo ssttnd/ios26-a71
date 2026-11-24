@@ -24,8 +24,9 @@ checked on the phone; the dated history is in `NOTES.md`. Keep this file current
 - Python: run standalone tools with `python -I -X utf8`. Use `python -X utf8` for the boot packer so it can import
   sibling modules from `tools/`. In Git Bash, run `tools/a71-payload.py` with
   `MSYS_NO_PATHCONV=1`, or `/System/...` turns into `C:/Program Files/Git/System/...`.
-- Bash heredocs: `\\n` reaches Python as `\n`, i.e. a real newline inside generated C strings (this broke xnu 2122
-  once). Use raw strings (`r'''...'''`) or `chr(92)` in generator scripts.
+- **AGENTS.md rule 1:** no backslash escapes in heredocs or inline `python -c`/`echo`: Git Bash mangles them into
+  real newlines/tabs inside generated C strings (broke xnu 2122 and the 2026-11-24 VBLUR edit). Write the content
+  to a file with the file tool and run that file. Claude's hook `tools/hooks/heredoc-guard.py` blocks such calls.
 
 ## Phone states and how to move between them
 

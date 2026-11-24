@@ -1,5 +1,12 @@
 # Working on ios-a71
 
+**RULE 1, NO EXCEPTIONS: never put backslash escapes (`\n`, `\t`, `\\`, `\"` ...) in a shell heredoc or inline
+`python -c` / `echo`.** In this Git Bash they are mangled on the way and land in C strings and patches as real
+newlines and tabs (broke xnu 2122 and the Metal VBLUR edit on 2026-11-24). Write such content into a file with the
+file-writing tool (scratchpad), then run or read that file. For Claude, `.claude/settings.json` runs
+`tools/hooks/heredoc-guard.py`, which blocks these Bash calls; Codex and other agents have no guard, so obey this
+rule by hand.
+
 - Every new chat or session (Claude, ChatGPT/Codex) starts by turning on Remote Control for that chat. Do it once,
   only at the very start of a new chat, not again later in the same chat.
 - Read `docs/WORKFLOW.md` (how to drive the phone, logs, flashing, packages, CI, the PC reboot-to-TWRP command)

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I -X utf8 \"$CLAUDE_PROJECT_DIR/tools/hooks/heredoc-guard.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
