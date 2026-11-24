@@ -73,3 +73,48 @@ if '#include "softpipe/sp_public.h"' not in source:
 #endif
 """ + screen)
     backend.write_text(source)
+
+source = backend.read_text()
+if '#include "llvmpipe/lp_public.h"' not in source:
+    after = '#include "null/null_sw_winsys.h"\n#endif\n'
+    choose = "      device->screen = softpipe_create_screen(null_sw_create());\n"
+    if any(source.count(text) != 1 for text in (after, choose)):
+        raise SystemExit("unexpected host screen initialization")
+    source = source.replace(after, after + """
+#if defined(GALLIUM_LLVMPIPE) && !defined(__APPLE__)
+#include "llvmpipe/lp_public.h"
+#endif
+""")
+    source = source.replace(choose, """#ifdef GALLIUM_LLVMPIPE
+      device->screen = llvmpipe_create_screen(null_sw_create());
+#else
+""" + choose + "#endif\n")
+    backend.write_text(source)
+
+source = backend.read_text()
+if "unsigned replay_io_options" not in source:
+    lower = """   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
+            type_size_vec4, nir_lower_io_use_interpolated_input_intrinsics);
+"""
+    if source.count(lower) != 1:
+        raise SystemExit("unexpected AIR I/O lowering")
+    source = source.replace(lower, """   unsigned replay_io_options = nir_lower_io_use_interpolated_input_intrinsics;
+#if defined(GALLIUM_LLVMPIPE) && !defined(__APPLE__)
+   /* Gallivm interpolates load_input using the varying declarations. */
+   if (!strncmp(screen->get_name(screen), "llvmpipe", 8))
+      replay_io_options = 0;
+#endif
+   NIR_PASS(_, nir, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
+            type_size_vec4, replay_io_options);
+""")
+    backend.write_text(source)
+
+meson = air.parents[1] / "gallium/drivers/freedreno/meson.build"
+source = meson.read_text()
+before, start, library = source.partition("libredwoodair = shared_library(")
+if "driver_llvmpipe" not in library:
+    dependency = "driver_softpipe, driver_freedreno,"
+    if not start or library.count(dependency) != 1:
+        raise SystemExit("unexpected libredwoodair dependencies")
+    library = library.replace(dependency, dependency + " driver_llvmpipe,")
+    meson.write_text(before + start + library)

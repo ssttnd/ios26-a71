@@ -147,6 +147,10 @@ python -X utf8 tools/a71-pack-ios26.py --kernel KERNEL --shim research/a71-boot-
   viewport, scissor, blend, and function specialization state. Softpipe's NIR-to-TGSI path currently aborts
   on the half-float texture result in `variable_blur_frag_lph`. The `_lpf` variant takes float32 scalars in
   fragment buffers 5 and 6, so it cannot directly substitute for that capture.
+- To try the same harness with LLVMpipe on Ubuntu 24.04, install `llvm-dev` and `libzstd-dev` in the VM,
+  rerun the installer, then reconfigure Mesa with `-Dllvm=enabled -Dgallium-drivers=freedreno,softpipe,llvmpipe`.
+  The harness selects LLVMpipe in that build. The FP32 control can distinguish solid masks and mip levels,
+  but the gradient test reads a constant mip, and the matching FP16 shader currently crashes in LLVM 18.
 
 ## Diagnostics built into the Metal driver
 

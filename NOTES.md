@@ -2602,3 +2602,30 @@ on hold (state above).
   conclusion about the cause of the phone's blur line from these results.
 - At session start `codex remote-control start` failed because the installed CLI reports an incomplete
   local package.
+
+## 2026-11-24 — VBCAP installed and armed
+
+- Used `a71:recovery` to enter TWRP. The first 22,478,848 bytes of on-device boot matched 2135-pay
+  (`492b73ecf4def762fb4d90ebb95cbb43ab333adbfc6d20ca8718c1acbbe2a203`). TWRP had no HFS fsck.
+  Read only, with userdata unmounted: local scratch checker `research/check-live-hfs-catalog.py`
+  walked all 31,946 catalog leaves. Volume attributes `0x80004000` included the HFS inconsistent bit.
+  Leaf links and record offsets passed. Walked 1,020,392 records versus 1,020,431 in the tree header and
+  found 11 data forks whose logical size exceeded their allocated blocks. This was a catalog check,
+  not a full volume check. No filesystem repair.
+- Owner explicitly authorized VBCAP installation after the scan. Saved the six live bundle files and
+  env file in ignored `research/pre-vbcap/`. Local rollback package
+  `build/a71-ios26-vbcap-rollback.payload` SHA-256
+  `ca60680fd98fa53ec79d3dc78ed3b24be9bbb5cb2deec45ad22f2a580b489343` restores those files and
+  removes the capture flag. Rollback package was not used.
+- In TWRP the VBCAP payload readback SHA-256 matched
+  `882173b9588a14342591277cd69a82f3cbaedda3b9e928fcaf99fd92451d2720`. Reboot reached iOS on USB.
+  The active log `logs/usb-ios26-wifi-bb.txt` showed `finished 13/13 errno=0 sync=0 clear=0` and
+  `backboardd ... VBCAP armed`. 1x244 mask draws happened and are excluded by the capture filter.
+  Waiting for the owner to open and scroll App Library. Check for `VBCAP written` before rebooting
+  back to TWRP. Read the capture into ignored storage using `a71-hfs-get.py`.
+- VM: built the same harness against LLVMpipe with LLVM 18. LLVMpipe needs plain `load_input` instead
+  of the explicit barycentric intrinsics used by freedreno. With that change, FP32 synthetic source
+  mips of red/green/blue produced red with the gradient mask and blue with a solid opaque mask.
+  This verifies a change in selected mip for the solid mask but does not demonstrate correct
+  interpolated mask coordinates. The actual FP16 shader segfaults in LLVM 18 at
+  `llvm::Type::getPrimitiveSizeInBits()` after stage link. Both software tests are synthetic.
