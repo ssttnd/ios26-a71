@@ -2409,3 +2409,25 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   by CALLER[pid]` for processes named in sweetdtlog (at most 400 lines, no new boot-arg). Applies to the staged
   task.c (no other patch touches it). Kernel CI `45417662219` (adreno=true). Plan: pack it with the wifi-bb
   options, flash boot, owner repeats open/background/reopen; expect a hold by runningboardd without a release.
+
+## 2026-11-24 — Settings reopen: Preferences is never suspended; VBLUR first try
+
+- Installed in TWRP (sent there with `a71:recovery`): package `build/a71-ios26-vblur.payload` (Metal CI
+  `45419082614` = d1a1aa2 VBLUR logger + flag `/var/local/sweet-native-vblur`) VERIFY OK `fbddd6cc...`, and boot
+  `build/a71-ios26-2131-wifi.img` (kernel CI `45417662219`, kernel `c0066ed6...` matches SHA256SUMS; wifi-bb options
+  with `sweetpayload=1` instead of `sweetusbshot=1` for room, 601 bytes) VERIFY OK `752b2157...`. First boot after the
+  flash did not reach USB for a few minutes, then booted; payload 11/11 errno=0, Metal up, VBLUR enabled.
+- **Settings reopen hang, 2131 trace (owner repeated: hung):** the only TASKHOLD line for Preferences was
+  `release Preferences[400] mode 1 -> 5: user_stop 0 legacy 0 pidsuspended 0 by runningboardd[27]`: on reopen
+  runningboardd's pid_resume fails with KERN_FAILURE because Preferences was never pid-suspended, and no hold of any
+  kind was placed on it when it went to the background. So either runningboardd never calls pid_suspend, or the
+  call is refused before task_pidsuspend (posix/entitlement check, MAC check, or the macOS-config taskgated upcall
+  in pid_suspend: this kernel is XNU_TARGET_OS_OSX). Guess (not proven): the failed resume makes RunningBoard /
+  FrontBoard treat the process as broken and never foreground it.
+- xnu 2132 (`69f9858`): logs `SWEET PIDSR: pid_suspend|pid_resume(NAME[pid]) -> errno by CALLER[pid] uid N` for
+  sweetdtlog processes. Kernel CI `45422080312`.
+- VBLUR first try: only `variable_blur_downsample_frag_lph` (PBGRAXm_TvrdA2Xhf_Isrc) draws on the lock screen,
+  rendering into its own 256x160 (5 levels) or 224x88 (3 levels) BGRA texture (slot 3); they used up the shared
+  64-line limit. `f763b05` gives the chain its own limit of 8; Metal CI `45421629584`.
+- Next visit: boot with 2132 + package with the f763b05 bundle; owner opens the scroll-edge blur screen and repeats
+  the Settings reopen.
