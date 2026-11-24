@@ -1422,6 +1422,30 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          return nir_vec(&c->b, ch, n);'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('''      out->stream_mask |= 1u << d->buffer_index;
+''',
+      '''      out->stream_mask |= 1u << d->buffer_index;
+      /* VDESC (with /var/local/sweet-native-vblur): what CoreAnimation's variable blur
+       * vertex function fetches, attribute by attribute. Its mask coordinate comes from
+       * attribute 2 (texcoord1); the scroll-edge blur reads the mask as if that
+       * coordinate never left the top (2026-11-24). */
+      if (vname && !strncmp(vname, "variable_blur_vert", 18)) {
+         static int vdesc = -1;
+         static unsigned vdesc_told;
+         if (vdesc < 0) {
+            FILE *flag = fopen("/var/local/sweet-native-vblur", "r");
+            vdesc = flag != NULL;
+            if (flag)
+               fclose(flag);
+         }
+         if (vdesc && __atomic_fetch_add(&vdesc_told, 1, __ATOMIC_RELAXED) < 12)
+            fprintf(stderr, "SweetNativeMetal: VDESC %s attr %u (%s) loc %u: mtl fmt %u off %u buf %u -> "
+                    "pipe %s off %u stride %u vb %u\\n", vname, a->index, a->name ? a->name : "?", loc,
+                    d->format, d->offset, d->buffer_index, util_format_short_name(f->pipe),
+                    (unsigned)out->element[loc].src_offset, (unsigned)out->element[loc].src_stride,
+                    (unsigned)out->element[loc].vertex_buffer_index);
+      }
+'''),
      ('''   unsigned old_images=device->native_pending_images[stage];
 ''',
       '''   if (stage == PIPE_SHADER_COMPUTE && strstr(name, "VariableBlurrer::")) {

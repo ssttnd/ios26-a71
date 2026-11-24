@@ -2419,7 +2419,34 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     }
     unsigned old_images=device->native_pending_images[stage];
     if (device->in_command && device->native_images_valid[stage] &&
-@@ -5383,6 +5900,10 @@
+@@ -5314,6 +5831,26 @@
+          .instance_divisor = divisor,
+       };
+       out->stream_mask |= 1u << d->buffer_index;
++      /* VDESC (with /var/local/sweet-native-vblur): what CoreAnimation's variable blur
++       * vertex function fetches, attribute by attribute. Its mask coordinate comes from
++       * attribute 2 (texcoord1); the scroll-edge blur reads the mask as if that
++       * coordinate never left the top (2026-11-24). */
++      if (vname && !strncmp(vname, "variable_blur_vert", 18)) {
++         static int vdesc = -1;
++         static unsigned vdesc_told;
++         if (vdesc < 0) {
++            FILE *flag = fopen("/var/local/sweet-native-vblur", "r");
++            vdesc = flag != NULL;
++            if (flag)
++               fclose(flag);
++         }
++         if (vdesc && __atomic_fetch_add(&vdesc_told, 1, __ATOMIC_RELAXED) < 12)
++            fprintf(stderr, "SweetNativeMetal: VDESC %s attr %u (%s) loc %u: mtl fmt %u off %u buf %u -> "
++                    "pipe %s off %u stride %u vb %u\n", vname, a->index, a->name ? a->name : "?", loc,
++                    d->format, d->offset, d->buffer_index, util_format_short_name(f->pipe),
++                    (unsigned)out->element[loc].src_offset, (unsigned)out->element[loc].src_stride,
++                    (unsigned)out->element[loc].vertex_buffer_index);
++      }
+       out->stream_count = MAX2(out->stream_count, d->buffer_index + 1);
+       out->stride[d->buffer_index] = stride;
+       out->bytes[d->buffer_index] = MAX2(out->bytes[d->buffer_index],
+@@ -5383,6 +5920,10 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2430,7 +2457,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6469,6 +6990,7 @@
+@@ -6469,6 +7010,7 @@
                                 &out.color_write_masks, why, why_size))
        goto fail;
     render->blend = device->pipe->create_blend_state(device->pipe, &blend);
@@ -2438,7 +2465,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* The pipeline's own depth/stencil state, and it is the ZEROED one on purpose: it is
      * what a draw gets when the caller passes no rwa_depth_stencil, which is Metal's
      * state before an application has set one. depth_enabled 0 is "no test", not
-@@ -6509,12 +7031,12 @@
+@@ -6509,12 +7051,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2454,7 +2481,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6633,6 +7155,10 @@
+@@ -6633,6 +7175,10 @@
        pipe->bind_fs_state(pipe, NULL);
        pipe->delete_fs_state(pipe, render->fs_cso);
     }
@@ -2465,7 +2492,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->blend) {
        pipe->bind_blend_state(pipe, NULL);
        pipe->delete_blend_state(pipe, render->blend);
-@@ -6645,6 +7171,9 @@
+@@ -6645,6 +7191,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2475,7 +2502,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7124,7 +7653,24 @@
+@@ -7124,7 +7673,24 @@
     pipe->set_scissor_states(pipe,0,1,&scissor);
     pipe->set_blend_color(pipe,&(struct pipe_blend_color){.color={draw->native_blend[0],draw->native_blend[1],draw->native_blend[2],draw->native_blend[3]}});
  
@@ -2501,7 +2528,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* The caller's depth/stencil state, or the pipeline's zeroed one, which is Metal's
      * behaviour with no MTLDepthStencilState set: no test and no write.
      */
-@@ -7137,7 +7683,58 @@
+@@ -7137,7 +7703,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2561,7 +2588,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7811,10 @@
+@@ -7214,6 +7831,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2572,7 +2599,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7908,7 @@
+@@ -7307,6 +7928,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
