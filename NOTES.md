@@ -2431,3 +2431,11 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   64-line limit. `f763b05` gives the chain its own limit of 8; Metal CI `45421629584`.
 - Next visit: boot with 2132 + package with the f763b05 bundle; owner opens the scroll-edge blur screen and repeats
   the Settings reopen.
+- Owner (2026-11-24, 2131 boot): **flicker gone** (torn / wallpaper-only frames; xnu 2130 frame gate 400 ms works).
+  Brightness flash when lowering Cover Sheet still there (a039da5 surface tagging did not fix it; low priority).
+- Owner wants Apple ID and all Apple apps. Observed in the 2131 boot: mobileactivationd (root) finds no
+  `.../Library/activation_records` (getattrlist e=2): the phone is NOT activated. akd, adid, apsd, identityservicesd,
+  appstored, fairplaydeviceidentityd start; fairplayd.H2 is removed from launchd (since 2026-11-19). iOS 16 port:
+  Apple ID sign-in failed with "MID is invalid" (anisette Machine ID from adid). Real activation, App Store
+  downloads (FairPlay decryption), iMessage/FaceTime (IDS validation) depend on Apple-hardware identity this phone
+  does not have; not investigated further yet.
