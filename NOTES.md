@@ -2575,3 +2575,30 @@ on hold (state above).
    a straight horizontal cut.
 - VM build-sw second attempt: fails on `xf86drm.h: No such file or directory` (freedreno drm). Fix: in the VM
   `sudo apt-get install -y libdrm-dev`, then rerun the ninja command above with the venv on PATH.
+
+## 2026-11-24 — VBCAP package prepared and host replay smoke test
+
+- Metal CI `45448890404` passed at `6fe80e1`. Artifact `14948301117`, ZIP digest and all six bundle file
+  hashes verified. Files are under ignored `research/ci-45448890404/`. Built
+  `build/a71-ios26-vbcap.payload`, 13 entries, 9,064,448 bytes, SHA-256
+  `882173b9588a14342591277cd69a82f3cbaedda3b9e928fcaf99fd92451d2720`. It contains the bundle, capture flag,
+  empty 0666 capture file, and `FD_MESA_DEBUG=sysmem`. Local 2135-pay boot image SHA-256
+  `492b73ecf4def762fb4d90ebb95cbb43ab333adbfc6d20ca8718c1acbbe2a203` verified.
+- A71 was present on COM7, with no ADB device. Recent USB output shows 2/2 payload entries from the preceding
+  boot and repeated iOSRoot HFS inconsistency messages at `hfs_cnode.c:946`. The same warning occurs early in
+  this log, before VBCAP. The code detects an invalid vnode type or inconsistent fork/block metadata there.
+  The affected files and the state of the volume are unknown. No reboot, flash, VBCAP package install or
+  filesystem repair in this session. Before replacing the live bundle, check iOSRoot read-only in TWRP and
+  confirm the on-device boot hash. A repair or root replacement requires owner approval.
+- VM: installed libdrm-dev and reconfigured Meson so it picks up the include path for drm.h. The host-only
+  installer in `tools/install-vbcap-replay.py` enables softpipe, handles the arm64-only CPU counter and
+  supplies link stubs for the A71 transport. Ninja built the harness with `tools/vbcap-replay.inc`.
+- Smoke test with synthetic VBCAP1 and local QuartzCore metallib: real `_lph` shader links, then softpipe
+  aborts in `nir_to_tgsi.c:2864` because the sampled result type is float16. The `_lpf` control with float32
+  scalar buffers draws and yields a 16x16 PAM with opaque black under a forced fade factor of 1. This
+  confirms geometry and readback but not correct sampling. The runtime reports missing texture 9, the
+  optional noise texture, which VBCAP1 does not capture. Next host work is to get a nonzero synthetic
+  sample and run the half-float shader on a software backend that supports its texture results. No
+  conclusion about the cause of the phone's blur line from these results.
+- At session start `codex remote-control start` failed because the installed CLI reports an incomplete
+  local package.

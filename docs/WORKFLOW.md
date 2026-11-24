@@ -138,6 +138,15 @@ python -X utf8 tools/a71-pack-ios26.py --kernel KERNEL --shim research/a71-boot-
   `AIR2NIR_FC_ONES=1` sweep. A pipeline specialised with other values can still fail on the phone.
 - System metallibs from the reference root (Apple files, ignored, never commit): `research/metallibs/` (index.txt),
   wrapped/fat ones such as QuartzCore's in `research/metallibs-wrapped/`.
+- To build the VBCAP replay harness in the Linux VM, install `libdrm-dev` before configuring Mesa. Use the
+  donor AIR/Metal-patched Mesa tree, run `python3 install-vbcap-replay.py mesa-25.0.7` with the two files from
+  `tools/` side by side, and configure Meson with `-Dgallium-drivers=freedreno,softpipe`. Put the VM's
+  `~/w/venv/bin` on PATH for Meson and Ninja. Build `src/gallium/drivers/freedreno/air_metal_test`.
+  Its invocation is `air_metal_test --vbcap LIB VERT FRAG CAPTURE OUT.pam`. This harness renders the captured
+  geometry and texture levels into a cleared target. VBCAP1 omits noise texture slot 9 and the original
+  viewport, scissor, blend, and function specialization state. Softpipe's NIR-to-TGSI path currently aborts
+  on the half-float texture result in `variable_blur_frag_lph`. The `_lpf` variant takes float32 scalars in
+  fragment buffers 5 and 6, so it cannot directly substitute for that capture.
 
 ## Diagnostics built into the Metal driver
 
