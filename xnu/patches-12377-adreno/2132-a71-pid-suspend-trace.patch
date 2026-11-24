@@ -1,0 +1,58 @@
+A71 diagnostic: log the result of pid_suspend and pid_resume for processes named in sweetdtlog, with the
+caller and its uid (at most 200 lines). 2131 showed runningboardd's pid_resume of a backgrounded Settings
+failing with KERN_FAILURE because it was never pid-suspended, and no task hold on the way to the background
+(2026-11-24). This tells "never called" from "refused".
+
+diff --git a/bsd/kern/kern_proc.c b/bsd/kern/kern_proc.c
+index 8dd7d2d..6b1ddaa 100644
+--- a/bsd/kern/kern_proc.c
++++ b/bsd/kern/kern_proc.c
+@@ -6356,6 +6356,32 @@ trfpout:
+ 	return error;
+ }
+ 
++/*
++ * 2132 (A71): the result of pid_suspend / pid_resume for processes named in sweetdtlog, with the
++ * caller. 2131 showed runningboardd's pid_resume of a backgrounded Settings failing with
++ * KERN_FAILURE (never pid-suspended) and no task hold at all on the way to the background
++ * (2026-11-24): this tells "pid_suspend never called" from "pid_suspend refused" (and why).
++ */
++extern bool sweet_dtlog_listed(const char *name);
++static int _Atomic sweet_pid_sr_logged;
++
++static void
++sweet_pid_sr_log(const char *call, proc_t target, int pid, int error)
++{
++	char name[MAXCOMLEN + 1] = "?";
++	if (target != PROC_NULL) {
++		proc_name(proc_pid(target), name, sizeof(name));
++	}
++	if (target == PROC_NULL || !sweet_dtlog_listed(name)) {
++		return;
++	}
++	if (os_atomic_inc(&sweet_pid_sr_logged, relaxed) > 200) {
++		return;
++	}
++	printf("SWEET PIDSR: %s(%s[%d]) -> %d by %s[%d] uid %d\n", call, name, pid, error,
++	    proc_best_name(current_proc()), proc_selfpid(), (int)kauth_cred_getuid(kauth_cred_get()));
++}
++
+ kern_return_t
+ pid_suspend(struct proc *p __unused, struct pid_suspend_args *args, int *ret)
+ {
+@@ -6437,6 +6463,7 @@ pid_suspend(struct proc *p __unused, struct pid_suspend_args *args, int *ret)
+ 	task_deallocate(target);
+ 
+ out:
++	sweet_pid_sr_log("pid_suspend", targetproc, pid, error);
+ 	if (tfpport != IPC_PORT_NULL) {
+ 		ipc_port_release_send(tfpport);
+ 	}
+@@ -6675,6 +6702,7 @@ pid_resume(struct proc *p __unused, struct pid_resume_args *args, int *ret)
+ 	task_deallocate(target);
+ 
+ out:
++	sweet_pid_sr_log("pid_resume", targetproc, pid, error);
+ 	if (tfpport != IPC_PORT_NULL) {
+ 		ipc_port_release_send(tfpport);
+ 	}
