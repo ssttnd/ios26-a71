@@ -1442,8 +1442,26 @@ native_glass_force_color(nir_builder *b, nir_intrinsic_instr *in, void *unused)
    return true;
 }
 
+/* Keep the Glass shader's arithmetic and rounding intact, but feed its color
+ * exports to A6xx as full-register values before fixed-function blending. */
+static bool
+native_glass_widen_color(nir_builder *b, nir_intrinsic_instr *in, void *unused)
+{
+   if (in->intrinsic != nir_intrinsic_store_output ||
+       nir_intrinsic_src_type(in) != nir_type_float16)
+      return false;
+   const unsigned location = nir_intrinsic_io_semantics(in).location;
+   if (location < FRAG_RESULT_DATA0 || location >= FRAG_RESULT_DATA0 + 8)
+      return false;
+   b->cursor = nir_before_instr(&in->instr);
+   nir_src_rewrite(&in->src[0], nir_f2f32(b, in->src[0].ssa));
+   nir_intrinsic_set_src_type(in, nir_type_float32);
+   return true;
+}
+
 static void *
-make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_control, char *why, size_t why_size)
+make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_color,
+               bool glass_control, char *why, size_t why_size)
 '''),
      ('''   if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}
 
@@ -1455,6 +1473,8 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_control, c
       else
          fprintf(stderr, "SweetNativeMetal: GLASS control found no color0 store\n");
    }
+   if (glass_color)
+      nir_shader_intrinsics_pass(clone, native_glass_widen_color, nir_metadata_control_flow, NULL);
 
    struct pipe_shader_state templ'''),
      ('''   render->fs_cso = make_stage_cso(device, fs, why, why_size);
@@ -1479,10 +1499,12 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_control, c
       if (flag)
          fclose(flag);
    }
-   render->fs_cso = make_stage_cso(device, fs, glass_control, why, why_size);
+   const char *fragment_name = fragment_entry ? fragment_entry : render->finfo.entry_point;
+   const bool glass_color = fragment_name && !strncmp(fragment_name, "glass_", 6);
+   render->fs_cso = make_stage_cso(device, fs, glass_color, glass_control, why, why_size);
    if (!render->fs_cso)
       goto fail;
-   render->vs_cso = make_stage_cso(device, vs, false, why, why_size);
+   render->vs_cso = make_stage_cso(device, vs, false, false, why, why_size);
 '''),
      ('''   pipe->bind_depth_stencil_alpha_state(pipe, draw->depth_stencil ? draw->depth_stencil->cso
                                                                   : render->dsa);
