@@ -2720,3 +2720,8 @@ on hold (state above).
 - Local rollback to the GLASSU-only bundle is prepared, SHA-256
   `2cd5944eacb6ce355572a3e1629e754b971e8bfbbab21cb203f92ba1bf280886`
   (`build/a71-ios26-glass-pixels-rollback.payload`). It also pauses the GLASSPX flag by rename.
+- GLASSPX logs at 790028–790033, 791714–791719 and 791761–791766 show successful reads.
+  Source and destination color0 values vary between samples, but neither sampled destination tile
+  changes across the corresponding draw. The center SDF tile is all zero in all three samples.
+  These are only 16x16 regions and none yet has a disappearance marker on this boot. They do not
+  show whether the full SDF or actual glass coverage is empty.
