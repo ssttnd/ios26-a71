@@ -2825,3 +2825,18 @@ on hold (state above).
   `sweet-native-glass-control-no-tests` to bypass depth/stencil only on the isolated
   control draw. First compare with normal tests active. Generated patch passed apply check.
   Metal CI `45461712359` was in progress. No further device writes in this check.
+
+## 2026-11-24 — raster-state build passed and ran on A71
+
+- Watched Metal CI `45461712359` through success at `cd31387`, artifact `14954270946`.
+  ZIP digest and all six file hashes verified. TWRP verified the 2135-pay boot prefix
+  and wrote/read back `build/a71-ios26-glass-raster-state.payload` (9,039,872 bytes,
+  SHA-256 `e299eea7c14d810256019fd08a842139cc5f414b4526b78b3567ed85f0395839`).
+  USB line 842699 reports 9/9 applied with errno/sync/clear all zero.
+- The log now verifies the readback samples actually surround a control draw. At
+  847049–847052 and 847080–847083, color0 stayed black with identical hashes across the
+  full 256x234 scissor. The marked draw had all four color channels writable (0xf),
+  blending enabled, no depth attachment or custom depth/stencil state, no culling,
+  six vertices, and a nonempty scissor in the 828x1792 viewport. The depth/stencil
+  bypass flag was not used; these samples already had no such test to bypass.
+  Check fixed-function blend equations and actual vertex/raster coverage next.
