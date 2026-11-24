@@ -1422,6 +1422,57 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          return nir_vec(&c->b, ch, n);'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('static void *\nmake_stage_cso(struct rwa_device *device, nir_shader *nir, char *why, size_t why_size)\n',
+      r'''static bool
+native_glass_force_color(nir_builder *b, nir_intrinsic_instr *in, void *unused)
+{
+   if (in->intrinsic != nir_intrinsic_store_output ||
+       nir_intrinsic_io_semantics(in).location != FRAG_RESULT_DATA0 ||
+       in->src[0].ssa->num_components != 4)
+      return false;
+   b->cursor = nir_before_instr(&in->instr);
+   const unsigned bits = in->src[0].ssa->bit_size;
+   nir_def *one = nir_imm_floatN_t(b, 1.0, bits);
+   nir_def *zero = nir_imm_floatN_t(b, 0.0, bits);
+   nir_src_rewrite(&in->src[0], nir_vec4(b, one, zero, one, one));
+   return true;
+}
+
+static void *
+make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_control, char *why, size_t why_size)
+'''),
+     ('''   if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}
+
+   struct pipe_shader_state templ''',
+      r'''   if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}
+   if (glass_control) {
+      if (nir_shader_intrinsics_pass(clone, native_glass_force_color, nir_metadata_control_flow, NULL))
+         fprintf(stderr, "SweetNativeMetal: GLASS control replaces color0 with opaque magenta\n");
+      else
+         fprintf(stderr, "SweetNativeMetal: GLASS control found no color0 store\n");
+   }
+
+   struct pipe_shader_state templ'''),
+     ('''   render->fs_cso = make_stage_cso(device, fs, why, why_size);
+   if (!render->fs_cso)
+      goto fail;
+   render->vs_cso = make_stage_cso(device, vs, why, why_size);
+''',
+      r'''   bool glass_control = false;
+#ifdef __APPLE__
+   if (fragment_entry && !strcmp(fragment_entry, "glass_background_no_bleed_lph") &&
+       getprogname() && !strcmp(getprogname(), "backboardd")) {
+      FILE *flag = fopen("/var/local/sweet-native-glass-control", "r");
+      glass_control = flag != NULL;
+      if (flag)
+         fclose(flag);
+   }
+#endif
+   render->fs_cso = make_stage_cso(device, fs, glass_control, why, why_size);
+   if (!render->fs_cso)
+      goto fail;
+   render->vs_cso = make_stage_cso(device, vs, false, why, why_size);
+'''),
      ('''      out->stream_mask |= 1u << d->buffer_index;
 ''',
       '''      out->stream_mask |= 1u << d->buffer_index;

@@ -2457,7 +2457,68 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -6469,6 +7010,7 @@
+@@ -5398,8 +5939,23 @@
+  * it may or may not have taken it, and neither driver in this build reaches this (both
+  * return a state object and report a bad shader later, at the draw).
+  */
++static bool
++native_glass_force_color(nir_builder *b, nir_intrinsic_instr *in, void *unused)
++{
++   if (in->intrinsic != nir_intrinsic_store_output ||
++       nir_intrinsic_io_semantics(in).location != FRAG_RESULT_DATA0 ||
++       in->src[0].ssa->num_components != 4)
++      return false;
++   b->cursor = nir_before_instr(&in->instr);
++   const unsigned bits = in->src[0].ssa->bit_size;
++   nir_def *one = nir_imm_floatN_t(b, 1.0, bits);
++   nir_def *zero = nir_imm_floatN_t(b, 0.0, bits);
++   nir_src_rewrite(&in->src[0], nir_vec4(b, one, zero, one, one));
++   return true;
++}
++
+ static void *
+-make_stage_cso(struct rwa_device *device, nir_shader *nir, char *why, size_t why_size)
++make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_control, char *why, size_t why_size)
+ {
+    nir_shader *clone = nir_shader_clone(NULL, nir);
+    if (!clone) {
+@@ -5407,6 +5963,12 @@
+       return NULL;
+    }
+    if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}
++   if (glass_control) {
++      if (nir_shader_intrinsics_pass(clone, native_glass_force_color, nir_metadata_control_flow, NULL))
++         fprintf(stderr, "SweetNativeMetal: GLASS control replaces color0 with opaque magenta\n");
++      else
++         fprintf(stderr, "SweetNativeMetal: GLASS control found no color0 store\n");
++   }
+ 
+    struct pipe_shader_state templ = { .type = PIPE_SHADER_IR_NIR, .ir.nir = clone };
+    struct pipe_context *pipe = device->pipe;
+@@ -6432,10 +6994,20 @@
+     */
+    if (!render->generated_vertex && !native_link_stages(vs, &render->vinfo, fs, &render->finfo, why, why_size))
+       goto fail;
+-   render->fs_cso = make_stage_cso(device, fs, why, why_size);
++   bool glass_control = false;
++#ifdef __APPLE__
++   if (fragment_entry && !strcmp(fragment_entry, "glass_background_no_bleed_lph") &&
++       getprogname() && !strcmp(getprogname(), "backboardd")) {
++      FILE *flag = fopen("/var/local/sweet-native-glass-control", "r");
++      glass_control = flag != NULL;
++      if (flag)
++         fclose(flag);
++   }
++#endif
++   render->fs_cso = make_stage_cso(device, fs, glass_control, why, why_size);
+    if (!render->fs_cso)
+       goto fail;
+-   render->vs_cso = make_stage_cso(device, vs, why, why_size);
++   render->vs_cso = make_stage_cso(device, vs, false, why, why_size);
+    /* the generated stage is standalone (not under mem_ctx); the driver has a clone, so
+     * the source is this library's to free either way
+     */
+@@ -6469,6 +7041,7 @@
                                 &out.color_write_masks, why, why_size))
        goto fail;
     render->blend = device->pipe->create_blend_state(device->pipe, &blend);
@@ -2465,7 +2526,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* The pipeline's own depth/stencil state, and it is the ZEROED one on purpose: it is
      * what a draw gets when the caller passes no rwa_depth_stencil, which is Metal's
      * state before an application has set one. depth_enabled 0 is "no test", not
-@@ -6509,12 +7051,12 @@
+@@ -6509,12 +7082,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2481,7 +2542,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6633,6 +7175,10 @@
+@@ -6633,6 +7206,10 @@
        pipe->bind_fs_state(pipe, NULL);
        pipe->delete_fs_state(pipe, render->fs_cso);
     }
@@ -2492,7 +2553,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->blend) {
        pipe->bind_blend_state(pipe, NULL);
        pipe->delete_blend_state(pipe, render->blend);
-@@ -6645,6 +7191,9 @@
+@@ -6645,6 +7222,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2502,7 +2563,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7124,7 +7673,24 @@
+@@ -7124,7 +7704,24 @@
     pipe->set_scissor_states(pipe,0,1,&scissor);
     pipe->set_blend_color(pipe,&(struct pipe_blend_color){.color={draw->native_blend[0],draw->native_blend[1],draw->native_blend[2],draw->native_blend[3]}});
  
@@ -2528,7 +2589,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* The caller's depth/stencil state, or the pipeline's zeroed one, which is Metal's
      * behaviour with no MTLDepthStencilState set: no test and no write.
      */
-@@ -7137,7 +7703,58 @@
+@@ -7137,7 +7734,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2588,7 +2649,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7831,10 @@
+@@ -7214,6 +7862,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2599,7 +2660,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7928,7 @@
+@@ -7307,6 +7959,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);
