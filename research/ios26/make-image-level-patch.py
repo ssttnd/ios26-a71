@@ -3594,20 +3594,34 @@ native_glass_pixel_region(const char *phase, const char *name, id texture,
 	if (!w || !h)
 		return;
 	const unsigned stride = fmt == 115 ? 8 : 4;
-	const unsigned rw = MIN(w, 16u), rh = MIN(h, 16u);
-	uint8_t pixels[16 * 16 * 8] = {0};
-	const unsigned left = x + (w - rw) / 2, top = y + (h - rh) / 2;
-	[texture getBytes:pixels bytesPerRow:rw * stride
-	       fromRegion:MTLRegionMake2D(left, top, rw, rh) mipmapLevel:0];
+	const size_t count = (size_t)w * h;
+	if (count > 1536u * 1024u) {
+		fprintf(stderr, "SweetNativeMetal: GLASSPX %s %s region too large %ux%u\\n", phase, name, w, h);
+		return;
+	}
+	uint8_t *pixels = calloc(count, stride);
+	if (pixels == NULL)
+		return;
+	[texture getBytes:pixels bytesPerRow:w * stride
+	       fromRegion:MTLRegionMake2D(x, y, w, h) mipmapLevel:0];
 	uint32_t hash = 2166136261u;
-	for (unsigned i = 0; i < rw * rh * stride; i++)
+	for (size_t i = 0; i < count * stride; i++)
 		hash = (hash ^ pixels[i]) * 16777619u;
+	unsigned inside = 0;
+	if (fmt == 115 && !strcmp(name, "sdf")) {
+		const uint16_t *half = (const uint16_t *)pixels;
+		for (size_t i = 0; i < count; i++) {
+			const uint16_t distance = half[i * 4], alpha = half[i * 4 + 3];
+			inside += distance > 0x8000 && distance < 0xfc00 && alpha > 0 && alpha <= 0x3c00;
+		}
+	}
 	uint32_t first = 0, second = 0;
 	memcpy(&first, pixels, 4);
 	if (stride == 8)
 		memcpy(&second, pixels + 4, 4);
-	fprintf(stderr, "SweetNativeMetal: GLASSPX %s %s %p fmt %u region %u,%u %ux%u hash %08x first %08x %08x\\n",
-	        phase, name, (void *)texture, fmt, left, top, rw, rh, hash, first, second);
+	fprintf(stderr, "SweetNativeMetal: GLASSPX %s %s %p fmt %u region %u,%u %ux%u hash %08x first %08x %08x inside %u\\n",
+	        phase, name, (void *)texture, fmt, x, y, w, h, hash, first, second, inside);
+	free(pixels);
 }
 
 static void
