@@ -2629,3 +2629,13 @@ on hold (state above).
   This verifies a change in selected mip for the solid mask but does not demonstrate correct
   interpolated mask coordinates. The actual FP16 shader segfaults in LLVM 18 at
   `llvm::Type::getPrimitiveSizeInBits()` after stage link. Both software tests are synthetic.
+
+## 2026-11-24 — owner reports unresponsive touchscreen after VBCAP install
+
+- Before restarting, the USB log showed S6SY771 detected, SweetHIDTouch opened by BackBoard, hardware
+  power-button events, and continuing compositor submissions. These logs do not establish that touch
+  reports reached BackBoard. No `VBCAP written` or crash of SpringBoard/BackBoard observed.
+- Sent `a71:reboot` over COM7. iOS came back on USB with the same boot and bundle. XNU again detected
+  S6SY771 and BackBoard armed VBCAP. Waiting for the owner to test touch after the restart. No partition
+  write or rollback during this check. If still unresponsive, compare touch in TWRP before changing the
+  Metal bundle, and use the saved pre-VBCAP package for a controlled comparison if needed.
