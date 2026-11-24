@@ -2765,3 +2765,27 @@ on hold (state above).
   checked. Its local bundle-only payload SHA-256 is
   `cd6524fda45b79a920fbe5b9623c307220dc00fb8a4e28ec037ebfe5d3e0c90b`.
   The phone is still on the first GLASSPX build, with no device writes during this review.
+
+## 2026-11-24 — screenshots across glass surfaces
+
+- On the first GLASSPX build, owner opened Control Center, woke the lock screen, and then opened
+  App Library. Fresh USB screenshots are kept locally in ignored build files
+  `a71-glass-cc-baseline.png`, `a71-glass-lock-baseline.png`, and `a71-glass-library-baseline.png`.
+  The corresponding log shot lines are 809941, 810931, and 811735.
+- Control Center shows a softened background and some color through controls, with broken bright
+  contours and weak fills on several platters. Immediately before the shot BackBoard registered
+  98–345 background glass draws per second and the sampled variant was `glass_background_no_bleed_lph`.
+- Lock screen shows the wallpaper, visible clock digits, and outline-like flashlight and camera
+  controls. Neighboring traces show `glass_background_lph` and other glass draws. Scene-level
+  traces do not assign any specific sampled draw to the clock glyphs. Owner explicitly wants the
+  lock-screen clock included in visual glass verification.
+- App Library shows blurred wallpaper, a visible search pill, and thin contours around the app
+  category groups with little discernible glass fill. Owner asks for glass on every category
+  group. Nearby BackBoard traces include `glass_background_no_bleed_lph`, with 56 background
+  draws in one second, and another sample with a 768x1216 SDF. Blur visible in the wallpaper does
+  not establish functioning glass on those groups.
+- Positive-control CI `45459177121` passed (artifact `14952576493`, digest and six hashes verified).
+  Local control package `build/a71-ios26-glass-control.payload`, SHA-256
+  `2b4a0c68fa57c08cc63f1fe14d54032af933af8d75fb456a3611c6998e67e2a8`, activates the exact
+  `glass_background_no_bleed_lph` control. The predominantly different lock-screen variant
+  requires its own control or trace correlation. No device writes in this screenshot pass.
