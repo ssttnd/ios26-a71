@@ -2362,3 +2362,24 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Open items list: scroll-edge blur hard edge (variable_blur mask), Settings hang on reopen, wallpaper editor
   without buttons / long-press watchdog, no screenshot thumbnail, lock-screen glass, depth flag to become
   default, Wi-Fi join.
+
+## 2026-11-24 — Wi-Fi works on iOS 26; Wi-Fi images lost backboardd stderr (fixed)
+
+- New session; Remote Control on. Phone was in TWRP (adb `recovery`); no USB logger was running.
+- **Wi-Fi works (observed, 2130-wifi boot in `logs/usb-ios26-poster-readonly.txt` from line 1049600):**
+  `SWEET SMMU: WLAN 0x240/0x1 -> CB4 via SMR6 ... ok`, SCAN_REQ 5528 bytes "answered" (2128), ASSOCIATE 908 bytes
+  "answered" (2129), wland `join ... WPA2 5220 MHz -71 dBm`, auth/assoc status 0, 4-way handshake, `*** joined`,
+  `bridge: link up`, configd added an IPv4 address and a default route via the router (DHCP), and wland counted
+  ~20,900 frames sent / ~31,400 received to the IP side by 450 s (41 tx failures). No reset. The network is the
+  owner's own (SSID not recorded here: public repo). Still open: CURRENT_NETWORK (103, 2272 bytes) answers error 6,
+  wifid ioctls 115/483/485 refused. Package `tag-glassu` applied 12/12 errno=0 in that boot.
+- That boot printed no GLASSU / XRGALPHA / GLASSSTAT at all. Cause: the Metal driver writes to stderr, which the
+  kernel mirrors to the console only for processes listed in `sweetnull` (default `backboardd,SpringBoard`) or
+  `sweetdtlog`; `--wifi` set `sweetnull=wland`, replacing that default. So every Wi-Fi image so far hid the Metal
+  driver's diagnostics. Packer now sets `sweetnull=wland,backboardd,SpringBoard` and drops two no-op arguments
+  (`sweetfb_noconsole=0`, `sweetfb_direct=0`: both kernel defaults are 0).
+- `build/a71-ios26-2130-wifi-bb.img` (22,478,848 bytes, SHA-256
+  `cb6850e429fce4162251c865f5b2201122f898e50a9d2e663c0136a64d375de6`): same kernel CI `45225448467` and options as
+  2130-wifi minus `sweetpayload=1` (nothing new to install), plus the sweetnull fix and `sweetdtlog=Preferences`
+  (Settings reopen hang); 601/607 bytes. TWRP: old boot was 2130-wifi `9753e65e...`; wrote boot, readback VERIFY OK,
+  `twrp reboot system`. USB log `logs/usb-ios26-wifi-bb.txt`. Fallback: 2130-wifi `9753e65e...`.

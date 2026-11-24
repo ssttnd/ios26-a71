@@ -18,12 +18,12 @@ from hfsread import HFS
 BASE_ARGS = (
     'debug=0xc serial=1 keepsyms=1 -noprogress cpus=8 '
     'unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin wdt=-1 '
-    'sweetarm64e=1 sweetearlyfb=1 -v sweetfb_noconsole=0 '
+    'sweetarm64e=1 sweetearlyfb=1 -v '
     'sweetbattery=0 sweetusb=0 sweetcpufreq=0'
 )
 SMOKE_ARGS = BASE_ARGS + ' rd=md0 sweetlog=0 -enable_kprintf_spam'
 ROOT_ARGS = BASE_ARGS + ' rd=ufsroot0 ufsrw=1 rootrw=1 sweetfb_scale=1 launchd_unsecure_cache=1 launchd_disable_all_timeouts=1'
-ADRENO_ARGS = ' sweetgpu=9 sweetgpukhz=650000 sweetfb_dcsbl=0 sweetfb_direct=0 sweetddr=0 sweetcharge=0 sweetjetsamlimits=0'
+ADRENO_ARGS = ' sweetgpu=9 sweetgpukhz=650000 sweetfb_dcsbl=0 sweetddr=0 sweetcharge=0 sweetjetsamlimits=0'
 
 
 def add_adreno_firmware(tree, directory):
@@ -112,7 +112,7 @@ def main():
         # sweetsmmuwlan maps the WLAN stream 0x240 only inside the sweetsmmuprobe thread;
         # without the probe the firmware's first DMA after "12 rings programmed" resets the
         # SoC (iOS 16 wave5/wave6; iOS 26 Wi-Fi boots 2026-11-20 had no SWEET SMMU line).
-        cmdline += ' sweetpmem=1 sweetsmmuwlan=1 sweetsmmuprobe=1 sweetnull=wland'
+        cmdline += ' sweetpmem=1 sweetsmmuwlan=1 sweetsmmuprobe=1 sweetnull=wland,backboardd,SpringBoard'
     cmdline += ADRENO_ARGS if args.adreno_firmware else ' sweetgpu=0'
     if args.metal:
         cmdline += ' sweetmtl=2 sweetgles=0'
