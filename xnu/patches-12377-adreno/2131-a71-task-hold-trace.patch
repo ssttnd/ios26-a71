@@ -1,0 +1,84 @@
+A71 diagnostic: log task holds (task_suspend, task_suspend2, pid_suspend and the matching resumes) of the
+processes named in sweetdtlog, with the caller and the stop counts, at most 400 lines. Settings hangs when it
+is reopened from the background; its os_log stops at didEnterBackground and nothing arrives on the reopen
+(2026-11-24), so this shows whether it stays suspended and who suspended it. No new boot-arg.
+
+diff --git a/osfmk/kern/task.c b/osfmk/kern/task.c
+index bac41b9..3bbd176 100644
+--- a/osfmk/kern/task.c
++++ b/osfmk/kern/task.c
+@@ -3987,7 +3987,7 @@ task_threads_from_user(
+ #define TASK_HOLD_LEGACY_ALL    3
+ 
+ static kern_return_t
+-place_task_hold(
++place_task_hold_impl(
+ 	task_t task,
+ 	int mode)
+ {
+@@ -4054,7 +4054,7 @@ place_task_hold(
+ }
+ 
+ static kern_return_t
+-release_task_hold(
++release_task_hold_impl(
+ 	task_t          task,
+ 	int                     mode)
+ {
+@@ -4116,6 +4116,56 @@ release_task_hold(
+ 	return KERN_SUCCESS;
+ }
+ 
++/*
++ * 2131 (A71): log task holds (task_suspend, task_suspend2, pid_suspend and their resumes) of the
++ * processes named in sweetdtlog, with the caller. Settings hangs when it is reopened from the
++ * background: its os_log stops at didEnterBackground and nothing is logged on the reopen, so the
++ * question is whether it stays suspended. At most 400 lines.
++ */
++extern bool sweet_dtlog_listed(const char *name);
++static int _Atomic sweet_task_hold_logged;
++
++static void
++sweet_task_hold_log(const char *what, task_t task, int mode, kern_return_t kr)
++{
++	if (task == TASK_NULL || get_bsdtask_info(task) == NULL) {
++		return;
++	}
++	const char *name = task_best_name(task);
++	if (name == NULL || !sweet_dtlog_listed(name)) {
++		return;
++	}
++	if (os_atomic_inc(&sweet_task_hold_logged, relaxed) > 400) {
++		return;
++	}
++	task_t caller = current_task();
++	const char *by = (caller != TASK_NULL && get_bsdtask_info(caller) != NULL) ? task_best_name(caller) : "kernel";
++	printf("SWEET TASKHOLD: %s %s[%d] mode %d -> %d: user_stop %u legacy %u pidsuspended %d by %s[%d]\n",
++	    what, name, task_pid(task), mode, kr, (unsigned)task->user_stop_count,
++	    (unsigned)task->legacy_stop_count, (int)task->pidsuspended, by ? by : "?",
++	    caller != TASK_NULL ? task_pid(caller) : -1);
++}
++
++static kern_return_t
++place_task_hold(
++	task_t task,
++	int mode)
++{
++	kern_return_t kr = place_task_hold_impl(task, mode);
++	sweet_task_hold_log("hold", task, mode, kr);
++	return kr;
++}
++
++static kern_return_t
++release_task_hold(
++	task_t          task,
++	int                     mode)
++{
++	kern_return_t kr = release_task_hold_impl(task, mode);
++	sweet_task_hold_log("release", task, mode, kr);
++	return kr;
++}
++
+ boolean_t
+ get_task_suspended(task_t task)
+ {
