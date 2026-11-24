@@ -2383,3 +2383,17 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   2130-wifi minus `sweetpayload=1` (nothing new to install), plus the sweetnull fix and `sweetdtlog=Preferences`
   (Settings reopen hang); 601/607 bytes. TWRP: old boot was 2130-wifi `9753e65e...`; wrote boot, readback VERIFY OK,
   `twrp reboot system`. USB log `logs/usb-ios26-wifi-bb.txt`. Fallback: 2130-wifi `9753e65e...`.
+- **wifi-bb boot result (observed, `logs/usb-ios26-wifi-bb.txt`, through up_s 108):** booted on the first try,
+  WLAN SMMU ok, Metal published on A618, Wi-Fi rejoined the remembered network by itself and got an address
+  (`*** joined`, configd add address). Metal stderr is back: `GLASSU enabled`, 31+ GLASSU lines, GLASSSTAT
+  (e.g. `draws 131 glass_bg 6 blur 14`), XRGALPHA depth pass on IOSurface 26. No backboardd/SpringBoard/Preferences
+  crash, no panic; only MessagesBlastDoorService sig 5 x5 (seen before). `XRGALPHA tagged ...` (a039da5 surface
+  tags) not seen in the first 108 s. `|Preferences|` lines 0 so far (Settings not opened yet).
+- First GLASSU answer (lock-screen/home glass): CA does ask for real glass. Two pipelines repeat:
+  `glass_background_lph` src 256x160 fmt 80, f0.. = 0.001953 0 0 0.003125 (1/512, 1/320) -71.63 0.1667 0 inf -1 10 6.2 ...;
+  `glass_background_no_bleed_lph` src 224x88, f0.. = 0.002232 0 0 0.005682 -24 0.1157 9.6 0.1667 -1 -0.5 2 ...
+  Fields f35/f37/f51/f52 read as denormals (~2e-41) and some as inf: those words are not floats (ints, halves or
+  a different struct layout). Interpretation needs the GlassBackgroundUniforms layout from the QuartzCore metallib
+  (`air2nir --ll` in the VM) before drawing any conclusion; not done yet.
+- Next: owner opens Settings, sends it to the background, opens it again (reopen hang) while the USB logger runs;
+  then decode GLASSU against the shader's uniform layout.
