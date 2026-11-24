@@ -2745,3 +2745,23 @@ on hold (state above).
   for both `glass_background_no_bleed_lph` and `glass_background_sdf_no_bleed_lph` declares
   only render target 0. An unchanged color1 attachment is therefore expected and provides
   no evidence of a failed write. GLASSPX currently samples only the first variant.
+
+## 2026-11-24 — positive control for glass rasterization and presentation
+
+- In the QuartzCore AIR for `glass_background_no_bleed_lph`, the mask is sampled using
+  interpolated `texcoord1`. Face coverage multiplies the sampled alpha by a function of
+  the sampled distance and its screen-space derivative. A populated CPU-read SDF center and
+  nonzero face opacity do not establish what this shader actually sampled.
+- `4f6bcea` adds an opt-in positive control. With
+  `/var/local/sweet-native-glass-control`, only BackBoard's exact
+  `glass_background_no_bleed_lph` color0 store writes opaque magenta. The vertex shader,
+  render targets and fixed draw state are unchanged, and the normal shader remains the
+  default. If the expected geometry turns magenta, the actual color/coverage computation
+  is implicated. If the readback sees magenta but the display does not, follow compositing
+  after this pass. If there is no magenta in the expected render region, check geometry,
+  rasterization and attachment state. The control has not been installed or validated on A71.
+- Direct control CI `45459177121` was in progress. The earlier full-region-only CI
+  `45457948390` passed at `a4c9cbd`, artifact `14950648362`, ZIP digest and six file hashes
+  checked. Its local bundle-only payload SHA-256 is
+  `cd6524fda45b79a920fbe5b9623c307220dc00fb8a4e28ec037ebfe5d3e0c90b`.
+  The phone is still on the first GLASSPX build, with no device writes during this review.
