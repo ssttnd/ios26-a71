@@ -2446,7 +2446,16 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        out->stream_count = MAX2(out->stream_count, d->buffer_index + 1);
        out->stride[d->buffer_index] = stride;
        out->bytes[d->buffer_index] = MAX2(out->bytes[d->buffer_index],
-@@ -5383,6 +5920,10 @@
+@@ -5365,6 +5902,8 @@
+    struct air_shader_info finfo;
+    struct air_shader_info vinfo;      /* valid only when a vertex module was supplied */
+    bool generated_vertex;
++   bool glass_control, glass_control_no_tests;
++   unsigned glass_control_reports;
+ 
+    struct rwa_render_shape shape;
+ 
+@@ -5383,6 +5922,10 @@
      */
     void *vs_cso, *fs_cso;
     void *blend, *dsa, *rast, *velem;
@@ -2457,7 +2466,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct pipe_resource *vbuf;        /* the full-screen quad, for the generated stage */
  
     /* What the vertex descriptor was turned into, empty for a stage that fetches no
-@@ -5398,8 +5939,23 @@
+@@ -5398,8 +5941,23 @@
   * it may or may not have taken it, and neither driver in this build reaches this (both
   * return a state object and report a bad shader later, at the draw).
   */
@@ -2482,7 +2491,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  {
     nir_shader *clone = nir_shader_clone(NULL, nir);
     if (!clone) {
-@@ -5407,6 +5963,12 @@
+@@ -5407,6 +5965,12 @@
        return NULL;
     }
     if (!finalize_for_gallium(clone, device->screen, why, why_size)) {ralloc_free(clone);return NULL;}
@@ -2495,7 +2504,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
     struct pipe_shader_state templ = { .type = PIPE_SHADER_IR_NIR, .ir.nir = clone };
     struct pipe_context *pipe = device->pipe;
-@@ -6432,10 +6994,20 @@
+@@ -6432,10 +6996,27 @@
      */
     if (!render->generated_vertex && !native_link_stages(vs, &render->vinfo, fs, &render->finfo, why, why_size))
        goto fail;
@@ -2510,6 +2519,13 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +         fclose(flag);
 +   }
 +#endif
++   render->glass_control = glass_control;
++   if (glass_control) {
++      FILE *flag = fopen("/var/local/sweet-native-glass-control-no-tests", "r");
++      render->glass_control_no_tests = flag != NULL;
++      if (flag)
++         fclose(flag);
++   }
 +   render->fs_cso = make_stage_cso(device, fs, glass_control, why, why_size);
     if (!render->fs_cso)
        goto fail;
@@ -2518,7 +2534,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* the generated stage is standalone (not under mem_ctx); the driver has a clone, so
      * the source is this library's to free either way
      */
-@@ -6469,6 +7041,7 @@
+@@ -6469,6 +7050,7 @@
                                 &out.color_write_masks, why, why_size))
        goto fail;
     render->blend = device->pipe->create_blend_state(device->pipe, &blend);
@@ -2526,7 +2542,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* The pipeline's own depth/stencil state, and it is the ZEROED one on purpose: it is
      * what a draw gets when the caller passes no rwa_depth_stencil, which is Metal's
      * state before an application has set one. depth_enabled 0 is "no test", not
-@@ -6509,12 +7082,12 @@
+@@ -6509,12 +7091,12 @@
      * util_framebuffer_get_num_samples) and emits with emit_msaa. So this bit is the
      * honest state for a multisample pass and not the thing that turns multisampling on.
      */
@@ -2542,7 +2558,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (!render->blend || !render->dsa || !render->rast) {
        say(why, why_size, "%s would not make the fixed render state", rwa_device_name(device));
        goto fail;
-@@ -6633,6 +7206,10 @@
+@@ -6633,6 +7215,10 @@
        pipe->bind_fs_state(pipe, NULL);
        pipe->delete_fs_state(pipe, render->fs_cso);
     }
@@ -2553,7 +2569,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->blend) {
        pipe->bind_blend_state(pipe, NULL);
        pipe->delete_blend_state(pipe, render->blend);
-@@ -6645,6 +7222,9 @@
+@@ -6645,6 +7231,9 @@
        pipe->bind_rasterizer_state(pipe, NULL);
        pipe->delete_rasterizer_state(pipe, render->rast);
     }
@@ -2563,7 +2579,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     if (render->velem) {
        /* Unbound before deleted, and the vertex buffer unbound with it: the context holds
         * a reference of its own to whatever is bound there (set_vertex_buffers took it),
-@@ -7124,7 +7704,24 @@
+@@ -7124,12 +7713,39 @@
     pipe->set_scissor_states(pipe,0,1,&scissor);
     pipe->set_blend_color(pipe,&(struct pipe_blend_color){.color={draw->native_blend[0],draw->native_blend[1],draw->native_blend[2],draw->native_blend[3]}});
  
@@ -2589,7 +2605,24 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     /* The caller's depth/stencil state, or the pipeline's zeroed one, which is Metal's
      * behaviour with no MTLDepthStencilState set: no test and no write.
      */
-@@ -7137,7 +7734,58 @@
+-   pipe->bind_depth_stencil_alpha_state(pipe, draw->depth_stencil ? draw->depth_stencil->cso
+-                                                                  : render->dsa);
++   if (render->glass_control && render->glass_control_reports < 12) {
++      render->glass_control_reports++;
++      fprintf(stderr, "SweetNativeMetal: GLASS control draw %p write0 %#x blend0 %u depth %u stencil_state %u bypass %u primitive %u count %u viewport %.1f %.1f %.1f %.1f scissor %u %u %u %u cull %u winding %u\n",
++              (void *)render, (unsigned)render->blend_tmpl.rt[0].colormask,
++              (unsigned)render->blend_tmpl.rt[0].blend_enable, draw->depth != NULL,
++              draw->depth_stencil != NULL, (unsigned)render->glass_control_no_tests,
++              draw->primitive, draw->vertex_count, vx, vy, vw, vh,
++              scissor.minx, scissor.miny, scissor.maxx, scissor.maxy,
++              draw->native_cull, draw->native_winding);
++   }
++   pipe->bind_depth_stencil_alpha_state(pipe,
++      draw->depth_stencil && !render->glass_control_no_tests ? draw->depth_stencil->cso : render->dsa);
+    /* Metal keeps the reference value on the encoder and not in the state object, so it
+     * is set per draw. Gallium's is one byte per face, which is the stencil buffer's
+     * width; Metal's is a uint32 and only those bits can match anything.
+@@ -7137,7 +7753,58 @@
     pipe->set_stencil_ref(pipe, (struct pipe_stencil_ref){
        .ref_value = { (uint8_t)(draw->stencil_reference[0] & 0xff),
                       (uint8_t)(draw->stencil_reference[1] & 0xff) } });
@@ -2649,7 +2682,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     pipe->bind_vs_state(pipe, render->vs_cso);
     pipe->bind_fs_state(pipe, render->fs_cso);
  
-@@ -7214,6 +7862,10 @@
+@@ -7214,6 +7881,10 @@
     pipe->set_vertex_buffers(pipe, nvb, vbs);
  
     native_draw_checkpoint(device,&native_phase_at,1);
@@ -2660,7 +2693,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     struct rwa_bound fbound = { 0 }, vbound = { 0 };
     int rc = -1;
     if (bind_stage(device, PIPE_SHADER_FRAGMENT, &render->finfo, render->frag_own_sampler,
-@@ -7307,6 +7959,7 @@
+@@ -7307,6 +7978,7 @@
  
  unbind:
     native_draw_checkpoint(device,&native_phase_at,3);

@@ -1422,6 +1422,10 @@ texture_op(struct air_ctx *c, const struct air_inst *in, const struct air_name *
          return nir_vec(&c->b, ch, n);'''))
 
 edit('tools/mesa/air/air_metal.c',
+     ('   bool generated_vertex;\n',
+      '   bool generated_vertex;\n'
+      '   bool glass_control, glass_control_no_tests;\n'
+      '   unsigned glass_control_reports;\n'),
      ('static void *\nmake_stage_cso(struct rwa_device *device, nir_shader *nir, char *why, size_t why_size)\n',
       r'''static bool
 native_glass_force_color(nir_builder *b, nir_intrinsic_instr *in, void *unused)
@@ -1468,10 +1472,33 @@ make_stage_cso(struct rwa_device *device, nir_shader *nir, bool glass_control, c
          fclose(flag);
    }
 #endif
+   render->glass_control = glass_control;
+   if (glass_control) {
+      FILE *flag = fopen("/var/local/sweet-native-glass-control-no-tests", "r");
+      render->glass_control_no_tests = flag != NULL;
+      if (flag)
+         fclose(flag);
+   }
    render->fs_cso = make_stage_cso(device, fs, glass_control, why, why_size);
    if (!render->fs_cso)
       goto fail;
    render->vs_cso = make_stage_cso(device, vs, false, why, why_size);
+'''),
+     ('''   pipe->bind_depth_stencil_alpha_state(pipe, draw->depth_stencil ? draw->depth_stencil->cso
+                                                                  : render->dsa);
+''',
+      r'''   if (render->glass_control && render->glass_control_reports < 12) {
+      render->glass_control_reports++;
+      fprintf(stderr, "SweetNativeMetal: GLASS control draw %p write0 %#x blend0 %u depth %u stencil_state %u bypass %u primitive %u count %u viewport %.1f %.1f %.1f %.1f scissor %u %u %u %u cull %u winding %u\n",
+              (void *)render, (unsigned)render->blend_tmpl.rt[0].colormask,
+              (unsigned)render->blend_tmpl.rt[0].blend_enable, draw->depth != NULL,
+              draw->depth_stencil != NULL, (unsigned)render->glass_control_no_tests,
+              draw->primitive, draw->vertex_count, vx, vy, vw, vh,
+              scissor.minx, scissor.miny, scissor.maxx, scissor.maxy,
+              draw->native_cull, draw->native_winding);
+   }
+   pipe->bind_depth_stencil_alpha_state(pipe,
+      draw->depth_stencil && !render->glass_control_no_tests ? draw->depth_stencil->cso : render->dsa);
 '''),
      ('''      out->stream_mask |= 1u << d->buffer_index;
 ''',
