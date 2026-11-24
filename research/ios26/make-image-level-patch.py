@@ -3804,8 +3804,8 @@ native_vblur_mask_copy(const void *render, id *textures, unsigned ntextures)
 #include <errno.h>
 #include <fcntl.h>
 /* VBCAP (opt-in, /var/local/sweet-native-vblur-capture, backboardd): the inputs of ONE
- * variable_blur_frag* draw on a large target (App Library / Settings scroll edge, rt height
- * >= 100, mask wider than 1) written to the pre-created /var/local/vblur-capture.bin (0666;
+ * variable_blur_frag* draw on a target at least 100x100, including one-column
+ * gradient masks, written to the pre-created /var/local/vblur-capture.bin (0666;
  * backboardd runs as mobile), to be replayed offline on softpipe through the same backend
  * (air_metal.c) and compared with the phone. Layout, little-endian u32 unless noted:
  *   "VBCAP1\0\0", rt w h fmt, primitive vstart vcount baseVertex indexType nindices,
@@ -3842,7 +3842,7 @@ native_vblur_capture(const void *render, id const *colors, unsigned ncolors, id 
 		return;
 	id rt = ncolors ? colors[0] : nil;
 	id src = ntextures > 3 ? textures[3] : nil, mask = ntextures > 4 ? textures[4] : nil;
-	if (rt == nil || src == nil || mask == nil || [rt height] < 100 || [mask width] < 2 || nvb < 4 ||
+	if (rt == nil || src == nil || mask == nil || [rt width] < 100 || [rt height] < 100 || nvb < 4 ||
 	    vbufs[1] == nil || vbufs[2] == nil || vbufs[3] == nil)
 		return;
 	if (__atomic_exchange_n(&done, 1, __ATOMIC_RELAXED))
