@@ -2843,8 +2843,8 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\tnative_xrg_alpha_one([work->render render], work->textures, work->textureCount);\n'
       '\tnative_mercury_occl_trace([work->render render], work->color, work->colorCount,\n'
       '\t                          work->buffers, work->bufferOffsets, work->count);\n'
-      '\tnative_glass_uniform_trace(0, [work->render render], work->buffers, work->bufferOffsets, work->count,\n'
-      '\t                           work->textures, work->textureCount);\n'
+      '\tnative_glass_uniform_trace([work->render render], work->color, work->colorCount,\n'
+      '\t                           work->buffers, work->bufferOffsets, work->count, work->textures, work->textureCount);\n'
       '\tnative_vblur_trace([work->render render], work->color, work->colorCount, work->buffers,\n'
       '\t                   work->bufferOffsets, work->count, work->textures, work->textureCount,\n'
       '\t                   work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
@@ -3484,12 +3484,10 @@ native_mercury_occl_trace(const void *render, id const *colors, unsigned ncolors
 }
 
 /* GLASSU (opt-in, /var/local/sweet-native-glass-uniforms, backboardd): for CoreAnimation's glass passes
- * (fragment function glass_*), fragment buffer 1 (GlassBackgroundUniforms, 272 bytes: blur_radius @0x5c,
- * refraction amounts, colour matrices, opacities) as 68 floats in four lines, and the source/sdf textures.
- * Tells "CA asks for no glass" (radius/opacity 0) from "glass asked for but drawn wrong". 48 draws max, no
- * readback. */
+ * Sample background and foreground independently through the whole interaction. The startup burst
+ * used to consume the entire trace before the user could swipe. No texture readback here. */
 static void
-native_glass_uniform_trace(unsigned seq_hint, const void *render, id const *fbufs, const size_t *foffs,
+native_glass_uniform_trace(const void *render, id const *colors, unsigned ncolors, id const *fbufs, const size_t *foffs,
                            unsigned nfb, id const *textures, unsigned ntextures)
 {
 	static dispatch_once_t once;
@@ -3512,19 +3510,29 @@ native_glass_uniform_trace(unsigned seq_hint, const void *render, id const *fbuf
 	ffn[sizeof(ffn) - 1] = 0;
 	if (strncmp(ffn, "glass_", 6) != 0)
 		return;
-	static unsigned told;
-	const unsigned n = __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
-	if (n >= 48)
-		return;
 	const uint8_t *base = (const uint8_t *)[fbufs[1] contents];
 	const size_t len = (size_t)[fbufs[1] length], off = foffs[1];
+	if (base == NULL || off > len || len - off < 272)
+		return;
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return;
+	const unsigned stage = strncmp(ffn, "glass_foreground", 16) == 0;
+	const uint64_t tick = (uint64_t)now.tv_sec + 1;
+	static uint64_t last_tick[2];
+	uint64_t last = __atomic_load_n(&last_tick[stage], __ATOMIC_RELAXED);
+	if (last >= tick || !__atomic_compare_exchange_n(&last_tick[stage], &last, tick, false,
+	                                                __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+		return;
+	static unsigned sequence;
+	const unsigned n = __atomic_fetch_add(&sequence, 1, __ATOMIC_RELAXED);
+	id rt = ncolors ? colors[0] : nil;
 	id t3 = ntextures > 3 ? textures[3] : nil, t4 = ntextures > 4 ? textures[4] : nil;
-	fprintf(stderr, "SweetNativeMetal: GLASSU %u %s buf %zu@%zu src %ux%u fmt %u lv %u sdf %ux%u fmt %u\\n", n, ffn, len, off,
+	fprintf(stderr, "SweetNativeMetal: GLASSU %u %s rt %ux%u fmt %u colors %u buf %zu@%zu src %ux%u fmt %u lv %u sdf %ux%u fmt %u\\n",
+	        n, ffn, (unsigned)[rt width], (unsigned)[rt height], (unsigned)[rt pixelFormat], ncolors, len, off,
 	        t3 ? (unsigned)[t3 width] : 0, t3 ? (unsigned)[t3 height] : 0, t3 ? (unsigned)[t3 pixelFormat] : 0,
 	        t3 ? (unsigned)[t3 mipmapLevelCount] : 0, t4 ? (unsigned)[t4 width] : 0, t4 ? (unsigned)[t4 height] : 0,
 	        t4 ? (unsigned)[t4 pixelFormat] : 0);
-	if (base == NULL || off + 272 > len)
-		return;
 	const float *f = (const float *)(base + off);
 	for (unsigned row = 0; row < 4; row++) {
 		char line[400];
@@ -3533,7 +3541,6 @@ native_glass_uniform_trace(unsigned seq_hint, const void *render, id const *fbuf
 			at += snprintf(line + at, sizeof(line) - at, " %.4g", f[row * 17 + k]);
 		fprintf(stderr, "%s\\n", line);
 	}
-	(void)seq_hint;
 }
 
 /* VBLUR (opt-in, /var/local/sweet-native-vblur, backboardd): CoreAnimation's variable blur
