@@ -3639,7 +3639,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,509 @@
+@@ -121,11 +121,514 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -3994,9 +3994,14 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	ffn[sizeof(ffn) - 1] = 0;
 +	if (strncmp(ffn, "variable_blur", 13) != 0)
 +		return;
-+	static unsigned told;
-+	const unsigned n = __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
-+	if (n >= 64)
++	/* The mip chain (variable_blur_downsample*) runs every frame on the lock screen and used up a
++	 * shared limit of 64 before any other variable_blur draw (2026-11-24): separate limits. */
++	static unsigned told, told_down;
++	const bool down = strstr(ffn, "downsample") != NULL;
++	if (down && __atomic_fetch_add(&told_down, 1, __ATOMIC_RELAXED) >= 8)
++		return;
++	const unsigned n = down ? 1000 + told_down : __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
++	if (!down && n >= 64)
 +		return;
 +	id rt = ncolors ? colors[0] : nil;
 +	char line[900];
@@ -4149,7 +4154,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +637,40 @@
+@@ -139,13 +642,40 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -4192,7 +4197,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +680,247 @@
+@@ -155,13 +685,247 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);

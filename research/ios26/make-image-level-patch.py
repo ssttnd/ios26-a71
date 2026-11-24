@@ -3537,9 +3537,14 @@ native_vblur_trace(const void *render, id const *colors, unsigned ncolors, id co
 	ffn[sizeof(ffn) - 1] = 0;
 	if (strncmp(ffn, "variable_blur", 13) != 0)
 		return;
-	static unsigned told;
-	const unsigned n = __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
-	if (n >= 64)
+	/* The mip chain (variable_blur_downsample*) runs every frame on the lock screen and used up a
+	 * shared limit of 64 before any other variable_blur draw (2026-11-24): separate limits. */
+	static unsigned told, told_down;
+	const bool down = strstr(ffn, "downsample") != NULL;
+	if (down && __atomic_fetch_add(&told_down, 1, __ATOMIC_RELAXED) >= 8)
+		return;
+	const unsigned n = down ? 1000 + told_down : __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
+	if (!down && n >= 64)
 		return;
 	id rt = ncolors ? colors[0] : nil;
 	char line[900];
