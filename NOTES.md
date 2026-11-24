@@ -2682,3 +2682,27 @@ on hold (state above).
 - USB line 759602 confirms `finished 12/12 errno=0 sync=0 clear=0`. BackBoard announced GLASSU
   enabled at 760583. Asked the owner to swipe between home pages and press volume-up once
   when glass disappears. Inspect the new GLASSU records and compositor stats around that marker.
+
+## 2026-11-24 — first marked Liquid Glass disappearance
+
+- Owner's volume-up marker is USB line 769612 on the GLASSU transition build. The window at
+  the marker still had 52 glass background draws and zero foreground draws. The
+  `glass_background_no_bleed_lph` samples 16 and 17 both targeted 828x1792 with two color
+  attachments, source 432x912 BGRA8 with three levels, and 192x128 RGBA16F SDF. Neighboring
+  presentation samples kept `gpu_old=3 recopies=0`; swap wait timeouts rose from 53 to 67.
+  These are window counters and cannot identify the displayed frame at the button press.
+- Verified the 23G90 AIR metadata locally. `GlassBackgroundUniforms` for this shader is
+  224 bytes, `blur_radius` at byte 40, `face_opacity` half at 182, `refraction_opacity`
+  half at 192. At samples 13, 15, 16, 17 these decode to 3.2, about 1 and about 0.277.
+  Half values were recovered approximately from legacy float-formatted words. Do not use
+  the words beyond 224 bytes to compare these background uniforms. The marked data shows
+  that CA still asks for a glass background with nonzero blur and opacity.
+- An USB shot requested after reviewing the marker shows the Home Screen with a dark
+  backdrop and barely visible dock outline. Saved locally as `build/a71-glass-after-marker.png`.
+  This is a later screenshot, not a capture of the marked frame.
+- `1409025` adds optional GLASSPX under `/var/local/sweet-native-glass-pixels`.
+  It samples a small region of the source and SDF, then both color attachments immediately
+  before and after the sampled draw. Only `glass_background_no_bleed_lph`, at most once
+  per three-second bucket. Readback can force synchronization, so compare the visible
+  behavior with the preceding no-readback run. Generated patch passed apply check.
+  Metal CI `45456029495` dispatched, queued at last check. No new device write or fix verified.
