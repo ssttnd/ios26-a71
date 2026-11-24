@@ -2532,3 +2532,44 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Remaining approach for the blur/glass: capture one variable_blur_frag draw's inputs (source chain levels, mask,
   uniforms, vertices) over USB and replay it offline with air_run on softpipe in the VM. Softpipe correct = a
   driver/state problem on the phone; softpipe also wrong = translation semantics.
+
+## 2026-11-24 late — HANDOFF (credits running out): blur/glass capture + offline replay
+
+Owner's only priority now: **glass** (scroll-edge blur hard line, Liquid Glass vanishing). Settings/Safari are
+on hold (state above).
+
+**Done and pushed:**
+- `6fe80e1` Metal VBCAP: with flag `/var/local/sweet-native-vblur-capture` (backboardd), the first
+  `variable_blur_frag*` draw with rt height >= 100 and mask width >= 2 (App Library / Settings scroll edge) writes
+  its inputs to the PRE-CREATED `/var/local/vblur-capture.bin` (must exist, mode 0666; backboardd is mobile), then
+  logs `SweetNativeMetal: VBCAP written ... N bytes`. Format (little-endian u32): magic "VBCAP1" + 2 zero bytes,
+  rt w h fmt, primitive vstart vcount baseVertex indexType (0xffffffff = not indexed) nindices, index bytes;
+  vertex buffers 1 (48-byte vertices: float4 pos @0, float2 texcoord0 @16, float2 texcoord1 @24), 2 (mvp
+  float4x4), 3 (texmat, 2x float4) as index,len,bytes; fragment buffers 1 (VariableBlurUniforms 32 B), 5
+  (noise_scale half), 6 (edr_scale half) as index,len,bytes; textures slot 3 (source chain) and 4 (mask): slot w h
+  fmt levels, then each level (w>>l)*(h>>l)*4 BGRA bytes. Metal CI `45448890404` (dispatched, not checked).
+- VM: `~/w/work/mesa-25.0.7` now has donor `air-ir3.patch` + `air-metal.patch` applied (meson targets
+  libredwoodair / air_metal_test); new build dir `~/w/work/build-sw` configured with
+  `-Dgallium-drivers=freedreno,softpipe`. First ninja failed only because the venv was not on PATH (ir3-isa
+  generation needs Mako); rebuild started with
+  `export PATH=$HOME/w/venv/bin:$PATH; ninja -C build-sw src/gallium/drivers/freedreno/air_metal_test`
+  (result unknown). air_metal_test `--draw-vertex FILE.metallib VFUNC FFUNC ...` drives our backend (air_metal.c:
+  rwa_render_create / rwa_texture_create / rwa_texture_write / rwa_render_draw / rwa_texture_read) on softpipe
+  with RWA_SOFTWARE=1; see run_draw() in air_metal_test.c around line 640.
+
+**Next steps (in order):**
+1. CI 45448890404: fetch the artifact into research/ci-RUN, check the 6 hashes against build.json.
+2. Package (one TWRP visit via `a71:recovery`): bundle + `text:/private/var/local/sweet-native-vblur-capture=1` +
+   an empty file `file:EMPTY=/private/var/local/vblur-capture.bin@0666` + restore the env file to the donor
+   default `FD_MESA_DEBUG=sysmem` (the glass batch changed nothing and only costs speed). Boot image
+   `build/a71-ios26-2135-pay.img` (492b73ec..., sweetpayload=1, usb-shot, kernel 2135) is fine.
+3. Owner opens App Library (scroll a little). The log must show `VBCAP written`. Go to TWRP with `a71:recovery`
+   (clean UFS flush) and read the file with `tools/a71-hfs-get.py ADB /private/var/local/vblur-capture.bin`.
+4. Write a small replay mode (a new file next to air_metal_test.c, or a mode in it): parse the capture, create
+   the source texture with all levels (rwa_texture_create mip_levels=N, rwa_texture_write per level), the mask,
+   the 3 vertex buffers with the vertex descriptor above, fragment buffers 1/5/6, render variable_blur_vert_lph +
+   variable_blur_frag_lph (QuartzCore default.metallib = research/metallibs-wrapped/w0000_0.metallib, copied to
+   VM /tmp/qc.metallib) into an rt of the captured size/format, read it back, write a PNG. Compare rows:
+   softpipe gives a smooth fade -> phone driver/state bug; softpipe also shows the hard line -> translation.
+5. Phone screenshot to compare: build/a71-blur-line-2.png (App Library, 180x400): icons uniformly blurred above
+   a straight horizontal cut.
