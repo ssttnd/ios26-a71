@@ -2849,6 +2849,7 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\t                   work->bufferOffsets, work->count, work->textures, work->textureCount,\n'
       '\t                   work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,\n'
       '\t                   work->vertexStart, work->vertexCount, work->indexBuffer != nil);\n'
+      '\tnative_vblur_mask_copy([work->render render], work->textures, work->textureCount);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3672,6 +3673,86 @@ native_vblur_trace(const void *render, id const *colors, unsigned ncolors, id co
 	}
 	fprintf(stderr, "%s\\n", line);
 	free(px);
+}
+
+/* VBLURMASK (opt-in, /var/local/sweet-native-vblur-mask-copy, backboardd): every draw of
+ * variable_blur_frag* gets, in slot 4 (mask_texture), a plain shared texture this driver makes and
+ * fills with the bytes read back from CoreAnimation's mask. The scroll-edge blur stays uniformly
+ * strong with a hard edge although the mask read back from the CPU fades (2026-11-24) and every
+ * other input checks out (VBLUR/VDESC). If the copy fixes it, the original mask texture is what the
+ * GPU sees wrong. The copy is remade only when the source or its bytes change. */
+static void
+native_vblur_mask_copy(const void *render, id *textures, unsigned ntextures)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-vblur-mask-copy", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: VBLURMASK copy enabled\\n");
+	});
+	if (!enabled || ntextures <= 4 || textures[4] == nil)
+		return;
+	char ffn[48] = "";
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	if (name != NULL)
+		memcpy(ffn, name->ffn, sizeof(ffn));
+	pthread_mutex_unlock(&native_drawlog_lock);
+	ffn[sizeof(ffn) - 1] = 0;
+	if (strncmp(ffn, "variable_blur_frag", 18) != 0)
+		return;
+	id mask = textures[4];
+	const unsigned fmt = (unsigned)[mask pixelFormat];
+	if ([mask sampleCount] > 1 || (fmt != 70 && fmt != 71 && fmt != 80 && fmt != 81))
+		return;
+	const unsigned w = (unsigned)[mask width], h = (unsigned)[mask height];
+	if (w == 0 || h == 0 || (size_t)w * h > 65536)
+		return;
+	uint8_t *px = malloc((size_t)w * h * 4);
+	if (px == NULL)
+		return;
+	[mask getBytes:px bytesPerRow:w * 4 fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0];
+	uint64_t hash = 1469598103934665603ull;
+	for (size_t i = 0; i < (size_t)w * h * 4; i++)
+		hash = (hash ^ px[i]) * 1099511628211ull;
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	static void *last_src;
+	static uint64_t last_hash;
+	static id last_copy;
+	static unsigned made;
+	pthread_mutex_lock(&lock);
+	if (last_copy == nil || last_src != (void *)mask || last_hash != hash) {
+		MTLTextureDescriptor *desc =
+		    [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)fmt width:w height:h
+		                                                   mipmapped:NO];
+		[desc setUsage:MTLTextureUsageShaderRead];
+		[desc setStorageMode:MTLStorageModeShared];
+		id copy = [[mask device] newTextureWithDescriptor:desc];
+		if (copy != nil) {
+			[copy replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:px bytesPerRow:w * 4];
+			[last_copy release];
+			last_copy = copy;
+			last_src = (void *)mask;
+			last_hash = hash;
+			if (made++ < 8) {
+				void *surface = [mask respondsToSelector:@selector(iosurface)] ? (void *)[mask iosurface] : NULL;
+				fprintf(stderr, "SweetNativeMetal: VBLURMASK copy %u of mask %p %ux%u fmt %u storage %lu usage %#lx "
+				        "iosurface %u levels %u\\n", made, (void *)mask, w, h, fmt,
+				        (unsigned long)[mask storageMode], (unsigned long)[mask usage], rwd_surface_id(surface),
+				        (unsigned)[mask mipmapLevelCount]);
+			}
+		}
+	}
+	id use = [last_copy retain];
+	pthread_mutex_unlock(&lock);
+	free(px);
+	if (use == nil)
+		return;
+	[textures[4] release];
+	textures[4] = use;
 }
 
 static void
