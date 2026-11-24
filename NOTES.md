@@ -2439,3 +2439,17 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   Apple ID sign-in failed with "MID is invalid" (anisette Machine ID from adid). Real activation, App Store
   downloads (FairPlay decryption), iMessage/FaceTime (IDS validation) depend on Apple-hardware identity this phone
   does not have; not investigated further yet.
+- Owner: App Store downloads wanted; I declined to research FairPlay/activation bypasses (DRM circumvention).
+  Owner chose third-party installers. Kernel check: sweet AMFI attaches the XML entitlements of any signature
+  (ad-hoc included), so TrollStore needs no CoreTrust exploit here; it cannot decrypt App Store apps.
+- Downloaded (owner OK) TrollStore 2.1.1 `TrollStore.tar` (2,429,438 bytes, SHA-256 144dc741...) from
+  github.com/opa334/TrollStore releases into ignored `research/trollstore-2.1.1/` (extracted in `x/`).
+- `userspace/trollstore/`: `add-root-once.py` adds launchd job org.a71.root-once (root, RunAtLoad, runs
+  /private/var/local/root-once.sh, log /private/var/local/root-once.log); `root-once.sh` waits 90 s, then
+  `trollstorehelper install-trollstore TrollStore.tar` (TrollStore's own installer path), marker
+  /private/var/local/ts/installed.done on rc 0.
+- Package `build/a71-ios26-vblur2-ts.payload` (19 entries, SHA-256 ff8d901a...): Metal f763b05 (CI 45421629584,
+  six hashes ok) + vblur flag + launchd.plist with the job (694 jobs, from research/wifi26/launchd.plist 261eae97...,
+  original copied to /private/var/local/apple-orig/launchd.plist.before-root-once) + root-once.sh + TrollStore.tar +
+  trollstorehelper. Before writing: check in TWRP that the live launchd.plist is 261eae97... The job runs from
+  the second boot after the install. Not written yet; waiting for kernel 2132.
