@@ -2706,3 +2706,17 @@ on hold (state above).
   per three-second bucket. Readback can force synchronization, so compare the visible
   behavior with the preceding no-readback run. Generated patch passed apply check.
   Metal CI `45456029495` dispatched, queued at last check. No new device write or fix verified.
+
+## 2026-11-24 — GLASSPX build installed
+
+- Metal CI `45456029495` passed at `1409025`, artifact `14949729174`. Checked the ZIP
+  digest and all six manifest file hashes. TWRP verified the existing 2135-pay boot hash,
+  then the write/readback of `build/a71-ios26-glass-pixels.payload` (9,052,160 bytes,
+  SHA-256 `5ac1bd6f3949e0ea6de03405f6555c5c02c6969f2d6f05658fb91e7e299ca3a7`).
+- iOS returned on USB. Line 784665 reports `finished 11/11 errno=0 sync=0 clear=0`; BackBoard
+  reported `GLASSU enabled` at 785718. GLASSPX is additionally enabled by the package. Waiting
+  for a home page swipe and either a failure marker or an owner report that the readback
+  build changes the visual behavior. No rendering fix verified yet.
+- Local rollback to the GLASSU-only bundle is prepared, SHA-256
+  `2cd5944eacb6ce355572a3e1629e754b971e8bfbbab21cb203f92ba1bf280886`
+  (`build/a71-ios26-glass-pixels-rollback.payload`). It also pauses the GLASSPX flag by rename.
