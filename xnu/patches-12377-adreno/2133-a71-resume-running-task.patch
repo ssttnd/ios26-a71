@@ -1,0 +1,28 @@
+A71: pid_resume of a task that is not pid-suspended returns success. runningboardd calls pid_resume
+on an app it never pid-suspended (2132 trace); the EPERM made RunningBoard terminate the reopened app
+(Settings hung on every reopen, killed with 0x8BADF00D while idle in its run loop, 2026-11-24).
+
+diff --git a/bsd/kern/kern_proc.c b/bsd/kern/kern_proc.c
+index 6b1ddaa..e3f8ebc 100644
+--- a/bsd/kern/kern_proc.c
++++ b/bsd/kern/kern_proc.c
+@@ -6686,6 +6686,19 @@ pid_resume(struct proc *p __unused, struct pid_resume_args *args, int *ret)
+ #endif
+ 
+ 	error = task_pidresume(target);
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * 2133 (A71): resuming a task that is not pid-suspended succeeds. runningboardd never
++	 * pid-suspends a backgrounded app here (2132: no pid_suspend call at all), yet calls pid_resume
++	 * when the app comes back; KERN_FAILURE -> EPERM made RunningBoard give up on the process and
++	 * terminate it (0x8BADF00D "Failed to terminate gracefully") while its main thread sat idle in
++	 * GSEventRunModal: Settings hung on every reopen (2026-11-24). The task is running, which is
++	 * what the caller asked for.
++	 */
++	if (error == KERN_FAILURE && !get_task_pidsuspended(target)) {
++		error = KERN_SUCCESS;
++	}
++#endif
+ 	if (error) {
+ 		if (error == KERN_INVALID_ARGUMENT) {
+ 			error = EINVAL;
