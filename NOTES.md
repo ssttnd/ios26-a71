@@ -2789,3 +2789,16 @@ on hold (state above).
   `2b4a0c68fa57c08cc63f1fe14d54032af933af8d75fb456a3611c6998e67e2a8`, activates the exact
   `glass_background_no_bleed_lph` control. The predominantly different lock-screen variant
   requires its own control or trace correlation. No device writes in this screenshot pass.
+
+## 2026-11-24 — positive-control package staged on A71
+
+- `7786a5b` reached the remote branch on retry after GitHub's previous internal errors.
+- Entered TWRP via USB; active boot still matched 2135-pay. Wrote the 9,052,160-byte
+  `a71-ios26-glass-control.payload` and verified readback SHA-256
+  `2b4a0c68fa57c08cc63f1fe14d54032af933af8d75fb456a3611c6998e67e2a8`. Requested system
+  reboot. No new USB console or recovery ADB yet at checkpoint; kernel application
+  and visible magenta are still unverified. Asked owner to restart if the first
+  post-TWRP boot is stuck.
+- Prepared `build/a71-ios26-glass-control-off.payload` to pause the control flag with
+  a reversible rename, SHA-256 `1489769434569f4a333754d4269518fcc6a21f0274f7e44266d2da5f39b1df85`.
+  It has not been written. Check CC and App Library for the control, then disable it.
