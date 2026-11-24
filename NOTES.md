@@ -2453,3 +2453,31 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   original copied to /private/var/local/apple-orig/launchd.plist.before-root-once) + root-once.sh + TrollStore.tar +
   trollstorehelper. Before writing: check in TWRP that the live launchd.plist is 261eae97... The job runs from
   the second boot after the install. Not written yet; waiting for kernel 2132.
+
+## 2026-11-24 ~16:40 — Settings hang cause; blur shader read; TrollStore job installed
+
+- TWRP visit: live launchd.plist was 261eae97... (checked with a71-hfs-get), package `a71-ios26-vblur2-ts.payload`
+  VERIFY OK ff8d901a..., boot `a71-ios26-2132-wifi.img` (kernel CI 45422080312, 21dbb725...) VERIFY OK 2c01edcd...;
+  applied 19/19 errno=0.
+- **Settings reopen (2132 + sampling image `a71-ios26-2132-sample.img` ba268ce4..., sweetsample=Preferences
+  sweetsamplems=9000, no payload/dtlog):** `SWEET PIDSR: pid_resume(Preferences[376]) -> 1 by runningboardd[27] uid 0`
+  and NO pid_suspend call at all. The hung Preferences main thread (symbolicated with tools/sweet-crash.py,
+  ipsw in research/ipsw-cli) sits idle: mach_msg2_trap <- CFRunLoop <- GSEventRunModal <- UIApplicationMain <-
+  SwiftUI App.main. Then `CRASH Preferences sig 9 ... 0x8badf00d: RBSTerminateContext ... Failed to terminate
+  gracefully after 5.0s`: RunningBoard terminated an idle, healthy app after its pid_resume failed.
+  Conclusion (strong guess): the EPERM from pid_resume makes RunningBoard give up on the process.
+  xnu 2133 (`3456654`): pid_resume of a task that is not pid-suspended returns success. Kernel CI `45428008215`.
+  Why runningboardd never pid-suspends apps here is still open.
+- **Scroll-edge blur:** VBLUR on the f763b05 bundle logged the main pass: `variable_blur_frag_lph`
+  (PBGRAXm_TvrbA2Xhfn_Isrc_Isrc), rt 498x172, source slot 3 512x192 (3 levels), mask slot 4 1x244 BGRA whose alpha by
+  16 bands is 255 x11 then 252 213 150 81 22 (a correct fade). Uniforms max_blur 3.84 noise 1 divide 1 offset 0
+  dx 1/2048 dy 1/768 fade_mul 1 fade_add 2. Shader (air2nir --ll of QuartzCore default.metallib, VM):
+  m = saturate(mask(texcoord1).a); b = max_blur*m; lod = max(0, log2(b<2 ? b/2+1 : b)); 4 taps at
+  texcoord0 +- lod*(dx,dy) sampled at explicit lod (sampler mip LINEAR, decoded from the AIR word; mask sampler mip
+  NEAREST). Vertex shader: texcoord1 = in.texcoord1 (attr 2) * texmat[1].xy + texmat[1].zw, where texmat is vertex
+  buffer 3 declared `float4` (16 bytes) but read as two float4. Checked: the UBO extent prover gives 64 bytes and
+  load_ubo range is ~0, so neither trims it. Guess: texcoord1 is constant (attr 2 not fed, or texmat[1] zero), so
+  the mask is read at its opaque top everywhere = uniform strong blur with a hard edge. `98262d3` dumps vertex
+  buffers 0-3 for the first 6 main-pass draws; Metal CI `45428159073`.
+- TrollStore job: launchd now has org.a71.root-once (the plist from the package); this boot ran `exec sh` x5; the
+  result is only in /private/var/local/root-once.log (read it in TWRP). Not verified yet.
