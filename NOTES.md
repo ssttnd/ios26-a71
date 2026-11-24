@@ -2811,3 +2811,17 @@ on hold (state above).
   no magenta visible. No matched CC or Library control screenshot yet. The log
   confirms shader compilation but does not separately tag the shader instance used
   by each sampled draw; still need to verify the target draw and its raster state.
+
+## 2026-11-24 — App Library opaque control result
+
+- Captured App Library with the control flag active (USB shot line 831724,
+  `build/a71-glass-library-control.png`). The categories show thin outlines and no visible
+  magenta. A nearby full color0 scissor, 828x1462 at 0,85, was unchanged across its sampled
+  draw (lines 831550/831552, hash `02de2911`). The small sampled scissors near the search
+  pill also stayed unchanged. The compiler acknowledged the diagnostic shader, but the
+  existing readback does not tag that exact compiled render instance.
+- `cd31387` records exact control draws with color0 write mask, blend enable, depth/stencil,
+  viewport, scissor, cull, and geometry count. It also adds a separate opt-in flag
+  `sweet-native-glass-control-no-tests` to bypass depth/stencil only on the isolated
+  control draw. First compare with normal tests active. Generated patch passed apply check.
+  Metal CI `45461712359` was in progress. No further device writes in this check.
