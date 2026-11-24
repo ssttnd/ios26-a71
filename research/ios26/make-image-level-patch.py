@@ -2266,6 +2266,11 @@ null_texture_view(struct rwa_device *device)
       '   render->rast_state = (struct pipe_rasterizer_state){\n'),
      ('         .multisample = samples > 1 });\n',
       '         .multisample = samples > 1 };\n'
+      '   /* Color-only compositor Glass needs XY clipping, but it does not use depth. */\n'
+      '   if (glass_color && !shape->depth_format && !shape->stencil_format) {\n'
+      '      render->rast_state.depth_clip_near = 0;\n'
+      '      render->rast_state.depth_clip_far = 0;\n'
+      '   }\n'
       '   render->rast = device->pipe->create_rasterizer_state(device->pipe, &render->rast_state);\n'),
      ('   if (render->rast) {\n      pipe->bind_rasterizer_state(pipe, NULL);\n      pipe->delete_rasterizer_state(pipe, render->rast);\n   }\n',
       '   if (render->rast) {\n      pipe->bind_rasterizer_state(pipe, NULL);\n      pipe->delete_rasterizer_state(pipe, render->rast);\n   }\n'
