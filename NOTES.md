@@ -2573,3 +2573,5 @@ on hold (state above).
    softpipe gives a smooth fade -> phone driver/state bug; softpipe also shows the hard line -> translation.
 5. Phone screenshot to compare: build/a71-blur-line-2.png (App Library, 180x400): icons uniformly blurred above
    a straight horizontal cut.
+- VM build-sw second attempt: fails on `xf86drm.h: No such file or directory` (freedreno drm). Fix: in the VM
+  `sudo apt-get install -y libdrm-dev`, then rerun the ninja command above with the venv on PATH.
