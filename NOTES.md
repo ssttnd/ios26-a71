@@ -2740,8 +2740,8 @@ on hold (state above).
   three-second sampling buckets and bounds each read to 1.5 Mi texels. The generated patch
   passed apply check. Metal CI `45457948390` was in progress. The new build has not been
   installed, and no visual fix was verified.
-- Rechecked all 17 complete before/after GLASSPX groups recorded so far. None changed the
-  sampled color0 tile. Five groups had nonzero SDF center texels with alpha 1. AIR metadata
+- Rechecked all 18 complete before/after GLASSPX groups recorded so far. None changed the
+  sampled color0 tile. Eight groups had nonzero SDF center texels with alpha 1. AIR metadata
   for both `glass_background_no_bleed_lph` and `glass_background_sdf_no_bleed_lph` declares
   only render target 0. An unchanged color1 attachment is therefore expected and provides
   no evidence of a failed write. GLASSPX currently samples only the first variant.
