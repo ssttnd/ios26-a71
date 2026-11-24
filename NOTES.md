@@ -2521,3 +2521,14 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
 - Lessons: command-line budget (607 bytes) broke several test boots (lost sweetdtlog, payload). Trace limits
   on "first N draws" missed the screen under test twice. A `cmd | tail && reboot` chain rebooted after a failed
   pack: use `set -o pipefail`.
+- Glass batch test (boot `build/a71-ios26-2135-pay.img` 492b73ec..., package `a71-ios26-glassbatch.payload`
+  818d317f...: /var/local/sweet-native-env = `FD_MESA_DEBUG=sysmem,noubwc,nolrz` and
+  `IR3_SHADER_DEBUG=nofp16,nouboopt,nopreamble`, both applied per the log): owner: NOTHING changed (blur line,
+  glass). So UBWC, LRZ, fp16 precision, UBO push/preamble are ruled out together. Also checked in source: texture
+  views pass first_level to Gallium (no double level offset); AIR sample lod-vs-bias maps correctly (is_level ->
+  txl); view swizzle is supported by our patch and CoreAnimation never asked for one in the logs.
+  The env file now has the batch; revert it to `FD_MESA_DEBUG=sysmem` (the donor default) at the next TWRP visit
+  (the extra switches only cost speed).
+- Remaining approach for the blur/glass: capture one variable_blur_frag draw's inputs (source chain levels, mask,
+  uniforms, vertices) over USB and replay it offline with air_run on softpipe in the VM. Softpipe correct = a
+  driver/state problem on the phone; softpipe also wrong = translation semantics.
