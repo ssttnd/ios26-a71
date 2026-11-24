@@ -2821,6 +2821,8 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
       '\t                          work->buffers, work->bufferOffsets, work->count);\n'
       '\tnative_glass_uniform_trace(0, [work->render render], work->buffers, work->bufferOffsets, work->count,\n'
       '\t                           work->textures, work->textureCount);\n'
+      '\tnative_vblur_trace([work->render render], work->color, work->colorCount, work->buffers,\n'
+      '\t                   work->bufferOffsets, work->count, work->textures, work->textureCount);\n'
       '\tif (native_wall_skip_repeated_surface(self, [work->render render], work->color,\n'
       '\t                                      work->colorCount, work->textures, work->textureCount,\n'
       '\t                                      work->depth != nil, work->vertexCount,\n'
@@ -3500,6 +3502,120 @@ native_glass_uniform_trace(unsigned seq_hint, const void *render, id const *fbuf
 		fprintf(stderr, "%s\\n", line);
 	}
 	(void)seq_hint;
+}
+
+/* VBLUR (opt-in, /var/local/sweet-native-vblur, backboardd): CoreAnimation's variable blur
+ * (fragment function variable_blur*), used by the iOS 26 scroll-edge blur under the title bar.
+ * Owner photos 2026-11-23: that blur is uniformly strong and ends in a hard line instead of fading.
+ * variable_blur_frag picks a source level from max_blur * mask_texture.a (mask in slot 4), so this logs
+ * fragment buffer 1 as 16 floats, every bound texture (size, format, levels, samples), the render target
+ * and, for at most 12 draws (one per 2 s), the mask read back as mean alpha in 16 horizontal bands.
+ * 64 draws max. */
+static void
+native_vblur_trace(const void *render, id const *colors, unsigned ncolors, id const *fbufs,
+                   const size_t *foffs, unsigned nfb, id const *textures, unsigned ntextures)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-vblur", F_OK) == 0;
+		if (enabled)
+			fprintf(stderr, "SweetNativeMetal: VBLUR enabled\\n");
+	});
+	if (!enabled)
+		return;
+	char ffn[48] = "", label[96] = "";
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	if (name != NULL) {
+		memcpy(ffn, name->ffn, sizeof(ffn));
+		strlcpy(label, name->label, sizeof(label));
+	}
+	pthread_mutex_unlock(&native_drawlog_lock);
+	ffn[sizeof(ffn) - 1] = 0;
+	if (strncmp(ffn, "variable_blur", 13) != 0)
+		return;
+	static unsigned told;
+	const unsigned n = __atomic_fetch_add(&told, 1, __ATOMIC_RELAXED);
+	if (n >= 64)
+		return;
+	id rt = ncolors ? colors[0] : nil;
+	char line[900];
+	int at = snprintf(line, sizeof(line), "SweetNativeMetal: VBLUR %u %s %s rt %ux%u fmt %u tex", n, ffn, label,
+	                  rt ? (unsigned)[rt width] : 0, rt ? (unsigned)[rt height] : 0,
+	                  rt ? (unsigned)[rt pixelFormat] : 0);
+	for (unsigned k = 0; k < ntextures && k < 8 && at > 0 && (size_t)at < sizeof(line); k++) {
+		id t = textures[k];
+		if (t == nil)
+			at += snprintf(line + at, sizeof(line) - at, " %u:-", k);
+		else
+			at += snprintf(line + at, sizeof(line) - at, " %u:%ux%u/f%u/l%u/s%u", k, (unsigned)[t width],
+			               (unsigned)[t height], (unsigned)[t pixelFormat], (unsigned)[t mipmapLevelCount],
+			               (unsigned)[t sampleCount]);
+	}
+	fprintf(stderr, "%s\\n", line);
+	if (nfb > 1 && fbufs[1] != nil) {
+		const uint8_t *base = (const uint8_t *)[fbufs[1] contents];
+		const size_t len = (size_t)[fbufs[1] length], off = foffs[1];
+		unsigned nf = 0;
+		if (base != NULL && off < len)
+			nf = (len - off) / 4 < 16 ? (unsigned)((len - off) / 4) : 16;
+		at = snprintf(line, sizeof(line), "SweetNativeMetal: VBLUR %u u1 (%zu@%zu):", n, len, off);
+		for (unsigned k = 0; k < nf && at > 0 && (size_t)at < sizeof(line); k++) {
+			float v;
+			memcpy(&v, base + off + k * 4, sizeof(v));
+			at += snprintf(line + at, sizeof(line) - at, " %.4g", v);
+		}
+		fprintf(stderr, "%s\\n", line);
+	}
+	id mask = ntextures > 4 ? textures[4] : nil;
+	if (mask == nil || [mask sampleCount] > 1)
+		return;
+	const unsigned fmt = (unsigned)[mask pixelFormat];
+	const unsigned bpp = (fmt == 1 || fmt == 10) ? 1 : (fmt == 70 || fmt == 71 || fmt == 80 || fmt == 81) ? 4 : 0;
+	if (bpp == 0) {
+		fprintf(stderr, "SweetNativeMetal: VBLUR %u mask format %u not read\\n", n, fmt);
+		return;
+	}
+	static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+	static uint64_t next_ms;
+	static unsigned reads;
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	const uint64_t ms = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+	pthread_mutex_lock(&lock);
+	const bool go = reads < 12 && ms >= next_ms;
+	if (go) {
+		reads++;
+		next_ms = ms + 2000;
+	}
+	pthread_mutex_unlock(&lock);
+	if (!go)
+		return;
+	const unsigned w = (unsigned)[mask width], h = (unsigned)[mask height];
+	if (w == 0 || h == 0 || (size_t)w * h > 4096u * 4096u)
+		return;
+	uint8_t *px = malloc((size_t)w * h * bpp);
+	if (px == NULL)
+		return;
+	memset(px, 0xee, (size_t)w * h * bpp);
+	[mask getBytes:px bytesPerRow:w * bpp fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0];
+	at = snprintf(line, sizeof(line), "SweetNativeMetal: VBLUR %u mask %ux%u fmt %u alpha by band (top..bottom):",
+	              n, w, h, fmt);
+	const unsigned bands = h < 16 ? h : 16, step = w > 64 ? w / 64 : 1;
+	for (unsigned b = 0; b < bands && at > 0 && (size_t)at < sizeof(line); b++) {
+		const unsigned y0 = h * b / bands, y1 = h * (b + 1) / bands;
+		uint64_t sum = 0;
+		size_t cnt = 0;
+		for (unsigned y = y0; y < y1; y++)
+			for (unsigned x = 0; x < w; x += step, cnt++)
+				sum += px[((size_t)y * w + x) * bpp + (bpp - 1)];
+		at += snprintf(line + at, sizeof(line) - at, " %u", (unsigned)(cnt ? sum / cnt : 0));
+	}
+	fprintf(stderr, "%s\\n", line);
+	free(px);
 }
 
 static void
