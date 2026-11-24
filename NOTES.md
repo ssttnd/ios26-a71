@@ -2481,3 +2481,43 @@ was sent a cancellation request. Neither combined build nor hardware behavior ha
   buffers 0-3 for the first 6 main-pass draws; Metal CI `45428159073`.
 - TrollStore job: launchd now has org.a71.root-once (the plist from the package); this boot ran `exec sh` x5; the
   result is only in /private/var/local/root-once.log (read it in TWRP). Not verified yet.
+
+## 2026-11-24 evening — results of the day (honest state)
+
+- **Works:** Wi-Fi (join, DHCP, traffic; rejoins at boot), TrollStore 2.1.1 (installed by org.a71.root-once,
+  opens; screenshot build/a71-ts-1.png), flicker gone (2130). LAN file server for the owner's folder (owner's
+  private folder: never look into it).
+- **Settings reopen hang: NOT fixed.** Chain of findings: runningboardd got EINVAL from memorystatus_control
+  cmd 28 (CONVERT_MEMLIMIT_MB, ~300x) and cmd 18 (SET_PROCESS_IS_FREEZABLE) on this macOS-config kernel
+  (no CONFIG_JETSAM / CONFIG_FREEZE) and treated apps as "not managed". xnu 2133 (pid_resume of a running task
+  succeeds), 2134 (MEMSTAT log + jetsam setters no-op), 2135 (CONVERT_MEMLIMIT_MB answers, freezer commands
+  answer) are in kernel CI 45442592756 (ab799608...), boot `build/a71-ios26-2135.img` a3a77174... on the phone.
+  With 2135 runningboardd logs "This process will be managed", no memorystatus failures, cmd 25 accepted,
+  pid_resume -> 0. Settings still freezes on reopen (owner). RunningBoard keeps it running-active
+  (UserInteractiveFocal), never suspends it (no suspendable assertion), does not kill it. Earlier boots: the
+  hung Preferences main thread idles in GSEventRunModal and Preferences logs NOTHING on the reopen = it never
+  receives the scene activation. Next: SpringBoard/FrontBoard log on the reopen (sweetdtlog=SpringBoard,...;
+  command line is at its 607-byte limit, drop something).
+- **Safari crash at launch: cause found, not fixed.** `Safari received a nil container URL from
+  LSApplicationRecord which must not happen unless Safari has been deleted` -> NSURL initFileURLWithPath nil.
+  LaunchServices has no data container for com.apple.mobilesafari (crash reports exist from 2026-11-23, before
+  TrollStore). /private/var/mobile/Containers/Data/Application has 236 dirs (Safari's not identified yet). Fix
+  idea: re-register MobileSafari.app with LaunchServices (userspace/wallpaper/register.m registerApplication:)
+  from org.a71.root-once (/private/var/local/root-once.sh can be replaced by a package).
+- **Scroll-edge blur hard line: NOT fixed.** Verified correct: mask (CPU readback fades), vertices, texmat,
+  vertex fetch (VDESC: texcoord1 off 24 stride 48), samplers (source mip LINEAR), shader math
+  (QuartzCore variable_blur_frag/vert IR). Settings pass uniforms: max_blur 1.6, fade_mul 12.5, fade_add -0.25:
+  the layer's opacity cuts off where the mask is ~0, where Apple's blur is ~0; ours is still strongly blurred
+  there (USB shot build/a71-blur-line-2.png, App Library: icons uniformly blurred above a straight line).
+  Mask-copy experiment: the 1x244 lock-screen mask was replaced, no visible change reported (Settings' 828x314
+  mask was skipped by a 65536 limit, raised in 9eeada6). Sharpness per level (lock screen only):
+  L0 512x192 ~1-2, L1 ~2-3, L2 ~3-6 mean |diff| (normal downsampling). Main suspect now: the shader samples a
+  higher level than asked: a texture VIEW in slot 3 whose base level is applied twice (view first_level + LOD),
+  or LOD ignored. Next: log slot 3 parentTexture/parentRelativeLevel/levelRange and measure on App Library
+  (limit per render-target size, not first 4 draws).
+- **Glass vanishing after a home-page swipe: not worked on today** beyond reading the old notes.
+- Owner wants App Store apps; declined (FairPlay/activation bypass, decrypted IPAs). Telegram from source
+  needs the owner's api_id/api_hash (not provided).
+- Lessons: command-line budget (607 bytes) broke several test boots (lost sweetdtlog, payload). Trace limits
+  on "first N draws" missed the screen under test twice. A `cmd | tail && reboot` chain rebooted after a failed
+  pack: use `set -o pipefail`.
