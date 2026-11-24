@@ -2869,3 +2869,15 @@ on hold (state above).
   separately from the small offscreen passes. No fresh owner screenshot yet on the bypass build.
 - Local `build/a71-ios26-glass-no-blend-off.payload` pauses just the no-blend flag by rename,
   SHA-256 `dee5c2ffbc2cffe1bdb5c9c04deaf2c67d255d180c01911aee20821b1ce166cc`.
+
+## 2026-11-24 — full-register color exports for Liquid Glass
+
+- The opaque-color control still used the original FP16 fragment export. Disabling
+  blending did not change the full-size result. `b2160ae` widens the floating-point
+  color output stores of `glass_*` fragment functions to FP32 after the shader's own
+  FP16 arithmetic. It does not widen vertex values, depth outputs, or other shaders.
+  The generated patch passed apply check. This tests an A618 export-path hypothesis,
+  rather than treating the lack of change in the scissor as proof of a specific cause.
+- Metal CI `45465178604` started. The watcher is set to verify the artifact and build
+  a package that also pauses the opaque-color control, blend bypass, and GLASSPX flags
+  so the next visual test uses the normal Glass shader and its normal blend state.
