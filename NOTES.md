@@ -2669,3 +2669,16 @@ on hold (state above).
   dimensions and attachment count. The generated patch passed `git apply --check`. Metal CI
   `45453903456` was in progress and includes the one-column VBCAP fix. Sent cancellation of the
   superseded `45453584064`. No device writes or visual fix verified in this step.
+
+## 2026-11-24 — Liquid Glass transition instrumentation installed
+
+- Metal CI `45453903456` succeeded at `5dc8957`. Artifact `14951265525`, ZIP digest and all six
+  file hashes verified. Installed `build/a71-ios26-glass-transition.payload` through TWRP,
+  9,056,256 bytes with verified readback SHA-256
+  `9cf4a5e32ac86c7f2a11c82e6a0e205d38102ccc32f226085ffc857ced31720b`.
+  Package replaces SweetMetal2, enables GLASSU, and renames the VBCAP flag to
+  `sweet-native-vblur-capture.paused-45453903456` so blur readback cannot disturb this test.
+  Boot stayed 2135-pay and matched its existing hash before installation.
+- USB line 759602 confirms `finished 12/12 errno=0 sync=0 clear=0`. BackBoard announced GLASSU
+  enabled at 760583. Asked the owner to swipe between home pages and press volume-up once
+  when glass disappears. Inspect the new GLASSU records and compositor stats around that marker.
