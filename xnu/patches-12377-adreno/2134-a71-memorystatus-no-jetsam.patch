@@ -1,0 +1,73 @@
+A71: memorystatus_control on the macOS configuration. Log failed calls made by or about sweetdtlog
+processes, and let the jetsam-only setters (no case without CONFIG_JETSAM) succeed as no-ops.
+runningboardd got EINVAL for Settings and stopped managing it (never suspended, killed on reopen).
+
+diff --git a/bsd/kern/kern_memorystatus.c b/bsd/kern/kern_memorystatus.c
+index 68aeeb3..539feda 100644
+--- a/bsd/kern/kern_memorystatus.c
++++ b/bsd/kern/kern_memorystatus.c
+@@ -9237,6 +9237,37 @@ memorystatus_cmd_get_kill_counts(int priority, user_addr_t buffer, size_t buffer
+ 	return copyout(outbuf, buffer, MIN(buffer_size, sizeof(outbuf)));
+ }
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/*
++ * 2134 (A71): this kernel is the macOS configuration (no CONFIG_JETSAM), and iOS 26's runningboardd
++ * manages apps through memorystatus_control. It logged "Memorystatus failed with unexpected error:
++ * Invalid argument (22)" for Settings and then treated the app as not managed: never suspended, and
++ * killed on reopen (2026-11-24). Every failed call made by or about a process named in sweetdtlog is
++ * logged (command, pid, flags, error), at most 300 lines. The jetsam-only setters, which have no
++ * case without CONFIG_JETSAM and fell to EINVAL, succeed as no-ops: there is no jetsam limit to set.
++ */
++extern bool sweet_dtlog_listed(const char *name);
++static int _Atomic sweet_memstat_logged;
++
++static void
++sweet_memstat_log(struct proc *p, struct memorystatus_control_args *args, int error, const char *what)
++{
++	char target[MAXCOMLEN + 1] = "-";
++	if (args->pid > 0) {
++		proc_name(args->pid, target, sizeof(target));
++	}
++	if (!sweet_dtlog_listed(proc_best_name(p)) && !sweet_dtlog_listed(target)) {
++		return;
++	}
++	if (os_atomic_inc(&sweet_memstat_logged, relaxed) > 300) {
++		return;
++	}
++	printf("SWEET MEMSTAT: %s[%d] cmd %u pid %d (%s) flags 0x%x size %u -> %d%s\n", proc_best_name(p),
++	    proc_getpid(p), (unsigned)args->command, args->pid, target, (unsigned)args->flags,
++	    (unsigned)args->buffersize, error, what);
++}
++#endif
++
+ int
+ memorystatus_control(struct proc *p, struct memorystatus_control_args *args, int *ret)
+ {
+@@ -9488,12 +9519,26 @@ memorystatus_control(struct proc *p, struct memorystatus_control_args *args, int
+ 		error = _memstat_get_process_conclave_mem_limit(args->pid, ret);
+ 		break;
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET) && !CONFIG_JETSAM
++	case MEMORYSTATUS_CMD_SET_JETSAM_HIGH_WATER_MARK:
++	case MEMORYSTATUS_CMD_SET_JETSAM_TASK_LIMIT:
++	case MEMORYSTATUS_CMD_MARK_PROCESS_COALITION_SWAPPABLE:
++	case MEMORYSTATUS_CMD_REARM_MEMLIMIT:
++		error = 0;
++		sweet_memstat_log(p, args, 0, " (jetsam setter: no-op)");
++		break;
++#endif
+ 	default:
+ 		error = EINVAL;
+ 		break;
+ 	}
+ 
+ out:
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	if (error) {
++		sweet_memstat_log(p, args, error, "");
++	}
++#endif
+ 	return error;
+ }
+ 
