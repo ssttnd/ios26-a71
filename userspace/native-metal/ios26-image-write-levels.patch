@@ -3433,18 +3433,25 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	const unsigned dl = native_drawlog_next();
  	{
  		if (dl)
-@@ -3924,7 +4489,9 @@
+@@ -3924,7 +4489,16 @@
  			    work->vertexBuffers, work->vertexBufferOffsets, work->vertexBufferCount,
  			    work->buffers, work->bufferOffsets, work->count);
  	}
 -	if (mesa.render_draw([work->render render], &draw, why, size) != 0) {
++	const bool probe_glass = native_glass_pixels_should_sample([work->render render]);
++	if (probe_glass)
++		native_glass_pixels("before", work->color, work->colorCount, work->textures, work->textureCount,
++		                    work->nativeScissor, work->nativeFlags);
 +	const int native_draw_rc = mesa.render_draw([work->render render], &draw, why, size);
 +	native_xrg_clear();
++	if (probe_glass && native_draw_rc == 0)
++		native_glass_pixels("after", work->color, work->colorCount, work->textures, work->textureCount,
++		                    work->nativeScissor, work->nativeFlags);
 +	if (native_draw_rc != 0) {
  		rw_print("the draw failed: %s\n", why);
  		[self failWith:why];
  		return NO;
-@@ -3944,6 +4511,9 @@
+@@ -3944,6 +4518,9 @@
  
  - (void)failWith:(const char *)reason
  { NATIVE_OBJECT_LOCK; 
@@ -3454,7 +3461,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	_error = [[NSError errorWithDomain:@"SweetNativeMetal" code:4
  				  userInfo:@{ NSLocalizedDescriptionKey:
  					      [NSString stringWithUTF8String:reason] }] retain];
-@@ -3960,6 +4530,7 @@
+@@ -3960,6 +4537,7 @@
  		return;
  	}
      atomic_fetch_add(&native_wait_until_completed,1);
@@ -3462,7 +3469,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (mesa.finish([[_queue device] mesaDevice], why, sizeof(why)) != 0) {
  		rw_print("THE GPU DID NOT FINISH: %s\n", why);
  		_error = [[NSError errorWithDomain:@"SweetNativeMetal" code:3
-@@ -3971,7 +4542,7 @@
+@@ -3971,7 +4549,7 @@
  	_status = RW_CB_COMPLETED;   /* the fence has been paid, and only now */
  }
  
@@ -3471,7 +3478,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  /*
   * HANDLERS, AND WHERE THEY RUN.
-@@ -4023,6 +4594,7 @@
+@@ -4023,6 +4601,7 @@
  
  - (void)addCompletedHandler:(void (^)(id))handler
  { NATIVE_OBJECT_LOCK; 
@@ -3479,7 +3486,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	if (handler == NULL) {
  		return;
  	}
-@@ -4132,6 +4704,7 @@
+@@ -4132,6 +4711,7 @@
  	BOOL _hasDepthRange;
      float _nativeViewport[4], _nativeBlend[4];
      unsigned _nativeScissor[4], _nativeFlags;
@@ -3487,7 +3494,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      unsigned _nativeClearMask;
      unsigned _nativeColorLevels[8];
      float _nativeClearColors[8][4];
-@@ -4144,6 +4717,9 @@
+@@ -4144,6 +4724,9 @@
  	unsigned _vertexBufferCount, _fragmentBufferCount;
  	unsigned _fragmentTextureCount, _fragmentSamplerCount;
  	BOOL _complained;
@@ -3497,7 +3504,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (instancetype)initWithRedwoodCommandBuffer:(SweetNativeMetalCommandBuffer *)commandBuffer
-@@ -4181,7 +4757,15 @@
+@@ -4181,7 +4764,15 @@
  		 */
  		NSUInteger store = [attachment storeAction];
  
@@ -3514,7 +3521,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		    store == MTLStoreActionStoreAndMultisampleResolve ||
  		    [attachment resolveTexture] != nil) {
  			rw_print("colour attachment %u asks for a multisample "
-@@ -4362,9 +4946,21 @@
+@@ -4362,9 +4953,21 @@
      if(r.x>UINT32_MAX||r.y>UINT32_MAX||r.width>UINT32_MAX||r.height>UINT32_MAX){[_commandBuffer failWith:"scissor exceeds 32-bit range"];return;}
      _nativeScissor[0]=r.x;_nativeScissor[1]=r.y;_nativeScissor[2]=r.width;_nativeScissor[3]=r.height;_nativeFlags|=2;
  }
@@ -3539,7 +3546,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  /* The depth/stencil state, recorded like the pipeline state: nothing runs at encode time,
   * so what a draw tests against is whatever was bound when that draw was encoded. A state
-@@ -4396,6 +4992,7 @@
+@@ -4396,6 +4999,7 @@
        baseInstance:(NSUInteger)baseInstance
  { NATIVE_OBJECT_LOCK; 
  	SweetNativeMetalWork *work = [[SweetNativeMetalWork alloc] init];
@@ -3547,7 +3554,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  	if (_pipeline == nil || (_colorCount == 0 && _depth == nil)) {
  		rw_print("this draw has %s and is dropped\n",
-@@ -4453,6 +5050,7 @@
+@@ -4453,6 +5057,7 @@
      memcpy(work->nativeScissor,_nativeScissor,sizeof _nativeScissor);
      memcpy(work->nativeBlend,_nativeBlend,sizeof _nativeBlend);
      work->nativeFlags=_nativeFlags;
@@ -3555,7 +3562,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      memcpy(work->nativeColorLevels, _nativeColorLevels, sizeof _nativeColorLevels);
      work->nativeClearMask=_nativeClearMask;
      memcpy(work->nativeClearColors,_nativeClearColors,sizeof _nativeClearColors);
-@@ -5454,6 +6052,8 @@
+@@ -5454,6 +6059,8 @@
   */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 
@@ -3564,7 +3571,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      if(_nativeClearMask || _clearsDepth || _clearsStencil) {
          SweetNativeMetalWork *work=[SweetNativeMetalWork new];work->nativeClearOnly=YES;
          work->colorCount=_colorCount;for(unsigned i=0;i<8;i++)work->color[i]=_color[i];
-@@ -5463,6 +6063,41 @@
+@@ -5463,6 +6070,41 @@
          work->clearsDepth=_clearsDepth;work->clearsStencil=_clearsStencil;
          [_commandBuffer recordWork:work];[work release];
          _nativeClearMask=0;_clearsDepth=NO;_clearsStencil=NO;
@@ -3606,7 +3613,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
      }
      [super endEncoding];
  }
-@@ -5618,6 +6253,32 @@
+@@ -5618,6 +6260,32 @@
  	work->size[1] = (unsigned)size.height;
  	work->size[2] = (unsigned)size.depth;
  	work->threadgroupBytes = (unsigned)_threadgroupLength;
@@ -3639,7 +3646,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	[_commandBuffer recordWork:work];
  	[work release];
  }
-@@ -5629,9 +6290,20 @@
+@@ -5629,9 +6297,20 @@
  { NATIVE_OBJECT_LOCK; 
  	MTLSize groups;
  
@@ -3663,7 +3670,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  		rw_print("%lux%lux%lu threads do not divide into groups of "
  		         "%lux%lux%lu, and this driver does not have the partial-group support "
  		         "that would need\n", (unsigned long)threads.width,
-@@ -5813,6 +6485,7 @@
+@@ -5813,6 +6492,7 @@
   * this half is the same fix made before it is measured, not after. */
  - (void)endEncoding
  { NATIVE_OBJECT_LOCK; 
@@ -3674,7 +3681,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,792 @@
+@@ -121,11 +121,873 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -4000,6 +4007,87 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +		for (unsigned k = 0; k < 17 && at > 0 && (size_t)at < sizeof(line); k++)
 +			at += snprintf(line + at, sizeof(line) - at, " %.4g", f[row * 17 + k]);
 +		fprintf(stderr, "%s\n", line);
++	}
++}
++
++/* Opt-in paired readback. Keep it separate from GLASSU since readback can
++ * synchronize GPU work and change the timing of the symptom. */
++static bool
++native_glass_pixels_should_sample(const void *render)
++{
++	static dispatch_once_t once;
++	static bool enabled;
++	dispatch_once(&once, ^{
++		const char *process = getprogname();
++		enabled = process != NULL && !strcmp(process, "backboardd") &&
++		          access("/var/local/sweet-native-glass-pixels", F_OK) == 0;
++	});
++	if (!enabled)
++		return false;
++	char ffn[48] = "";
++	pthread_mutex_lock(&native_drawlog_lock);
++	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
++	if (name != NULL)
++		memcpy(ffn, name->ffn, sizeof(ffn) - 1);
++	pthread_mutex_unlock(&native_drawlog_lock);
++	if (strcmp(ffn, "glass_background_no_bleed_lph"))
++		return false;
++	struct timespec now;
++	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
++		return false;
++	static uint64_t last_tick;
++	const uint64_t tick = (uint64_t)now.tv_sec / 3 + 1;
++	uint64_t last = __atomic_load_n(&last_tick, __ATOMIC_RELAXED);
++	return last < tick && __atomic_compare_exchange_n(&last_tick, &last, tick, false,
++	                                                 __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++}
++
++static void
++native_glass_pixel_region(const char *phase, const char *name, id texture,
++                          unsigned x, unsigned y, unsigned width, unsigned height)
++{
++	const unsigned tw = (unsigned)[texture width], th = (unsigned)[texture height];
++	const unsigned fmt = (unsigned)[texture pixelFormat];
++	if (x >= tw || y >= th || (fmt != 80 && fmt != 81 && fmt != 115))
++		return;
++	const unsigned w = MIN(width, tw - x), h = MIN(height, th - y);
++	if (!w || !h)
++		return;
++	const unsigned stride = fmt == 115 ? 8 : 4;
++	const unsigned rw = MIN(w, 16u), rh = MIN(h, 16u);
++	uint8_t pixels[16 * 16 * 8] = {0};
++	const unsigned left = x + (w - rw) / 2, top = y + (h - rh) / 2;
++	[texture getBytes:pixels bytesPerRow:rw * stride
++	       fromRegion:MTLRegionMake2D(left, top, rw, rh) mipmapLevel:0];
++	uint32_t hash = 2166136261u;
++	for (unsigned i = 0; i < rw * rh * stride; i++)
++		hash = (hash ^ pixels[i]) * 16777619u;
++	uint32_t first = 0, second = 0;
++	memcpy(&first, pixels, 4);
++	if (stride == 8)
++		memcpy(&second, pixels + 4, 4);
++	fprintf(stderr, "SweetNativeMetal: GLASSPX %s %s %p fmt %u region %u,%u %ux%u hash %08x first %08x %08x\n",
++	        phase, name, (void *)texture, fmt, left, top, rw, rh, hash, first, second);
++}
++
++static void
++native_glass_pixels(const char *phase, id const *colors, unsigned ncolors,
++                    id const *textures, unsigned ntextures, const unsigned *scissor, unsigned flags)
++{
++	if (!strcmp(phase, "before")) {
++		for (unsigned i = 3; i < ntextures && i <= 4; i++) {
++			id texture = textures[i];
++			native_glass_pixel_region(phase, i == 3 ? "source" : "sdf", texture, 0, 0,
++			                          (unsigned)[texture width], (unsigned)[texture height]);
++		}
++	}
++	for (unsigned i = 0; i < ncolors && i < 2; i++) {
++		id texture = colors[i];
++		const bool clipped = (flags & 2) != 0;
++		native_glass_pixel_region(phase, i == 0 ? "color0" : "color1", texture,
++		                          clipped ? scissor[0] : 0, clipped ? scissor[1] : 0,
++		                          clipped ? scissor[2] : (unsigned)[texture width],
++		                          clipped ? scissor[3] : (unsigned)[texture height]);
 +	}
 +}
 +
@@ -4467,7 +4555,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +920,40 @@
+@@ -139,13 +1001,40 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -4510,7 +4598,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +963,247 @@
+@@ -155,13 +1044,247 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);

@@ -2870,8 +2870,15 @@ int rwa_texture_resolve(struct rwa_texture *src, struct rwa_texture *dst, unsign
      # it hands out is an ordinary allocation of the device's, so aliasing never shares memory
      # (contents of an aliased resource are undefined in Metal anyway).
      ('\tif (mesa.render_draw([work->render render], &draw, why, size) != 0) {\n',
+      '\tconst bool probe_glass = native_glass_pixels_should_sample([work->render render]);\n'
+      '\tif (probe_glass)\n'
+      '\t\tnative_glass_pixels("before", work->color, work->colorCount, work->textures, work->textureCount,\n'
+      '\t\t                    work->nativeScissor, work->nativeFlags);\n'
       '\tconst int native_draw_rc = mesa.render_draw([work->render render], &draw, why, size);\n'
       '\tnative_xrg_clear();\n'
+      '\tif (probe_glass && native_draw_rc == 0)\n'
+      '\t\tnative_glass_pixels("after", work->color, work->colorCount, work->textures, work->textureCount,\n'
+      '\t\t                    work->nativeScissor, work->nativeFlags);\n'
       '\tif (native_draw_rc != 0) {\n'),
      ('@implementation SweetNativeMetalDevice\n',
       r'''@interface SweetNativeMetalHeap : NSObject {
@@ -3540,6 +3547,87 @@ native_glass_uniform_trace(const void *render, id const *colors, unsigned ncolor
 		for (unsigned k = 0; k < 17 && at > 0 && (size_t)at < sizeof(line); k++)
 			at += snprintf(line + at, sizeof(line) - at, " %.4g", f[row * 17 + k]);
 		fprintf(stderr, "%s\\n", line);
+	}
+}
+
+/* Opt-in paired readback. Keep it separate from GLASSU since readback can
+ * synchronize GPU work and change the timing of the symptom. */
+static bool
+native_glass_pixels_should_sample(const void *render)
+{
+	static dispatch_once_t once;
+	static bool enabled;
+	dispatch_once(&once, ^{
+		const char *process = getprogname();
+		enabled = process != NULL && !strcmp(process, "backboardd") &&
+		          access("/var/local/sweet-native-glass-pixels", F_OK) == 0;
+	});
+	if (!enabled)
+		return false;
+	char ffn[48] = "";
+	pthread_mutex_lock(&native_drawlog_lock);
+	const struct native_drawlog_name *name = native_drawlog_slot(render, false);
+	if (name != NULL)
+		memcpy(ffn, name->ffn, sizeof(ffn) - 1);
+	pthread_mutex_unlock(&native_drawlog_lock);
+	if (strcmp(ffn, "glass_background_no_bleed_lph"))
+		return false;
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+		return false;
+	static uint64_t last_tick;
+	const uint64_t tick = (uint64_t)now.tv_sec / 3 + 1;
+	uint64_t last = __atomic_load_n(&last_tick, __ATOMIC_RELAXED);
+	return last < tick && __atomic_compare_exchange_n(&last_tick, &last, tick, false,
+	                                                 __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+}
+
+static void
+native_glass_pixel_region(const char *phase, const char *name, id texture,
+                          unsigned x, unsigned y, unsigned width, unsigned height)
+{
+	const unsigned tw = (unsigned)[texture width], th = (unsigned)[texture height];
+	const unsigned fmt = (unsigned)[texture pixelFormat];
+	if (x >= tw || y >= th || (fmt != 80 && fmt != 81 && fmt != 115))
+		return;
+	const unsigned w = MIN(width, tw - x), h = MIN(height, th - y);
+	if (!w || !h)
+		return;
+	const unsigned stride = fmt == 115 ? 8 : 4;
+	const unsigned rw = MIN(w, 16u), rh = MIN(h, 16u);
+	uint8_t pixels[16 * 16 * 8] = {0};
+	const unsigned left = x + (w - rw) / 2, top = y + (h - rh) / 2;
+	[texture getBytes:pixels bytesPerRow:rw * stride
+	       fromRegion:MTLRegionMake2D(left, top, rw, rh) mipmapLevel:0];
+	uint32_t hash = 2166136261u;
+	for (unsigned i = 0; i < rw * rh * stride; i++)
+		hash = (hash ^ pixels[i]) * 16777619u;
+	uint32_t first = 0, second = 0;
+	memcpy(&first, pixels, 4);
+	if (stride == 8)
+		memcpy(&second, pixels + 4, 4);
+	fprintf(stderr, "SweetNativeMetal: GLASSPX %s %s %p fmt %u region %u,%u %ux%u hash %08x first %08x %08x\\n",
+	        phase, name, (void *)texture, fmt, left, top, rw, rh, hash, first, second);
+}
+
+static void
+native_glass_pixels(const char *phase, id const *colors, unsigned ncolors,
+                    id const *textures, unsigned ntextures, const unsigned *scissor, unsigned flags)
+{
+	if (!strcmp(phase, "before")) {
+		for (unsigned i = 3; i < ntextures && i <= 4; i++) {
+			id texture = textures[i];
+			native_glass_pixel_region(phase, i == 3 ? "source" : "sdf", texture, 0, 0,
+			                          (unsigned)[texture width], (unsigned)[texture height]);
+		}
+	}
+	for (unsigned i = 0; i < ncolors && i < 2; i++) {
+		id texture = colors[i];
+		const bool clipped = (flags & 2) != 0;
+		native_glass_pixel_region(phase, i == 0 ? "color0" : "color1", texture,
+		                          clipped ? scissor[0] : 0, clipped ? scissor[1] : 0,
+		                          clipped ? scissor[2] : (unsigned)[texture width],
+		                          clipped ? scissor[3] : (unsigned)[texture height]);
 	}
 }
 
