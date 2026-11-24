@@ -2639,3 +2639,16 @@ on hold (state above).
   S6SY771 and BackBoard armed VBCAP. Waiting for the owner to test touch after the restart. No partition
   write or rollback during this check. If still unresponsive, compare touch in TWRP before changing the
   Metal bundle, and use the saved pre-VBCAP package for a controlled comparison if needed.
+
+## 2026-11-24 — why the first VBCAP did not trigger
+
+- Owner completed the requested App Library interaction. Post-reboot USB trace shows main
+  `variable_blur_frag_lph` draws with a 498x172 target and a valid 1x244 gradient mask.
+  VBCAP was armed but explicitly rejected every mask narrower than 2 pixels, so the
+  recorded draws could not trigger a write. Repeating the interaction with this build
+  does not address the filter.
+- `8c20816` replaces that mask-width constraint with minimum target dimensions of 100x100.
+  Regenerated the Metal patch and checked it applies against the staged mip/blur base.
+  Metal CI `45453584064` dispatched from that commit, queued at last check. The updated
+  bundle is not on the phone yet. Next fetch and verify the six artifact hashes, rebuild
+  the VBCAP package, and test the new capture gate.
