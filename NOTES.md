@@ -2652,3 +2652,20 @@ on hold (state above).
   Metal CI `45453584064` dispatched from that commit, queued at last check. The updated
   bundle is not on the phone yet. Next fetch and verify the six artifact hashes, rebuild
   the VBCAP package, and test the new capture gate.
+
+## 2026-11-24 — Liquid Glass page-swipe investigation resumed
+
+- Owner prioritizes Liquid Glass disappearing during home-page swipes. The scroll-edge VBCAP
+  capture covers a different pass. Earlier visible-state marker on the drawable boot established
+  that CoreAnimation continued sending glass draws while the effect was invisible. A later run
+  confirmed a populated blur input (dark grey, alpha 255). Those observations do not determine
+  whether the glass output or which frame was presented caused the disappearance.
+- On 2135-pay after the restart, USB lines around 745048–745674 show glass backgrounds during
+  interaction, zero foreground in several windows, and the last visible recopy counter at zero.
+  No physical marker aligns those windows with the actual disappearance. Old GLASSU exhausted its
+  48-draw budget by line 742482, missing those transitions entirely.
+- `5dc8957` keeps GLASSU enabled for later transitions when its flag is present, samples background
+  and foreground separately at up to one draw per second each, and adds render-target format,
+  dimensions and attachment count. The generated patch passed `git apply --check`. Metal CI
+  `45453903456` was in progress and includes the one-column VBCAP fix. Sent cancellation of the
+  superseded `45453584064`. No device writes or visual fix verified in this step.
