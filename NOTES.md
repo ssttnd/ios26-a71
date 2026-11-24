@@ -2881,3 +2881,23 @@ on hold (state above).
 - Metal CI `45465178604` started. The watcher is set to verify the artifact and build
   a package that also pauses the opaque-color control, blend bypass, and GLASSPX flags
   so the next visual test uses the normal Glass shader and its normal blend state.
+
+## 2026-11-25 — handoff at owner stop
+
+- Full-register export CI `45465178604` succeeded at `b2160ae`, artifact `14954997992`.
+  Verified the ZIP digest and all six bundle hashes. TWRP wrote and read back
+  `build/a71-ios26-glass-full-export.payload`, 9,068,544 bytes, SHA-256
+  `7e2190a59807a12a3e8bb083d7d51359159cf0dbc46fd049eba297f9c3a67e08`. The active 2135-pay
+  boot hash matched before installation and boot was not rewritten.
+- This is the currently installed build. USB line 887177 shows 12/12 applied, errno/sync/clear all
+  zero. The package paused the magenta control, blend bypass, and GLASSPX readback flags.
+  GLASSU still runs (line 888215). Fresh USB shots on this boot are in ignored build files
+  `a71-glass-library-full-export-first.png` and `a71-glass-home-full-export.png`.
+  App Library categories still look outline-like in the captured frame and the backdrop was
+  black. The Home capture also had a black backdrop. A working Glass fix was not verified.
+- Follow-up `bad3a9b` retains the full-register exports and disables near/far Z clipping only
+  for color-only Glass pipelines. XY clipping and scissor are unchanged. This is a candidate
+  for incorrectly clipped compositor vertices, not a proven cause. Regenerated patch passed
+  apply check. Metal CI `45466466276` was still running in the bundle build step at stop.
+  Local CI watcher was stopped at the owner's request. The remote run and existing USB
+  logger were left active. No follow-up artifact was downloaded and no further device writes.
