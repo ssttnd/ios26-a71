@@ -2840,3 +2840,18 @@ on hold (state above).
   six vertices, and a nonempty scissor in the 828x1792 viewport. The depth/stencil
   bypass flag was not used; these samples already had no such test to bypass.
   Check fixed-function blend equations and actual vertex/raster coverage next.
+
+## 2026-11-24 — owner sees a brief pink flash in the control
+
+- Owner reported a small pink flash, then no persistent effect. Exact frame and surface
+  of the flash were not marked. On the same boot the log shows two distinct control
+  pipelines: initial 828x1792 target draws with blend enabled and unchanged readbacks,
+  and a second pipeline at 852848–852868 targeting several smaller textures with blend
+  disabled. The second pipeline is a plausible source of the flash; the lines alone
+  cannot establish which frame the owner saw.
+- `6587fa1` splits the GLASSPX sampling budget between full-size and smaller targets.
+  It logs color0's original blend equations and adds a separate opt-in
+  `sweet-native-glass-control-no-blend` bypass of blending on color0 for the exact
+  diagnostic shader only. No default blend behavior changed. Generated patch applied
+  cleanly. Metal CI `45463281101` started, and the local watcher is set to verify and
+  package its output. No new patch installed at this checkpoint.
