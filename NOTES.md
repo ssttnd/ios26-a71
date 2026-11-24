@@ -2802,3 +2802,12 @@ on hold (state above).
 - Prepared `build/a71-ios26-glass-control-off.payload` to pause the control flag with
   a reversible rename, SHA-256 `1489769434569f4a333754d4269518fcc6a21f0274f7e44266d2da5f39b1df85`.
   It has not been written. Check CC and App Library for the control, then disable it.
+
+- A71 subsequently booted by itself. USB line 821391 confirms payload 11/11 with
+  errno/sync/clear all zero. BackBoard reported the replacement color0 store at 827455.
+  Initial full-scissor GLASSPX samples at 827498–828498 retain the same color0 hash
+  before and after the draw, including the sample at 827498 with a populated SDF
+  (25,784 inside texels). The USB screenshot taken while waiting was of Home, with
+  no magenta visible. No matched CC or Library control screenshot yet. The log
+  confirms shader compilation but does not separately tag the shader instance used
+  by each sampled draw; still need to verify the target draw and its raster state.
