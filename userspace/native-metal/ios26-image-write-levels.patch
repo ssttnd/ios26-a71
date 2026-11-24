@@ -3669,7 +3669,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawLog.inc
 --- a/userland/src/SweetNativeDrawLog.inc
 +++ b/userland/src/SweetNativeDrawLog.inc
-@@ -121,11 +121,619 @@
+@@ -121,11 +121,660 @@
  			last_sec = 0;   /* absent at start: the first touch arms */
  		}
  	}
@@ -4087,6 +4087,47 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +		}
 +		fprintf(stderr, "%s\n", line);
 +	}
++	/* VBLUR sharpness: the scroll-edge blur keeps a hard line where its opacity cuts off,
++	 * so its low-LOD image is still soft. For the first 4 main-pass draws, each level of the
++	 * source chain (slot 3) is read back and its mean absolute neighbour difference (x and
++	 * y, BGR) is logged: a level 0 as soft as level 1 means the chain build is wrong. */
++	if (!down && n < 4 && ntextures > 3 && textures[3] != nil && [textures[3] sampleCount] <= 1) {
++		id src = textures[3];
++		const unsigned sfmt = (unsigned)[src pixelFormat];
++		if (sfmt == 80 || sfmt == 81 || sfmt == 70 || sfmt == 71) {
++			unsigned slevels = (unsigned)[src mipmapLevelCount];
++			slevels = slevels == 0 ? 1 : slevels > 4 ? 4 : slevels;
++			at = snprintf(line, sizeof(line), "SweetNativeMetal: VBLUR %u source sharpness (mean |dx|,|dy| per level):", n);
++			for (unsigned l = 0; l < slevels; l++) {
++				unsigned sw = (unsigned)[src width] >> l, sh = (unsigned)[src height] >> l;
++				sw = sw ? sw : 1;
++				sh = sh ? sh : 1;
++				uint8_t *sp = malloc((size_t)sw * sh * 4);
++				if (sp == NULL)
++					break;
++				[src getBytes:sp bytesPerRow:sw * 4 fromRegion:MTLRegionMake2D(0, 0, sw, sh) mipmapLevel:l];
++				uint64_t gx = 0, gy = 0, cx = 0, cy = 0;
++				for (unsigned y = 0; y < sh; y++)
++					for (unsigned x = 0; x < sw; x++)
++						for (unsigned k = 0; k < 3; k++) {
++							const int v = sp[((size_t)y * sw + x) * 4 + k];
++							if (x + 1 < sw) {
++								gx += (uint64_t)abs(v - sp[((size_t)y * sw + x + 1) * 4 + k]);
++								cx++;
++							}
++							if (y + 1 < sh) {
++								gy += (uint64_t)abs(v - sp[((size_t)(y + 1) * sw + x) * 4 + k]);
++								cy++;
++							}
++						}
++				free(sp);
++				if (at > 0 && (size_t)at < sizeof(line))
++					at += snprintf(line + at, sizeof(line) - at, " L%u %ux%u %.2f,%.2f", l, sw, sh,
++					               cx ? (double)gx / cx : 0.0, cy ? (double)gy / cy : 0.0);
++			}
++			fprintf(stderr, "%s\n", line);
++		}
++	}
 +	id mask = ntextures > 4 ? textures[4] : nil;
 +	if (mask == nil || [mask sampleCount] > 1)
 +		return;
@@ -4169,7 +4210,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
 +	if ([mask sampleCount] > 1 || (fmt != 70 && fmt != 71 && fmt != 80 && fmt != 81))
 +		return;
 +	const unsigned w = (unsigned)[mask width], h = (unsigned)[mask height];
-+	if (w == 0 || h == 0 || (size_t)w * h > 65536)
++	if (w == 0 || h == 0 || (size_t)w * h > 1048576)
 +		return;
 +	uint8_t *px = malloc((size_t)w * h * 4);
 +	if (px == NULL)
@@ -4289,7 +4330,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  
  static void
  native_drawlog_draw(unsigned seq, const void *render, unsigned prim, unsigned start, unsigned count,
-@@ -139,13 +747,40 @@
+@@ -139,13 +788,40 @@
  	if (e)
  		nm = *e;
  	pthread_mutex_unlock(&native_drawlog_lock);
@@ -4332,7 +4373,7 @@ diff --git a/userland/src/SweetNativeDrawLog.inc b/userland/src/SweetNativeDrawL
  	}
  	if (depth != nil)
  		snprintf(ds, sizeof(ds), "%u:%ux%u%s ref%u", (unsigned)[depth pixelFormat],
-@@ -155,13 +790,247 @@
+@@ -155,13 +831,247 @@
  		if (t == nil)
  			continue;
  		size_t at = strlen(tx);

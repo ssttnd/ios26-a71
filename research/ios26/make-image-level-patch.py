@@ -3627,6 +3627,47 @@ native_vblur_trace(const void *render, id const *colors, unsigned ncolors, id co
 		}
 		fprintf(stderr, "%s\\n", line);
 	}
+	/* VBLUR sharpness: the scroll-edge blur keeps a hard line where its opacity cuts off,
+	 * so its low-LOD image is still soft. For the first 4 main-pass draws, each level of the
+	 * source chain (slot 3) is read back and its mean absolute neighbour difference (x and
+	 * y, BGR) is logged: a level 0 as soft as level 1 means the chain build is wrong. */
+	if (!down && n < 4 && ntextures > 3 && textures[3] != nil && [textures[3] sampleCount] <= 1) {
+		id src = textures[3];
+		const unsigned sfmt = (unsigned)[src pixelFormat];
+		if (sfmt == 80 || sfmt == 81 || sfmt == 70 || sfmt == 71) {
+			unsigned slevels = (unsigned)[src mipmapLevelCount];
+			slevels = slevels == 0 ? 1 : slevels > 4 ? 4 : slevels;
+			at = snprintf(line, sizeof(line), "SweetNativeMetal: VBLUR %u source sharpness (mean |dx|,|dy| per level):", n);
+			for (unsigned l = 0; l < slevels; l++) {
+				unsigned sw = (unsigned)[src width] >> l, sh = (unsigned)[src height] >> l;
+				sw = sw ? sw : 1;
+				sh = sh ? sh : 1;
+				uint8_t *sp = malloc((size_t)sw * sh * 4);
+				if (sp == NULL)
+					break;
+				[src getBytes:sp bytesPerRow:sw * 4 fromRegion:MTLRegionMake2D(0, 0, sw, sh) mipmapLevel:l];
+				uint64_t gx = 0, gy = 0, cx = 0, cy = 0;
+				for (unsigned y = 0; y < sh; y++)
+					for (unsigned x = 0; x < sw; x++)
+						for (unsigned k = 0; k < 3; k++) {
+							const int v = sp[((size_t)y * sw + x) * 4 + k];
+							if (x + 1 < sw) {
+								gx += (uint64_t)abs(v - sp[((size_t)y * sw + x + 1) * 4 + k]);
+								cx++;
+							}
+							if (y + 1 < sh) {
+								gy += (uint64_t)abs(v - sp[((size_t)(y + 1) * sw + x) * 4 + k]);
+								cy++;
+							}
+						}
+				free(sp);
+				if (at > 0 && (size_t)at < sizeof(line))
+					at += snprintf(line + at, sizeof(line) - at, " L%u %ux%u %.2f,%.2f", l, sw, sh,
+					               cx ? (double)gx / cx : 0.0, cy ? (double)gy / cy : 0.0);
+			}
+			fprintf(stderr, "%s\\n", line);
+		}
+	}
 	id mask = ntextures > 4 ? textures[4] : nil;
 	if (mask == nil || [mask sampleCount] > 1)
 		return;
@@ -3709,7 +3750,7 @@ native_vblur_mask_copy(const void *render, id *textures, unsigned ntextures)
 	if ([mask sampleCount] > 1 || (fmt != 70 && fmt != 71 && fmt != 80 && fmt != 81))
 		return;
 	const unsigned w = (unsigned)[mask width], h = (unsigned)[mask height];
-	if (w == 0 || h == 0 || (size_t)w * h > 65536)
+	if (w == 0 || h == 0 || (size_t)w * h > 1048576)
 		return;
 	uint8_t *px = malloc((size_t)w * h * 4);
 	if (px == NULL)
