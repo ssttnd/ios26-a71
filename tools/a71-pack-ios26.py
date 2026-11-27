@@ -69,6 +69,8 @@ def main():
     root = parser.add_mutually_exclusive_group(required=True)
     root.add_argument('--ramdisk', type=Path, help='raw HFSX volume containing the diagnostic PID 1')
     root.add_argument('--product-adt', type=Path, help='N104AP ADT for booting an installed iOS 26 root from userdata')
+    parser.add_argument('--native-width', action='store_true',
+                        help='use a 1080x2340 canvas at 3x for the installed iOS 26 root')
     parser.add_argument('--touch', action='store_true', help='enable the Samsung SEC_TS driver in an A71 kernel build')
     parser.add_argument('--keys', action='store_true', help='enable the power and volume key driver')
     parser.add_argument('--wifi', action='store_true', help='enable the A71 WLAN device tree and wland kernel interfaces')
@@ -98,6 +100,8 @@ def main():
                         help='append a boot-arg (repeatable), e.g. sweetbtlog=600')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
+    if args.native_width and args.ramdisk:
+        parser.error('--native-width requires the installed iOS 26 root')
 
     kernel = args.kernel.read_bytes()
     if b'xnu-12377.' not in kernel:
@@ -193,7 +197,8 @@ def main():
     with TemporaryDirectory(dir=args.output.parent) as temp:
         temp = Path(temp)
         tree = temp / 'a71.adt'
-        tree.write_bytes(adt.serialize(mkadt.build(highmem=True, ios26=True, product_adt=args.product_adt)))
+        tree.write_bytes(adt.serialize(mkadt.build(highmem=True, ios26=True, product_adt=args.product_adt,
+                                                 native_width=args.native_width)))
         if args.wifi:
             wlan_tree = temp / 'a71-wlan.adt'
             subprocess.run([sys.executable, str(Path(__file__).with_name('adt-add-wlan.py')),

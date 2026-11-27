@@ -80,9 +80,14 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None):
+def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None, native_width=False):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
     target, machine, target_type = ('N104AP', 'iPhone12,1', 'N104') if ios26 else ('D22AP', 'iPhone10,3', 'D22')
+    canvas_width, canvas_height, display_scale = (828, 1792, 2) if ios26 else (1125, 2436, 3)
+    if native_width:
+        if not ios26 or qemu:
+            raise ValueError('native-width mode requires the iOS 26 phone device tree')
+        canvas_width, canvas_height, display_scale = 1080, 2340, 3
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
     # XNU 8796's QEMU path needs /pram. The XNU 12377 donor boots without it.
     # On A71, 12377 faults in PE_create_console while zeroing the I/O mapping.
@@ -117,7 +122,7 @@ def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None):
         # MobileGestalt's screen class: display-scale (u32, default 0) comes
         # from /chosen, the pixel size from IOMobileFramebuffer. Scale 0 makes
         # SpringBoard's FBSDisplayMode "infxinf@0x" invalid.
-        ('display-scale', u32(2 if ios26 else 3)),
+        ('display-scale', u32(display_scale)),
         # XNU derives IOPlatformUUID (gethostuuid) from these on arm; without
         # them CFPreferences cannot use kCFPreferencesCurrentHost (no ByHost
         # files), so e.g. DataMigration never records LastSystemVersion and
@@ -203,8 +208,8 @@ def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None):
             ph(),
             ('device_type', cstr('display-subsystem')),
             ('compatible', cstr('sweet,display')),
-            ('canvas-width', u32(828 if ios26 else 1125)),
-            ('canvas-height', u32(1792 if ios26 else 2436)),
+            ('canvas-width', u32(canvas_width)),
+            ('canvas-height', u32(canvas_height)),
         ])])
 
     fbcon = node('sweet-fbcon', [

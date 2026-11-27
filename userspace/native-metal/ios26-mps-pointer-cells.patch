@@ -1,0 +1,160 @@
+diff --git a/tools/mesa/air/air_pointer_cells.inc b/tools/mesa/air/air_pointer_cells.inc
+--- a/tools/mesa/air/air_pointer_cells.inc
++++ b/tools/mesa/air/air_pointer_cells.inc
+@@ -24,10 +24,9 @@
+  * things become one, and nothing else:
+  *
+  *  - a local of pointer type stored exactly once, in the entry block, before
+- *    any read of it, whose address is only cast, zero-offset GEP'd, selected
+- *    or loaded from -- never stored, passed, compared or offset. The entry
+- *    block runs once and first, so that store reaches every load, which is
+- *    what mem2reg proves before it promotes a single-store alloca;
++ *    any read of it, whose address is only cast, zero-offset GEP'd, selected,
++ *    loaded from, or passed to a helper that only reads the cell. The entry
++ *    block runs once and first, so the store reaches all those reads;
+  *  - a constant global whose initializer is one pointer (possibly inside
+  *    one-member wrappers such as metal::sampler). Constant memory is never
+  *    written, so the initializer is its content.
+@@ -97,15 +96,39 @@
+ }
+ 
+ static bool
+-pointer_cell_alloca(struct air_ctx *c, const struct air_inst *alloca)
+-{
+-   const struct air_function *f = c->fn;
+-   uint64_t count;
+-   if (!f || !f->num_blocks || alloca->parent != &f->blocks[0] ||
+-       !air_const_uint(alloca->operands[0], &count) || count != 1 ||
+-       !cell_leaf_type(alloca->aux_type))
++cell_lifetime_call(const struct air_inst *call)
++{
++   const struct air_value *callee = call->operands[0];
++   return callee->kind == AIR_VALUE_FUNCTION && callee->name &&
++          !strncmp(callee->name, "llvm.lifetime.", 14);
++}
++
++static bool
++pointer_cell_uses(struct air_ctx *c, const struct air_function *f,
++                  const struct air_value *address, bool readonly);
++
++/* A direct helper may dereference its argument but may never write it,
++ * forward it to another function, or let its address escape.
++ */
++static bool
++cell_readonly_call(struct air_ctx *c, const struct air_inst *call, unsigned operand)
++{
++   const struct air_value *callee = call->operands[0];
++   if (operand == 0 || callee->kind != AIR_VALUE_FUNCTION)
+       return false;
+-
++   for (unsigned i = 0; i < c->m->num_functions; i++) {
++      const struct air_function *f = c->m->functions[i];
++      if (&f->base == callee)
++         return !f->is_declaration && operand <= f->num_args &&
++                pointer_cell_uses(c, f, &f->args[operand - 1], true);
++   }
++   return false;
++}
++
++static bool
++pointer_cell_uses(struct air_ctx *c, const struct air_function *f,
++                  const struct air_value *address, bool readonly)
++{
+    /* The values that are this cell's address, grown to a fixed point. EXACT
+     * ones name the cell alone; a select's result is a choice that may be read
+     * through but never stored through.
+@@ -113,7 +136,7 @@
+    unsigned cap = 8, n = 0;
+    const struct air_value **set = ralloc_array(c->mem_ctx, const struct air_value *, cap);
+    bool *exact = ralloc_array(c->mem_ctx, bool, cap);
+-   set[n] = &alloca->base;
++   set[n] = address;
+    exact[n++] = true;
+    const struct air_inst *store = NULL;
+ 
+@@ -137,7 +160,7 @@
+                   continue;
+                case AIR_OP_STORE:
+                   /* operand 0 would store the cell's own address: an escape */
+-                  if (oi != 1 || !exact[k] ||
++                  if (readonly || oi != 1 || !exact[k] ||
+                       use->operands[0]->type->kind != AIR_TYPE_POINTER ||
+                       (store && store != use))
+                      return false;
+@@ -157,8 +180,12 @@
+                   if (oi == 0)
+                      return false;
+                   break;
++               case AIR_OP_CALL:
++                  if (cell_lifetime_call(use) ||
++                      (!readonly && exact[k] && cell_readonly_call(c, use, oi)))
++                     continue;
++                  return false;
+                default:
+-                  /* call, phi, return, compare, ptrtoint, aggregate, atomic */
+                   return false;
+                }
+                if (value_index(set, n, &use->base) >= 0)
+@@ -176,6 +203,8 @@
+       }
+    }
+ 
++   if (readonly)
++      return true;
+    if (!store || store->parent != &f->blocks[0])
+       return false;
+    /* No read of the cell may come before its store in the entry block. A read
+@@ -186,8 +215,23 @@
+       const struct air_inst *use = entry->insts[ii];
+       if (use->op == AIR_OP_LOAD && value_index(set, n, use->operands[0]) >= 0)
+          return false;
++      if (use->op == AIR_OP_CALL && !cell_lifetime_call(use)) {
++         for (unsigned oi = 1; oi < use->num_operands; oi++)
++            if (value_index(set, n, use->operands[oi]) >= 0)
++               return false;
++      }
+    }
+    return true;
++}
++
++static bool
++pointer_cell_alloca(struct air_ctx *c, const struct air_inst *alloca)
++{
++   const struct air_function *f = c->fn;
++   uint64_t count;
++   return f && f->num_blocks && alloca->parent == &f->blocks[0] &&
++          air_const_uint(alloca->operands[0], &count) && count == 1 &&
++          cell_leaf_type(alloca->aux_type) && pointer_cell_uses(c, f, &alloca->base, false);
+ }
+ 
+ /* What a cell holds: the stored resolution, or a constant's initializer
+diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
+--- a/tools/mesa/air/air_to_nir.c
++++ b/tools/mesa/air/air_to_nir.c
+@@ -3162,6 +3162,14 @@
+        */
+       bool ptr = argv && argv[i] && (argv[i]->kind == AIR_VAL_PTR ||
+                                      val_holds_ptr(argv[i]));
++      if (argv && argv[i] && argv[i]->kind == AIR_VAL_PTR_CELL) {
++         const struct air_val *value = argv[i]->elems[0];
++         if (!value || value->kind != AIR_VAL_PTR ||
++             (value->ptr.class != AIR_PTR_TEXTURE && value->ptr.class != AIR_PTR_SAMPLER)) {
++            air_error(c, "intrinsic: pointer cell argument %u does not hold a resource handle", i);
++            return NULL;
++         }
++      }
+       uint64_t const_offset;
+       if (ptr && argv[i]->kind == AIR_VAL_PTR && argv[i]->ptr.offset &&
+           !fold_scalar(c, argv[i]->ptr.offset, &const_offset)) {
+@@ -3174,10 +3182,7 @@
+          }
+          pointer_offsets[i] = p->offset;
+       }
+-      /* The same reason, for the two pointers that are values: a chosen
+-       * pointer's condition is a def of the CALLER's impl, and a slot's
+-       * soundness rests on every use being in one block of one function.
+-       */
++      /* A chosen pointer carries a condition from the caller's implementation. */
+       if (argv && argv[i] && argv[i]->kind == AIR_VAL_PTR_SELECT) {
+          air_error(c, "intrinsic: a call passing a pointer chosen at run time as "
+                       "argument %u", i);
