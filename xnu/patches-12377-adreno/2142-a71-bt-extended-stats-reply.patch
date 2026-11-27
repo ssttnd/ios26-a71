@@ -1,0 +1,22 @@
+A71 Bluetooth: return the full 0xfdf0 layout 0x11 record.
+
+2141 reaches LE scanning and the daemon occasionally issues this next
+Broadcom statistics query. Its successful reply needs the discriminator
+and all 151 bytes read by the 23G90 parser. The generic 16-byte reply
+causes bcm_vsc.c:196 to abort. Keep other discriminators and opcodes intact.
+
+diff --git a/bsd/dev/sweet_bt_hci.c b/bsd/dev/sweet_bt_hci.c
+--- a/bsd/dev/sweet_bt_hci.c
++++ b/bsd/dev/sweet_bt_hci.c
+@@ -389,6 +389,11 @@
+ 		if (op == 0xfe3b) {
+ 			params = 212;
+ 			p0 = 0;
++		} else if (op == 0xfdf0 && p0 == 0x11) {
++			/* Keep the reply's discriminator. Layout 0x11 has
++			 * 141 base bytes followed by five 16-bit counters.
++			 */
++			params = 151;
+ 		}
+ 		p[2] = 4 + params;
+ 		p[6] = 0;
