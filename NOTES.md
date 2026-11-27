@@ -2921,3 +2921,20 @@ on hold (state above).
   constant buffer (VariableBlurrer), and vector shapes (path_rect/path_cubic R32F coverage with one+one
   blending, then path_blit framebuffer fetch `[[color(2)]]`).
 - Next: add the one-line ir3 fix to the native-metal Mesa patches, then do a Metal CI build and an A71 Glass test.
+- Earlier Z-clip run `45466466276` at `bad3a9b` finished with success (not downloaded or installed).
+- `f07378e` adds `userspace/native-metal/mesa-ir3-sampler-index.patch`. Applied by hand with
+  `patch --fuzz=0 -p1`, it went cleanly onto stock Mesa 25.0.7. The pinned donor's
+  `ir3-round-default.patch` touches the same file only at line 408, so the hunk just shifts. The iOS 26 job
+  copies the patch into the prepared donor's `tools/mesa` and adds it to the donor build script's Mesa
+  patch list, asserting that list is unchanged. Metal CI `45965091440` (ios26=true) was started
+  on `codex/a71-settings`.
+- CI `45965091440` succeeded at `f07378e`. Its log shows `ir3_compiler_nir.c` patched twice (donor
+  round-default, then ours). Artifact `15182875708` (ZIP SHA-256
+  `99d5ff0594fa3a265c2d467eae61feff0eb8eaad97a3cf7ca0519e652068de99`) is in ignored
+  `build/ci-45965091440/`, with all six bundle hashes matching `build.json`. It also contains the `bad3a9b`
+  Z-clip change. Not packaged or installed yet; the phone is untouched.
+- Guess: the sampler fix could cut down on the black backdrop or outline-only glass. Test with the normal Glass
+  package flags, matching the full-export package with the magenta control, blend bypass and GLASSPX paused.
+- Also looked at the Galaxy A51 ports (`AnkitChoudhary-1/hakios-SM-A515F`, iOS 16.5, Exynos 9611/Mali).
+  Different SoC, touch, Wi-Fi and PMIC, so nothing carries over directly. Possibly useful later: their
+  IPv4 DNS fallback for WebKit IPv6 stalls, and their `.ipa` injection (`inject_app.c`, `app_reg.m`).
