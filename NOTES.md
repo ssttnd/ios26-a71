@@ -3126,3 +3126,15 @@ on hold (state above).
   extents (incl. overflow) map 725; the extra extents overlap 8 tracev3 files that got those blocks. Looks like the
   kernel's HFS truncate leaves overflow extent records past EOF after freeing the blocks (sweet_hfs bug, not a hard
   reset). Not fixed; separate task.
+- **Root cause found (sampling boot, owner repro: hung on the first reopen).** `tools/a71-smp-symbolicate.py`
+  (new) on `logs/usb-ios26-prefsample.txt` sample 0, Preferences[330] t0 (main thread):
+  `semaphore_wait_trap` <- libdispatch semaphore wait <- **CoreBluetooth** `func_1c382102c+188` <- `__CFXNotificationPost`
+  <- UIKitCore ... `__UIScenePerformActionsWithLifecycleActionMask`. So on the move to background a CoreBluetooth
+  notification observer (CBManager, enter-background handling) waits synchronously and is never signalled; the main
+  thread is blocked for good, so the snapshot and every later scene action never complete. (The 24 Nov sample that
+  showed an idle run loop was a different case.) Calendar has no CoreBluetooth client.
+- `bluetoothd` was exec'd 15 times in this boot (crash/exit loop, exit reason not logged; there is no Bluetooth
+  driver on the A71 port). Guess: CoreBluetooth's background call waits for a bluetoothd that keeps dying.
+- Options: (a) quick test: drop the com.apple.bluetoothd launchd job (as with fairplayd) so CoreBluetooth gets an
+  immediate XPC error, see if the hang is gone; (b) real Bluetooth port (kernel UART + firmware for WCN3990 BT +
+  bluetoothd bridge), as the SM7150 donors (ios-flame, DC28088 ios-sweet) did; see docs/a71-radio-port.md.
