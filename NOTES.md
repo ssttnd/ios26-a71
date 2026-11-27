@@ -3138,3 +3138,31 @@ on hold (state above).
 - Options: (a) quick test: drop the com.apple.bluetoothd launchd job (as with fairplayd) so CoreBluetooth gets an
   immediate XPC error, see if the hang is gone; (b) real Bluetooth port (kernel UART + firmware for WCN3990 BT +
   bluetoothd bridge), as the SM7150 donors (ios-flame, DC28088 ios-sweet) did; see docs/a71-radio-port.md.
+
+## 2026-11-27 night — Bluetooth port started (owner: "Full Bluetooth port")
+
+- Already in kernel 2135: `bsd/dev/sweet_bt.c` + `sweet_bt_hci.c` (ios-sweet/Bergamota: QUP0 SE3 UART, rails, QCA
+  rampatch+NVM download, H4 kernel control `com.apple.uart.bluetooth`, Broadcom-VSC compat), off unless `sweetbt=1`.
+  Root already has the BlueTool stub (`/usr/sbin/BlueTool`, original `.orig`) and launchd sets
+  `BT_HCI_TRANSPORT=H4BC:POSIX:com.apple.uart.bluetooth,3000000` for bluetoothd. Missing were firmware + ADT + boot-arg.
+- Firmware: stock `A715FXXSBDXB1` AP `super.img.lz4` -> VM (lz4, simg2img) -> `tools/lp-extract.py` (new, LP metadata
+  parser) `vendor` (ext4) -> debugfs: `/firmware/apbtfw11.tlv` (214,324 B, `9f56643e...`) and `apnv11.bin` (4,912 B,
+  `d5642939...`). "ap" names = WCN3988 in Linux btqca. Copied to ignored `build/a71-bt-fw/` also as the driver's fallback
+  names `crbtfw21.tlv`/`crnv21.bin`.
+- Packer: `--bluetooth FWDIR` (ADT /arm-io/bluetooth via adt-add-bluetooth.py with those two files, `sweetbt=1`),
+  `--arg NAME=VALUE` (extra boot-args).
+- Boot `build/a71-ios26-2135-bt.img` (`dee92647...`, no Wi-Fi, dtlog bluetoothd,BlueTool,Preferences), log
+  `logs/usb-ios26-bt.txt`: **controller up.** HCI Reset ok, QCA version product 0xa, ROM 0x0201, SoC 0x40020140, patch
+  0x0001 -> rampatch (882 segments) + NVM (21) downloaded, patch 0x0002 after, 3,000,000 baud, BD_ADDR set to
+  02:53:57:42:4c:31, kernel control registered. bluetoothd connects, its HCI init (Reset, Read Local Version/Commands/
+  BD_ADDR/Features, LE setup, event masks...) is answered.
+- bluetoothd still restarts: (1) before the controller is up (BT stage starts 30 s after boot + ~31 s download):
+  `ioctl(CTLIOCGINFO, com.apple.uart.bluetooth) failed`, fatal reason 1201; (2) after it is up: when scanning starts,
+  `AssertFail bcm_vsc.c:1021 : ByteStream_NumReadBytesAvail(*pBs) >= 4` (SIGABRT). Guess: a Broadcom vendor command
+  that the QCA controller accepts with status 0 and a short reply is passed through unmodified (compat only rewrites
+  status 0x01). Owner: Settings > Bluetooth shows On briefly, list empty; Settings hangs while bluetoothd restarts.
+- Next boot `build/a71-ios26-2135-bt2.img` (`97b75ea8...`): same + `sweetbtlog=600 sweetwlandelay=5` to catch the
+  failing vendor command in the HCI trace.
+- Owner also reports no wallpaper on these boots (not investigated beyond: Mercury and PosterBoard run, no crash;
+  in the no-wallpaper boot SpringBoard connects two MercuryPoster scenes and Mercury creates 414x896/456x196 surfaces;
+  the good boot logged `Created new lock poster scene`).

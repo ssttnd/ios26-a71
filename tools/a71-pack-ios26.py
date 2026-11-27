@@ -73,6 +73,8 @@ def main():
                         help='allow scanout snapshots over USB ACM (xnu 2126; requires --usb)')
     parser.add_argument('--usb-ui', action='store_true',
                         help='allow the A71 Cover Sheet test gesture (xnu 2127; requires --usb-shot)')
+    parser.add_argument('--arg', action='append', default=[], metavar='NAME=VALUE',
+                        help='append a boot-arg (repeatable), e.g. sweetbtlog=600')
     parser.add_argument('-o', '--output', required=True, type=Path)
     args = parser.parse_args()
 
@@ -161,6 +163,10 @@ def main():
         cmdline += f' sweetsamplems={args.sample_interval_ms}'
     if args.fb_hz is not None:
         cmdline += f' sweetfb_hz={args.fb_hz}'
+    for extra in args.arg:
+        if not extra or ' ' in extra:
+            parser.error(f'--arg {extra!r}: one NAME=VALUE without spaces')
+        cmdline += f' {extra}'
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=args.output.parent) as temp:
