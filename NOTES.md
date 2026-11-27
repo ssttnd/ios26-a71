@@ -3188,3 +3188,12 @@ on hold (state above).
   `[S:N] Error received: Connection invalidated` / "client process either cancelled the connection or exited" and
   `submit backed off (job slots held by other clients)`; VMPROT refusals for Mercury occur in good and bad boots alike
   (not the cause). No discriminator found yet. A userspace restart is a working way to get the wallpaper back.
+- Owner: "fix the wallpaper so it always loads". In the bad bt3 boot, PosterBoard (pid 250, alive afterwards) cancelled its
+  connection to its MercuryPoster instance 298 at 10:10:39; SpringBoard's lock/home poster scenes are created the same
+  way in good and bad boots; Metal client slots identical (backboardd 0, Mercury 1). Leading guess (unproven): a
+  first-frame/startup timing race (cold boot, GPU busy) leaves the poster without content and it is never redrawn;
+  widgets (also out-of-process content) blank the same way.
+- **xnu 2137** (`ea3f81d`): USB command `a71:kill:NAME` (SIGKILL to processes whose p_comm is NAME; launchd relaunches).
+  Kernel CI `46049039273` (2136 + 2137; 2136-only run 46047765766 cancelled). Plan: on a boot without wallpaper, kill
+  MercuryPosterExt, then PosterBoard, then WidgetRenderer_Default one at a time with USB shots in between, to find the
+  restart that brings it back; then make that automatic (kernel or launchd job), and keep looking for the root cause.
