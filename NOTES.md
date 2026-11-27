@@ -2962,3 +2962,26 @@ on hold (state above).
   bytes, SHA-256 `5ce03d15ae99b62ab65659b29944b3c8de0dae9f3de1b9e2f70ee3ca672ba7e1`): same kernel 2135
   (`ab799608...`, CI 45442592756) and options as 2135-pay, minus `sweetusbshot=1`, plus `sweetdtlog=SpringBoard`
   (601 bytes). Not flashed yet; waiting for the phone's USB to come back. The current boot is still 2135-pay `492b73ec...`.
+
+## 2026-11-27 — Settings reopen hang: SpringBoard side (sbdtlog boot)
+
+- Flashed `build/a71-ios26-2135-sbdtlog.img` from TWRP. Owner entered TWRP by keys after USB had dropped. Before
+  the write, `boot` was 2135-pay `492b73ec...`. Readback VERIFY OK `5ce03d15...`. The bundle with the ir3 sampler fix
+  stays installed. Log `logs/usb-ios26-sbdtlog-settings.txt` (SpringBoard os_log from line ~3900; owner
+  repro after line 132678). Owner: hung again.
+- Observed (SpringBoard, Preferences pid 362): the first launch is normal. Logical Activate completes, the
+  Forward Event actions complete, and SBAppToAppWorkspaceTransaction completes after 3.89 s. On home: scene goes Background /
+  FG-Active[90] and SpringBoard sends `Logical Deactivate` [0x97a1] (watchdog 10 s). **Neither it nor any later scene
+  action is ever completed by Preferences**: Forward Event [0x2891] (watchdog 30 s; then
+  `FBSceneSnapshotAction ... anulled`, "Reaping invalid snapshot"), and on the reopen `Logical Activate` [0x2797]
+  plus two Forward Events. Then `Process declined watchdog termination with reason: override default is set` and
+  `Provision violated for watchdog scene-update` (10 s). Every action sent before the background transition
+  was completed. The connection Preferences cancels at background is UIKit KeyboardManagement (normal).
+  No backboardd/SweetNativeMetal error, refusal or CRASH in that window.
+- Together with the earlier Preferences-side log (it logged didEnterBackground and `invalidateConnection
+  (appDidSuspend)`, then nothing, with its main thread idle in the run loop): Preferences handles the deactivation
+  but SpringBoard never receives the action replies. Guess, not proven: either the replies are lost in IPC, or
+  UIKit holds the deactivate reply until its own background snapshot finishes, and that snapshot never finishes.
+  Calendar reopens fine, so this is not general to every app.
+- Next: log both sides in one boot (`sweetdtlog=SpringBoard,Preferences` needs 12 more bytes: e.g. drop
+  `-noprogress`, which does nothing with `-v`). Check whether Preferences logs its action responses or a snapshot step.
