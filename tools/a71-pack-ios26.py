@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -50,6 +51,9 @@ def main():
     parser.add_argument('--touch', action='store_true', help='enable the Samsung SEC_TS driver in an A71 kernel build')
     parser.add_argument('--keys', action='store_true', help='enable the power and volume key driver')
     parser.add_argument('--wifi', action='store_true', help='enable the A71 WLAN device tree and wland kernel interfaces')
+    parser.add_argument('--bluetooth', type=Path, metavar='FWDIR',
+                        help='sweetbt=1 and /arm-io/bluetooth with crbtfw21.tlv + crnv21.bin from FWDIR '
+                             '(the A71 vendor files apbtfw11.tlv/apnv11.bin under the driver\'s fallback names)')
     parser.add_argument('--adreno-firmware', type=Path, help='enable A618 stage 9 using firmware from this A71')
     parser.add_argument('--metal', action='store_true', help='select the installed SweetMetal2 bundle')
     parser.add_argument('--payload', action='store_true', help='apply a verified raw package on this boot')
@@ -79,6 +83,8 @@ def main():
         parser.error('--touch requires an XNU build with the A71 SEC_TS patch')
     if args.wifi and (args.ramdisk or b'flame wlan: /dev/wlan ready' not in kernel or b'sweetsmmuwlan' not in kernel):
         parser.error('--wifi requires the installed root and an A71 WLAN kernel')
+    if args.bluetooth and (args.ramdisk or b'SWEET BT: stage %u starts in %u s' not in kernel):
+        parser.error('--bluetooth requires the installed root and a kernel with bsd/dev/sweet_bt.c')
     if args.metal and not args.adreno_firmware:
         parser.error('--metal requires --adreno-firmware')
     if args.ramdisk and (args.adreno_firmware or args.payload):
@@ -117,6 +123,8 @@ def main():
         # without the probe the firmware's first DMA after "12 rings programmed" resets the
         # SoC (iOS 16 wave5/wave6; iOS 26 Wi-Fi boots 2026-11-20 had no SWEET SMMU line).
         cmdline += ' sweetpmem=1 sweetsmmuwlan=1 sweetsmmuprobe=1 sweetnull=wland,backboardd,SpringBoard'
+    if args.bluetooth:
+        cmdline += ' sweetbt=1'
     cmdline += ADRENO_ARGS if args.adreno_firmware else ' sweetgpu=0'
     if args.metal:
         cmdline += ' sweetmtl=2 sweetgles=0'
@@ -164,6 +172,12 @@ def main():
             subprocess.run([sys.executable, str(Path(__file__).with_name('adt-add-wlan.py')),
                             str(tree), str(wlan_tree)], check=True)
             tree = wlan_tree
+        if args.bluetooth:
+            bt_tree = temp / 'a71-bt.adt'
+            env = dict(os.environ, SWEETBTFILES='crbtfw21.tlv crnv21.bin')
+            subprocess.run([sys.executable, str(Path(__file__).with_name('adt-add-bluetooth.py')),
+                            str(tree), str(bt_tree), str(args.bluetooth)], check=True, env=env)
+            tree = bt_tree
         if args.adreno_firmware:
             tree = add_adreno_firmware(tree, args.adreno_firmware)
         payload, info = mkpayload.build(args.kernel, tree, cmdline, args.ramdisk)
