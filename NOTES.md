@@ -3006,3 +3006,33 @@ on hold (state above).
   could relate to the Settings snapshot never finishing on deactivate. Next: run the scanner on the phone in TWRP,
   see which files are bad (expect `applicationState.db` / `-wal` / `-shm` under
   `/private/var/mobile/Library/FrontBoard`), then decide on a fix (delete or replace those files by package; owner OK).
+- **Owner repro on this boot: Settings hung again.** SpringBoard side as before: Logical Activate [0x7cf2] completed,
+  then Logical Deactivate [0xd3c6] (10 s), Forward Event [0xbd73] (30 s), reopen Logical Activate [0x962] never
+  completed; `Provision violated for watchdog scene-update`, `override default is set`. Preferences side (pid 615,
+  first dtlog of it): at 09:04:17.638 its main thread 7877 logs `Received action(s) in scene-update:
+  <FBSceneSnapshotAction>`, SwiftUI state restoration activity, keyboard XPC cancel, `invalidateConnection
+  (appDidSuspend)`, background tasks, and at 09:04:17.672 `[automatic cooldown] immediately cooling down due to
+  didEnterBackground`. **After that thread 7877 never logs again** (no reaction to the reopen Logical Activate);
+  only monitor threads log `unknown-NotVisible` state updates. So the main thread stops handling scene actions
+  right after the snapshot action / didEnterBackground. The earlier stack sample had it idle in the run loop, which
+  fits a lost reply/main-queue block rather than a busy loop. Still a guess.
+- Phone sent to TWRP with `a71:recovery`. Shutdown log: `syncing disks...`, processes killed, `vfs_unmountall(system)`
+  `unmount(0) /`, and HFSINC keeps firing during shutdown.
+- **HFS root is damaged and not journaled.** `tools/a71-hfs-journal.py` (new): phone root attributes `0x80004000`
+  = not journaled, not cleanly unmounted, kHFSVolumeInconsistent set. Original image `0x80000100` (clean, not
+  journaled). `tools/a71-hfs-scan.py` (extended: extent map vs totalBlocks, cross-linked extents), output in ignored
+  `build/hfs-scan-2026-11-27c.txt`, per-file counts in `build/hfs-overlap-files.txt`:
+  - 273,429 file records; 14 records with size > allocated blocks (these are the HFSINC/EINVAL files: e.g.
+    `/private/var/db/prng.seed`, several `-wal` files, `linkd.metadatastore.sqlite3-wal` 8.5 MB with 0 blocks);
+    22 records whose extents do not add up to totalBlocks, including FrontBoard `applicationState.db-wal`
+    (81 blocks declared, 74 mapped; the .db itself passes `pragma integrity_check`).
+  - **153 cross-linked extents (~9,500 blocks) shared by two files**, 132 files involved, all under `/private/var`
+    (WALs, tracev3, CloudKit, knowledgeC, poster.log, mg-backup, cc-backup, two orphan cnids 469898/506243).
+    None in `/System`, the B-trees or the allocation file. Original image: 0 overlaps. Writes to one of these files
+    overwrite the other, so damage spreads. Likely mechanism (guess): allocation bitmap not on disk at a hard reset,
+    blocks reused after reboot. Fits the earlier sweet history (HFS corruption after unclean panics, journaling planned).
+  - Not shown to be the cause of the Settings hang; it can explain the SpringBoard BSSqlite I/O errors and random
+    state loss.
+- Proposed (needs owner OK, destructive): back up the HFS volume (first 6,291,456 x 4 KiB of userdata) to the PC,
+  build static aarch64 `fsck.hfsplus` in the VM, run `-n` from TWRP to see the report, then repair with `-y` if
+  acceptable. Long term: journal on the root (mkfs `-J` worked on sweet v4) or at least avoid hard resets.

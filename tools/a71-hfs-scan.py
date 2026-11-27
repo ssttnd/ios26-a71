@@ -39,12 +39,58 @@ def catalog_extents(v):
     return ext
 
 
+def overflow_blocks(v):
+    """{(forkType, cnid): blocks} summed over every record in the extents overflow B-tree."""
+    ext = v.fork_extents(v.extfork)
+    hdr = v.fork_read(ext, 0, 512)
+    ns = struct.unpack('>H', hdr[14 + 18:14 + 20])[0]
+    i = struct.unpack('>I', hdr[14 + 10:14 + 14])[0]
+    out = {}
+    while i:
+        d = v.fork_read(ext, i * ns, ns)
+        for k in range(struct.unpack('>H', d[10:12])[0]):
+            o = struct.unpack('>H', d[ns - 2 * (k + 1):ns - 2 * k])[0]
+            kl = struct.unpack('>H', d[o:o + 2])[0]
+            key = (d[o + 2], struct.unpack('>I', d[o + 4:o + 8])[0])
+            r = o + 2 + kl
+            pairs = [struct.unpack('>II', d[r + j * 8:r + j * 8 + 8]) for j in range(8)]
+            out[key] = out.get(key, 0) + sum(c for _, c in pairs)
+            EXTENTS.extend((s, c, key[1]) for s, c in pairs if c)
+        i = struct.unpack('>I', d[0:4])[0]
+    return out
+
+
+EXTENTS = []    # (startBlock, blockCount, cnid) of every allocated extent seen
+
+
+def cross_links(v, names_of):
+    """Extents claimed by two files (or by a file and a B-tree / special file)."""
+    for cnid, fork in ((3, v.extfork), (4, v.catfork)):
+        EXTENTS.extend((s, c, cnid) for s, c in v.fork_extents(fork) if c)
+    h = v.read(1024, 512)
+    for cnid, off in ((6, 112), (7, 352), (8, 432)):   # allocation, attributes, startup files
+        EXTENTS.extend((s, c, cnid) for s, c in v.fork_extents(h[off:off + 80]) if c)
+    EXTENTS.sort()
+    hits = []
+    end, owner = -1, None
+    for s, c, cnid in EXTENTS:
+        if s < end and cnid != owner:
+            hits.append((s, c, cnid, owner))
+        if s + c > end:
+            end, owner = s + c, cnid
+    print(f'{len(EXTENTS)} extents, {len(hits)} overlapping, {v.total} blocks on the volume')
+    for s, c, a, b in hits[:200]:
+        print(f'overlap at block {s}+{c}: {names_of(a)} <-> {names_of(b)}')
+
+
 def scan(v):
+    over = overflow_blocks(v)
     ext = catalog_extents(v)
     hdr = v.fork_read(ext, 0, 512)
     first_leaf = struct.unpack('>I', hdr[14 + 10:14 + 14])[0]
     ns = v.node_size
     names = {}      # cnid -> (parent, name) for folders
+    file_names = {}
     bad = []
     files = 0
     i = first_leaf
@@ -61,13 +107,20 @@ def scan(v):
             elif rt == 2:
                 files += 1
                 cnid = struct.unpack('>I', rec[8:12])[0]
+                file_names[cnid] = (parent, name)
                 mode = struct.unpack('>H', rec[42:44])[0]
                 for fork_name, off in (('data', 88), ('rsrc', 168)):
+                    EXTENTS.extend((s, c, cnid) for s, c in v.fork_extents(rec[off:off + 80]) if c)
                     size = struct.unpack('>Q', rec[off:off + 8])[0]
                     blocks = struct.unpack('>I', rec[off + 12:off + 16])[0]
                     need = -(-size // v.bs)
                     if need > blocks:
                         bad.append((parent, name, cnid, fork_name, size, blocks, need, 'size>blocks'))
+                    mapped = sum(struct.unpack('>I', rec[off + 20 + j * 8:off + 24 + j * 8])[0] for j in range(8))
+                    mapped += over.get((0 if fork_name == 'data' else 0xff, cnid), 0)
+                    if mapped != blocks:
+                        bad.append((parent, name, cnid, fork_name, size, blocks, mapped,
+                                    'extents map %d blocks (not an open error, but a damaged or unreplayed record)' % mapped))
                 if mode & S_IFMT == S_IFLNK and struct.unpack('>Q', rec[88:96])[0] > MAXPATHLEN:
                     bad.append((parent, name, cnid, 'data', struct.unpack('>Q', rec[88:96])[0], 0, 0, 'long symlink'))
         i = struct.unpack('>I', d[0:4])[0]
@@ -84,6 +137,9 @@ def scan(v):
     print(f'{files} file records, {len(bad)} bad')
     for parent, name, cnid, fork_name, size, blocks, need, why in bad:
         print(f'{path(parent, name)}\tcnid={cnid}\t{fork_name}\tsize={size}\tblocks={blocks}\tneed={need}\t{why}')
+    special = {3: '[extents B-tree]', 4: '[catalog B-tree]', 6: '[allocation file]', 7: '[attributes B-tree]',
+               8: '[startup file]'}
+    cross_links(v, lambda c: special.get(c) or (path(*file_names[c]) if c in file_names else f'cnid {c}'))
 
 
 def main():
