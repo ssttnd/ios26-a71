@@ -3226,3 +3226,9 @@ on hold (state above).
   **xnu 2140** (`1810e64`): PE_init_platform appends ADT `/chosen sweet-boot-args` to the kernel's own boot_args copy
   right after SecureDTInit; the packer moves the tail of a too-long line there (up to 1023 bytes total). Kernel CI
   `46052288068` (2136-2140). 2139 run `46050814319` (2136-2139) also in progress.
+- Kernel CI `46050814319` (2136-2139) success, kernel `a1d93e18...` in `research/ci-46050814319/`. Boot
+  `build/a71-ios26-2139-all.img` (`0f7b0f5a...`, same args as 2138-all) flashed VERIFY OK, booted (log
+  `logs/usb-ios26-2139-all.txt`, 6 slots of 128 MiB). To test: long press on the lock-screen wallpaper (2139 job slots).
+- Render resolution (owner asked): the native-width option is the iPhone 12/13 mini class 1080x2340 @3x (375x812 pt):
+  width 1:1 with the panel, ~1.7x today's pixels (1242x2688 would be 2.25x). Needs canvas + display-scale in mkadt and a
+  MobileGestalt package (userdata write: owner OK). Planned after the current round. Not started.
