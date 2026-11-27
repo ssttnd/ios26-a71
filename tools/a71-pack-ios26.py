@@ -57,6 +57,8 @@ def main():
     parser.add_argument('--cpufreq', action='store_true', help='SM7150 cpufreq-hw: highest non-boost row (donor 2000; Adreno build)')
     parser.add_argument('--rtcoff', type=int, help='seconds to add to the PM6150 RTC (now - /sys/class/rtc/rtc0/since_epoch in TWRP)')
     parser.add_argument('--dtlog', help='sweetdtlog=NAME[,NAME]: their os_log on the console (donor 0205)')
+    parser.add_argument('--no-noprogress', action='store_true',
+                        help='drop -noprogress (no effect with -v) to free 12 bytes of the 607-byte boot line')
     parser.add_argument('--sample', help='sample the user stacks of NAME[,NAME]')
     parser.add_argument('--sample-interval-ms', type=int, help='time between user stack samples (minimum 50 ms)')
     parser.add_argument('--fb-hz', type=int, choices=(0, 10, 15, 20, 30, 60), help='limit copies to the panel to this rate (0 = 60, one byte shorter)')
@@ -97,6 +99,8 @@ def main():
     if args.sample and b'SMP: sampling %s' not in kernel:
         parser.error('--sample requires a kernel with the SWEET process sampler')
     cmdline = ROOT_ARGS.replace('sweetfb_scale=1', f'sweetfb_scale={args.fb_scale}')
+    if args.no_noprogress:
+        cmdline = cmdline.replace(' -noprogress', '')
     if args.ramdisk:
         ramdisk = HFS(args.ramdisk)
         with ramdisk.f:
