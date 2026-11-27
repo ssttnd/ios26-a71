@@ -3166,3 +3166,13 @@ on hold (state above).
 - Owner also reports no wallpaper on these boots (not investigated beyond: Mercury and PosterBoard run, no crash;
   in the no-wallpaper boot SpringBoard connects two MercuryPoster scenes and Mercury creates 414x896/456x196 surfaces;
   the good boot logged `Created new lock poster scene`).
+- bt3 boot (`build/a71-ios26-2135-bt3.img` `e7eaa5d6...`: bt + `sweetbtlog=600 sweetwlandelay=5`,
+  dtlog bluetoothd,MercuryPosterExtension; log `logs/usb-ios26-bt3.txt`). **bluetoothd abort cause:** the WCN3988 sends a
+  QCA vendor event `04 ff 05 00 00 10 0a 03` with every "Unknown HCI Command" reply to Broadcom VSCs (0xfce9, 0xfce2,
+  0xfe37, 0xfe29, 0xfe3b...; 64 such events); bluetoothd parses 0xff events as Broadcom ones -> `bcm_vsc.c:1021` assert.
+  **xnu 2136** (`956ba46`) drops 0xff events in `sweet_bt_hci_rx_packet` when compat is on. Kernel CI `46047765766`
+  (dispatched with new `tools/flow/dispatch.py`).
+- Wallpaper (owner: none again on bt3): MercuryPosterExtension os_log shows it launching, getting its scene, compiling
+  its Space.metallib pipelines, uploading textures and submitting GPU work (20 submits/8 s, 56/10 s, all command
+  buffers completed, no errors; HangTracer logged one 0.64 s launch hang). So Mercury renders; the missing wallpaper is
+  on the presentation/composition side or in which poster scene SpringBoard shows. Not solved.
