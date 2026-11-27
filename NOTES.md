@@ -2986,3 +2986,23 @@ on hold (state above).
 - Next: log both sides in one boot (`sweetdtlog=SpringBoard,Preferences` needs 12 more bytes: e.g. drop
   `-noprogress`, which does nothing with `-v`). Check whether Preferences logs its action responses or a snapshot step.
 - 2026-11-27 stop: phone sent to TWRP with `a71:recovery` (ADB `recovery`), PC shut down at the owner's request. `boot` = `a71-ios26-2135-sbdtlog.img` (5ce03d15...); for normal use reflash 2135-pay `492b73ec...` (same kernel, with usb-shot). Installed Metal bundle = CI 45965091440 (ir3 sampler fix). Open: Settings reopen hang (next: SpringBoard+Preferences dtlog), Wi-Fi status bar bars missing (not investigated).
+
+## 2026-11-27 evening — SpringBoard+Preferences dtlog boot; corrupt catalog records found
+
+- `11c5450` adds `--no-noprogress` to the packer (drops `-noprogress`, 12 bytes). Built
+  `build/a71-ios26-2135-sbprefdtlog.img` (22,478,848 bytes, SHA-256
+  `04c875792c5411228eeeaf0f0d9f4df28b563e1adeb3aa796124704be8260bd7`): kernel 2135 `ab799608...`, same options
+  as sbdtlog with `sweetdtlog=SpringBoard,Preferences` (boot line 601 bytes). Flashed from TWRP over sbdtlog
+  `5ce03d15...`, readback VERIFY OK. Booted, no panic. USB log `logs/usb-ios26-sbprefdtlog-settings.txt`.
+  Waiting for the owner's Settings reopen repro.
+- Observed, new: SpringBoard's BSSqlite store (FrontBoard application state: `kvs`, `application_identifier_tab`)
+  gets `disk I/O error` (Code=10) ~2,400–2,700 times per boot, in this boot and in the earlier sbdtlog boot. The same
+  boots show ~2,250 `SWEET HFSINC ... hfs_cnode.c:946` lines (mostly pid 64, 124, 140). That check in
+  `hfs_getnewvnode` rejects a catalog file record whose fork size needs more blocks than it has (or a symlink
+  longer than 1024): EINVAL on every open, volume marked inconsistent.
+- `9b79033` adds `tools/a71-hfs-scan.py` (read only, from TWRP or `--image`). On the original root
+  `build/ios26-root-a71-23G90.img`: 239,347 file records, 0 bad. So the bad records appeared on the phone.
+- Guess, not proven: FrontBoard keeps app snapshot manifests in that application-state store, so failed writes
+  could relate to the Settings snapshot never finishing on deactivate. Next: run the scanner on the phone in TWRP,
+  see which files are bad (expect `applicationState.db` / `-wal` / `-shm` under
+  `/private/var/mobile/Library/FrontBoard`), then decide on a fix (delete or replace those files by package; owner OK).
