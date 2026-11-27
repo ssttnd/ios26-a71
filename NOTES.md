@@ -3206,3 +3206,23 @@ on hold (state above).
   allows 6 slots of 128 MiB. Kernel CI `46049510634` = 2136+2137+2138 (2137-only run cancelled).
 - Next boot plan: new kernel, bt, `sweetm2window=128`, read the refused-client lines, then add the icon/widget
   renderers with sweetmtlextra; use `a71:kill:` for the wallpaper experiment; check bluetoothd no longer aborts.
+
+## 2026-11-27 night — kernels 2136-2140, GPU refusals, wallpaper kill test
+
+- Kernel CI `46049510634` (2136+2137+2138) success, artifact `15225031517`, kernel `3caee045...` (SHA256SUMS ok) in
+  `research/ci-46049510634/`. Boot `build/a71-ios26-2138-all.img` (`012e660a...`): Wi-Fi back on (bt images had dropped
+  `--wifi` for boot-line room: owner noticed no Wi-Fi), bt, usb-shot, `sweetm2window=128`, no payload/dtlog. Log
+  `logs/usb-ios26-2138-all.txt`.
+- **2138 refusal log:** `SpringBoard`, `WidgetRenderer_Default`, `chronod`, `iconservicesagent` were refused a Metal
+  device. Matches the broken parts (Clear icons, widgets). Next: `sweetmtlextra=SpringBoard,WidgetRenderer_Default,
+  chronod,iconservicesagent` with 6 slots of 128 MiB.
+- **2136 works** (QCA vendor events dropped) but bluetoothd still aborts (9x SIGABRT, 5x reason 1201 before the
+  controller is up); its os_log is needed (no room on the boot line).
+- **a71:kill (2137) works.** No wallpaper on this boot. `a71:kill:MercuryPosterExt` killed 2 instances; afterwards the
+  home screen shows a flat light-blue backdrop (shots `build/kill1-mercury.png`, `kill2-mercury-later.png`) instead of
+  black, not the real poster. `a71:kill:PosterBoard` (pid 256): PosterBoard is launched on demand and did not come
+  back by itself; backdrop unchanged (`kill3-posterboard.png`).
+- Boot-line limit: 607 bytes is our shim payload format (`cmdline[608]`), not XNU (12377 arm64 boot_args has 1024).
+  **xnu 2140** (`1810e64`): PE_init_platform appends ADT `/chosen sweet-boot-args` to the kernel's own boot_args copy
+  right after SecureDTInit; the packer moves the tail of a too-long line there (up to 1023 bytes total). Kernel CI
+  `46052288068` (2136-2140). 2139 run `46050814319` (2136-2139) also in progress.
