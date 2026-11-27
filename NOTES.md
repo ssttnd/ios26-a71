@@ -2953,3 +2953,12 @@ on hold (state above).
 - Also looked at the Galaxy A51 ports (`AnkitChoudhary-1/hakios-SM-A515F`, iOS 16.5, Exynos 9611/Mali).
   Different SoC, touch, Wi-Fi and PMIC, so nothing carries over directly. Possibly useful later: their
   IPv4 DNS fallback for WebKit IPv6 stalls, and their `.ipa` injection (`inject_app.c`, `app_reg.m`).
+- Owner after the reboot: **wallpaper is back, everything fine**. So the missing wallpaper was only on the
+  first boot after the install and went away after one reboot (cause unknown). Calendar: after reopening it, the
+  glass at the top was broken once, then fixed itself before a screenshot could be taken (USB had dropped:
+  COM7 and ADB both gone from Windows, so `a71:shot` was not delivered).
+- **Settings reopen hang still present** (owner). Next step from the 2026-11-24 analysis: SpringBoard/FrontBoard
+  os_log on the reopen. The boot line had 593 of 607 bytes. Built `build/a71-ios26-2135-sbdtlog.img` (22,478,848
+  bytes, SHA-256 `5ce03d15ae99b62ab65659b29944b3c8de0dae9f3de1b9e2f70ee3ca672ba7e1`): same kernel 2135
+  (`ab799608...`, CI 45442592756) and options as 2135-pay, minus `sweetusbshot=1`, plus `sweetdtlog=SpringBoard`
+  (601 bytes). Not flashed yet; waiting for the phone's USB to come back. The current boot is still 2135-pay `492b73ec...`.
