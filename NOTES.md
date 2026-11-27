@@ -2935,6 +2935,12 @@ on hold (state above).
   Z-clip change. Not packaged or installed yet; the phone is untouched.
 - Guess: the sampler fix could cut down on the black backdrop or outline-only glass. Test with the normal Glass
   package flags, matching the full-export package with the magenta control, blend bypass and GLASSPX paused.
+- Installed: package `build/a71-ios26-glass-ir3-sampler.payload` (bundle only, 9 entries; the three
+  diagnostic flags were already paused by the full-export package), 9,056,256 bytes, SHA-256
+  `c6e780c3ef84f29202e2d35da2aa4098da329d0e675c687f70e3a88d6d888fab`, written from TWRP with readback
+  `VERIFY OK`. `boot` matched 2135-pay `492b73ec...` beforehand and was not rewritten. Next boot USB log
+  `logs/usb-ios26-glass-ir3-sampler.txt`: `SWEET PAYLOAD: finished 9/9 errno=0`, Metal discovery
+  published on A618, SpringBoard exec, GLASSU enabled, no panic so far. Visual result from the owner pending.
 - Also looked at the Galaxy A51 ports (`AnkitChoudhary-1/hakios-SM-A515F`, iOS 16.5, Exynos 9611/Mali).
   Different SoC, touch, Wi-Fi and PMIC, so nothing carries over directly. Possibly useful later: their
   IPv4 DNS fallback for WebKit IPv6 stalls, and their `.ipa` injection (`inject_app.c`, `app_reg.m`).
