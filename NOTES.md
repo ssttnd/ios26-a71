@@ -3069,3 +3069,22 @@ on hold (state above).
   `build/hfs-fix-2026-11-27/catalog-node-29591.orig` (`e6148a88...`), sorted copy `947b6074...`. Dry run OK;
   **not written** (needs owner OK for a hand edit). After writing: `fsck -f -y` on loop1, expected to fix the 22 block
   counts and delete the orphan thread records without a catalog rebuild.
+- Node fix: writing only a permuted offset table was wrong (fsck: `Invalid node structure (4, 29591)`; records must
+  also be physically in key order). Rewrote leaf 29591 with the record bytes repacked in key order from the saved
+  original (`95a12e82...`, readback OK). Then **`fsck -f -y` on loop1 succeeded** ("repaired successfully", exit 0):
+  fixed 22 block counts, missing/orphan thread records, directory counts, hard links (dropbear host keys
+  469027/469030 and their iNodes), 68 files with overlapped extents (links in `/DamagedFiles`), bitmap and free
+  count. `fsck -n` afterwards: "appears to be OK"; header `0x80000100` (clean). `a71-hfs-scan.py` (fixed to ignore
+  overflow records past a fork's end) now: 0 bad, 0 overlapping, on both the image and the phone.
+- **Then iOS panicked on every boot** (owner photo): `SWEET EARLY PANIC: initproc failed to start -- exit reason
+  namespace 2 subcode 0xa` right after launchd maps the dyld cache (the "not in trust cache" lines are normal).
+  Persistent log: `CRASH launchd[1] sig 10 ... pc 0x10e00000001 lr 0x1ac46e610` = jump to a garbage pointer from
+  shared cache data.
+- `tools/a71-hfs-diffmap.py` (4 MiB chunk hashes, phone vs `build/ios26-root-a71-23G90.img`; 1480 of 6144 chunks
+  differ) + `tools/a71-hfs-filecmp.py` (per-extent hashes of candidate files): 199 candidate system files are
+  identical; **7 dyld cache subfiles differ**: `dyld_shared_cache_arm64e.21`, `.29`, `.31`, `.33.dylddata`,
+  `.34.dyldreadonly`, `.35.dyldlinkedit`, `.64` (one extent each, same location and size as in the image).
+  Likely the first failed `-y` rebuild wrote new catalog nodes into blocks the under-allocated bitmap showed as free.
+  (Guess: the bitmap may already have shown these blocks free before; then iOS itself could have written over them.)
+- Fix ready, not run (auto mode needs the owner's OK): `tools/a71-hfs-restore-extents.py ADB IMAGE PATHS --write`
+  copies each file's extent from the image back to the same blocks (~0.97 GB) and verifies by hash.

@@ -62,7 +62,12 @@ def main():
     v = load('a71-hfs-get').RemoteHFS(adb)
     ext = load('a71-hfs-scan').catalog_extents(v)
     ns = v.node_size
-    d = v.fork_read(ext, n * ns, ns)
+    on_phone = v.fork_read(ext, n * ns, ns)
+    d = on_phone
+    if '--base' in sys.argv:   # build from a saved original node instead of what is on the phone now
+        d = open(sys.argv[sys.argv.index('--base') + 1], 'rb').read()
+        if len(d) != ns:
+            sys.exit('base file is not one node')
     if struct.unpack('>b', d[8:9])[0] != -1:
         sys.exit('not a leaf node')
     flink, blink = struct.unpack('>II', d[0:8])
@@ -81,15 +86,33 @@ def main():
     if next_first is not None and not new[-1][0] < next_first:
         sys.exit(f'next leaf {flink} starts at {next_first}, not above {new[-1][0]}')
     cnt = len(cur)
+    # Records must also be stored in key order (offsets ascending), so repack the record bytes.
+    # Record lengths come from the physical layout: each record runs to the next offset, the last
+    # to the free-space offset.
+    free = struct.unpack('>H', d[ns - 2 * (cnt + 1):ns - 2 * cnt])[0]
+    phys = sorted(o for _, o in cur) + [free]
+    length = {phys[i]: phys[i + 1] - phys[i] for i in range(cnt)}
+    if phys[0] != 14:
+        sys.exit(f'first record at 0x{phys[0]:x}, expected 0xe')
+    body = b''.join(d[o:o + length[o]] for _, o in new)
+    assert len(body) == free - 14
     fixed = bytearray(d)
+    fixed[14:free] = body
+    pos = 14
     for k, (_, o) in enumerate(new):
-        fixed[ns - 2 * (k + 1):ns - 2 * k] = struct.pack('>H', o)
+        fixed[ns - 2 * (k + 1):ns - 2 * k] = struct.pack('>H', pos)
+        pos += length[o]
     fixed = bytes(fixed)
-    assert fixed[:ns - 2 * cnt] == d[:ns - 2 * cnt] and fixed[ns - 2 * (cnt + 1):ns - 2 * cnt] == d[ns - 2 * (cnt + 1):ns - 2 * cnt]
+    assert pos == free and fixed[:14] == d[:14] and fixed[free:ns - 2 * cnt] == d[free:ns - 2 * cnt]
+    check = keys(v, fixed)
+    assert [k for k, _ in check] == [k for k, _ in new] and [o for _, o in check] == sorted(o for _, o in check)
+    for (_, o_new), (_, o_old) in zip(check, new):
+        assert fixed[o_new:o_new + length[o_old]] == d[o_old:o_old + length[o_old]]
     os.makedirs(outdir, exist_ok=True)
     orig_path = os.path.join(outdir, f'catalog-node-{n}.orig')
-    fixed_path = os.path.join(outdir, f'catalog-node-{n}.sorted')
-    open(orig_path, 'wb').write(d)
+    fixed_path = os.path.join(outdir, f'catalog-node-{n}.repacked')
+    if not os.path.exists(orig_path):
+        open(orig_path, 'wb').write(d)
     open(fixed_path, 'wb').write(fixed)
     byte_off = node_offset(v, ext, n)
     print(f'node {n}: {cnt} records, prev leaf {blink} last {prev_last}, next leaf {flink} first {next_first}')
@@ -106,7 +129,7 @@ def main():
     nw = 0x08000000 if os.name == 'nt' else 0
     run = lambda *a: subprocess.run([adb, *a], capture_output=True, text=True, creationflags=nw)
     now = run('exec-out', f'dd if={TGT} bs=512 skip={byte_off // 512} count={ns // 512} 2>/dev/null | sha256sum').stdout.split()[0]
-    if now != hashlib.sha256(d).hexdigest():
+    if now != hashlib.sha256(on_phone).hexdigest():
         sys.exit(f'node changed on the phone since it was read: {now}')
     if run('push', fixed_path, '/tmp/catnode.bin').returncode:
         sys.exit('adb push failed')

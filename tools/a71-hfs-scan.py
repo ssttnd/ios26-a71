@@ -40,7 +40,9 @@ def catalog_extents(v):
 
 
 def overflow_blocks(v):
-    """{(forkType, cnid): blocks} summed over every record in the extents overflow B-tree."""
+    """{(forkType, cnid): [(fileStartBlock, [(start, count) x8]), ...]} from the extents overflow B-tree.
+    Callers use only records with fileStartBlock < the fork's totalBlocks: records past the end are
+    stale and allocate nothing (fsck_hfs ignores them too)."""
     ext = v.fork_extents(v.extfork)
     hdr = v.fork_read(ext, 0, 512)
     ns = struct.unpack('>H', hdr[14 + 18:14 + 20])[0]
@@ -52,12 +54,20 @@ def overflow_blocks(v):
             o = struct.unpack('>H', d[ns - 2 * (k + 1):ns - 2 * k])[0]
             kl = struct.unpack('>H', d[o:o + 2])[0]
             key = (d[o + 2], struct.unpack('>I', d[o + 4:o + 8])[0])
+            fstart = struct.unpack('>I', d[o + 8:o + 12])[0]
             r = o + 2 + kl
             pairs = [struct.unpack('>II', d[r + j * 8:r + j * 8 + 8]) for j in range(8)]
-            out[key] = out.get(key, 0) + sum(c for _, c in pairs)
-            EXTENTS.extend((s, c, key[1]) for s, c in pairs if c)
+            out.setdefault(key, []).append((fstart, pairs))
         i = struct.unpack('>I', d[0:4])[0]
+    for cnid in (3, 4, 6, 7, 8):   # special files: count every overflow record
+        for _, pairs in out.get((0, cnid), []):
+            EXTENTS.extend((s, c, cnid) for s, c in pairs if c)
     return out
+
+
+def live_overflow(over, fork_type, cnid, total):
+    pairs = [p for fstart, ps in over.get((fork_type, cnid), []) if fstart < total for p in ps]
+    return [(s, c) for s, c in pairs if c]
 
 
 EXTENTS = []    # (startBlock, blockCount, cnid) of every allocated extent seen
@@ -117,7 +127,9 @@ def scan(v):
                     if need > blocks:
                         bad.append((parent, name, cnid, fork_name, size, blocks, need, 'size>blocks'))
                     mapped = sum(struct.unpack('>I', rec[off + 20 + j * 8:off + 24 + j * 8])[0] for j in range(8))
-                    mapped += over.get((0 if fork_name == 'data' else 0xff, cnid), 0)
+                    extra = live_overflow(over, 0 if fork_name == 'data' else 0xff, cnid, blocks)
+                    EXTENTS.extend((s, c, cnid) for s, c in extra)
+                    mapped += sum(c for _, c in extra)
                     if mapped != blocks:
                         bad.append((parent, name, cnid, fork_name, size, blocks, mapped,
                                     'extents map %d blocks (not an open error, but a damaged or unreplayed record)' % mapped))
