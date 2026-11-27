@@ -3053,3 +3053,19 @@ on hold (state above).
 - Next (needs owner OK, destructive, no backup): `fsck.hfsplus -f -y /dev/block/sda32` in TWRP, rerun `-n` until
   clean, rescan, boot. If repair fails, the fallback is reinstalling the root from `build/ios26-root-a71-23G90.img`
   plus packages (all phone state lost).
+- Owner OK'd repair without backup. **`fsck.hfsplus -f -y /dev/block/sda32` failed** ("could not be repaired"):
+  it reached `Rebuilding catalog B-tree` and stopped on `Invalid node structure (4, 179)`. Debug rerun shows the
+  failure is while writing the *new* tree (`hfs_UNswap_BTNode: invalid node height (1)`, `offsets 1534 and 1535 out
+  of order`); the existing node 179 reads fine. Looks like a rebuild bug in the Linux fsck port. The catalog itself
+  is unchanged (a following `-n` reports the same 22 block/size errors and the same keys out of order).
+- Side effects of the first `-y` run: volume hash changed to `16f59684...` (primary VHB lastMountedVersion now `fsck`;
+  any other rebuild writes into free space unknown). Because it was run on the whole 117 GB partition it also wrote an
+  alternate VHB at partition sector 229947126 (last 1 KiB of userdata = inside the persistent log ring, not the
+  package area). Later runs use a size-limited loop device instead:
+  `losetup -S 25769803776 /dev/block/loop1 /dev/block/sda32` (alternate VHB then at volume end, sector 50331646).
+- Prepared surgical fix `tools/a71-hfs-sortleaf.py`: permutes only the offset table of leaf 29591 so its keys ascend
+  (record bytes and free offset unchanged; first key unchanged; fits between leaf 29585 last key (594000, ...) and
+  leaf 29365 first key (594446, '')). Node at volume byte 19248574464, 8192 bytes. Original saved in ignored
+  `build/hfs-fix-2026-11-27/catalog-node-29591.orig` (`e6148a88...`), sorted copy `947b6074...`. Dry run OK;
+  **not written** (needs owner OK for a hand edit). After writing: `fsck -f -y` on loop1, expected to fix the 22 block
+  counts and delete the orphan thread records without a catalog rebuild.
