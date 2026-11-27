@@ -1,0 +1,45 @@
+A71 Bluetooth: return the full Broadcom 0xfe3b statistics record.
+
+During LE scan setup the WCN3988 responds with Unknown HCI Command.
+The compatibility path returns success with 16 bytes, but the 23G90
+completion parser reads 212 bytes and aborts at bcm_vsc.c:1021. Emit an
+empty statistics record for this opcode, within the normal HCI event limit.
+
+diff --git a/bsd/dev/sweet_bt_hci.c b/bsd/dev/sweet_bt_hci.c
+--- a/bsd/dev/sweet_bt_hci.c
++++ b/bsd/dev/sweet_bt_hci.c
+@@ -379,19 +379,28 @@
+ 		 * 0x32 instead of 0x01 for LE Meta Enable Features, its completion never ran and
+ 		 * bluetoothd restarted after 15 s ("timedout waiting for controller", reason 3602).
+ 		 */
+-		unsigned i, p0 = op == bt_pend.op ? bt_pend.p0 : bt_cmd_param0(op);
+-
+-		p[2] = 4 + BT_COMPAT_PAD;
++		unsigned p0 = op == bt_pend.op ? bt_pend.p0 : bt_cmd_param0(op);
++		unsigned params = BT_COMPAT_PAD;
++
++		/* The Broadcom 0xfe3b completion parser in iOS 26 reads a
++		 * 212-byte statistics record on success. Qualcomm has no
++		 * equivalent for this command, so report zero counters.
++		 */
++		if (op == 0xfe3b) {
++			params = 212;
++			p0 = 0;
++		}
++		p[2] = 4 + params;
+ 		p[6] = 0;
+ 		p[7] = (uint8_t)p0;
+-		for (i = 1; i < BT_COMPAT_PAD; i++) {
++		for (unsigned i = 1; i < params; i++) {
+ 			p[7 + i] = 0;
+ 		}
+ 		bt.compat_fixed++;
+ 		printf("SWEET BT: compat: opcode %#06x (OGF %#x OCF %#05x) status %#04x from the controller, answered as success "
+-		    "with %u parameter bytes (first %#04x) (%u so far)\n", op, op >> 10, op & 0x3ff, st, BT_COMPAT_PAD, p0,
++		    "with %u parameter bytes (first %#04x) (%u so far)\n", op, op >> 10, op & 0x3ff, st, params, p0,
+ 		    bt.compat_fixed);
+-		return 7 + BT_COMPAT_PAD;
++		return 7 + params;
+ 	}
+ 	if (bt.err_budget) {
+ 		bt.err_budget--;
