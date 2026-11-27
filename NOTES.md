@@ -3197,3 +3197,12 @@ on hold (state above).
   Kernel CI `46049039273` (2136 + 2137; 2136-only run 46047765766 cancelled). Plan: on a boot without wallpaper, kill
   MercuryPosterExt, then PosterBoard, then WidgetRenderer_Default one at a time with USB shots in between, to find the
   restart that brings it back; then make that automatic (kernel or launchd job), and keep looking for the root cause.
+- Owner: "Clear" icon style shows empty glass tiles (USB shot `build/shot-icons.png`, wallpaper present after the userspace
+  reboot; both widgets still blank white). Only backboardd and MercuryPosterExtension opened the GPU in this boot; the
+  kernel allows extra Metal clients only for AegirPoster/MercuryPosterExtension/PosterBoard (3 slots of 256 MiB at
+  0x80000000; 0xb0000000.. is the framebuffer present-copy range) and refused others silently. SpringBoard logs
+  "native A618 backend unavailable". Guess: Clear-icon generation and widget rendering need a Metal device they are
+  denied. **xnu 2138** (`88c677f`): logs refused clients, `sweetmtlextra=NAME,...` adds names, `sweetm2window=128`
+  allows 6 slots of 128 MiB. Kernel CI `46049510634` = 2136+2137+2138 (2137-only run cancelled).
+- Next boot plan: new kernel, bt, `sweetm2window=128`, read the refused-client lines, then add the icon/widget
+  renderers with sweetmtlextra; use `a71:kill:` for the wallpaper experiment; check bluetoothd no longer aborts.
