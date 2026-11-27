@@ -1,0 +1,36 @@
+A71 Bluetooth: drop Qualcomm vendor events (0xff) before bluetoothd. The A71's WCN3988 answers every
+Broadcom vendor command from bluetoothd with "Unknown HCI Command" (rewritten to success by the compat
+layer) plus a QCA vendor event 04 ff 05 00 00 10 0a 03. bluetoothd parses 0xff events as Broadcom ones
+and aborts at bcm_vsc.c:1021 (ByteStream_NumReadBytesAvail >= 4) when LE scanning starts, so it keeps
+restarting and every CoreBluetooth client (Settings) waits on it. Only with sweetbtcompat (default 2);
+logs the first 4 drops and every 64th.
+
+diff --git a/bsd/dev/sweet_bt_hci.c b/bsd/dev/sweet_bt_hci.c
+index 54ac6bc..0cfa91c 100644
+--- a/bsd/dev/sweet_bt_hci.c
++++ b/bsd/dev/sweet_bt_hci.c
+@@ -412,6 +412,24 @@ sweet_bt_hci_rx_packet(const uint8_t *pkt, unsigned len)
+ 		bt.rx_drop_nc++;
+ 		return;
+ 	}
++	if (bt.compat && pkt[0] == 4 && len >= 3 && pkt[1] == 0xff) {
++		/*
++		 * 2136: Qualcomm vendor events never reach bluetoothd. The WCN3988/3990 sends one
++		 * (04 ff 05 00 00 10 0a 03 on the A71) next to its "Unknown HCI Command" reply to every
++		 * Broadcom vendor command; bluetoothd parses any 0xff event as a Broadcom one and aborts
++		 * in bcm_vsc.c:1021 (ByteStream_NumReadBytesAvail(*pBs) >= 4) once LE scanning starts.
++		 * The QCA events only matter during the firmware download, which bsd/dev/sweet_bt.c does
++		 * before userland connects.
++		 */
++		static unsigned qca_vendor_events;
++
++		qca_vendor_events++;
++		if (qca_vendor_events <= 4 || (qca_vendor_events & 63) == 0) {
++			printf("SWEET BT: compat: Qualcomm vendor event (plen %u, first %#04x) dropped (%u so far)\n",
++			    len > 2 ? pkt[2] : 0, len > 3 ? pkt[3] : 0, qca_vendor_events);
++		}
++		return;
++	}
+ 	if (pkt[0] == 4 && len >= 7 && len <= 3 + 255 && (pkt[1] == 0x0e || pkt[1] == 0x0f)) {
+ 		bt_pend_answered(pkt, len);
+ 		/* Command Complete / Status: bt_hci_compat may rewrite it (and make it longer) */
