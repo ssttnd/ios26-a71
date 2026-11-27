@@ -3176,3 +3176,9 @@ on hold (state above).
   its Space.metallib pipelines, uploading textures and submitting GPU work (20 submits/8 s, 56/10 s, all command
   buffers completed, no errors; HangTracer logged one 0.64 s launch hang). So Mercury renders; the missing wallpaper is
   on the presentation/composition side or in which poster scene SpringBoard shows. Not solved.
+- Home screen USB shot on bt3 (`build/shot-home-nowall.png`): black backdrop, dock glass and icons fine, **both top
+  widgets are blank white tiles**: widgets do not render either. Process start order (SpringBoard/backboardd Metal
+  restart, then PosterBoard, 2x MercuryPosterExtension, WidgetRenderer) is the same in boots with and without
+  wallpaper; the two Mercury instances start close together in both kinds. No crash of chronod/WidgetRenderer/
+  PosterBoard/Mercury. Next: a good/bad pair on the same image with Mercury os_log (bt3 logs it): reboot until the
+  wallpaper shows, then diff.
