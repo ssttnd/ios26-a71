@@ -1,0 +1,191 @@
+diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
+--- a/tools/mesa/air/air_metal.c
++++ b/tools/mesa/air/air_metal.c
+@@ -1120,7 +1120,14 @@
+ struct rwa_surface_import {
+    int id;
+    unsigned offset, row_bytes;
++   struct rwa_buffer *buffer;
+ };
++
++#ifdef GALLIUM_FREEDRENO
++struct pipe_resource *fd_resource_from_buffer(struct pipe_resource *buffer,
++                                              const struct pipe_resource *tmpl,
++                                              unsigned offset, unsigned stride);
++#endif
+ 
+ static struct rwa_texture *
+ texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shape,
+@@ -1538,6 +1545,16 @@
+          return NULL;
+       }
+ 
++      if (import->buffer) {
++         texture->res = fd_resource_from_buffer(import->buffer->res, &templ,
++                                                import->offset, import->row_bytes);
++         if (!texture->res) {
++            say(why, why_size, "freedreno refused the buffer texture layout");
++            free(texture);
++            return NULL;
++         }
++         return texture;
++      }
+       texture->res = device->screen->resource_from_handle(device->screen, &templ, &whandle,
+                                                           PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
+       if (!texture->res) {
+@@ -1600,6 +1617,23 @@
+       .id = surface_id, .offset = offset, .row_bytes = row_bytes };
+ 
+    return texture_of_shape(device, shape, &import, why, why_size);
++}
++
++struct rwa_texture *
++rwa_texture_from_buffer(struct rwa_buffer *buffer, const struct rwa_texture_shape *shape,
++                        size_t offset, size_t row_bytes, char *why, size_t why_size)
++{
++   if (!buffer || !shape || shape->type != 2 || !shape->width || !shape->height ||
++       shape->depth != 1 || shape->array_length != 1 || shape->mip_levels != 1 ||
++       shape->sample_count != 1 || offset > buffer->size || offset % 64 ||
++       !row_bytes || row_bytes % 64 || row_bytes > (buffer->size - offset) / shape->height) {
++      say(why, why_size, "invalid 2D linear buffer texture shape, alignment or bounds");
++      return NULL;
++   }
++   const struct rwa_surface_import import = {
++      .offset = offset, .row_bytes = row_bytes, .buffer = buffer,
++   };
++   return texture_of_shape(buffer->device, shape, &import, why, why_size);
+ }
+ 
+ struct rwa_texture *
+diff --git a/tools/mesa/air/air_metal.h b/tools/mesa/air/air_metal.h
+--- a/tools/mesa/air/air_metal.h
++++ b/tools/mesa/air/air_metal.h
+@@ -174,6 +174,10 @@
+  * NULL and a sentence on anything. A screen that imports nothing says so by name, which is
+  * what the software screen on a build machine does.
+  */
++struct rwa_texture *rwa_texture_from_buffer(struct rwa_buffer *buffer,
++                                            const struct rwa_texture_shape *shape,
++                                            size_t offset, size_t row_bytes,
++                                            char *why, size_t why_size);
+ struct rwa_texture *rwa_texture_from_surface(struct rwa_device *device,
+ 					     const struct rwa_texture_shape *shape,
+ 					     int surface_id, unsigned offset,
+diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -874,11 +874,15 @@
+     CFTypeRef _nativeSurface;
+ 	SweetNativeMetalTexture *_nativeParentTexture;
+ 	NSUInteger _nativeParentLevel;
++	SweetNativeMetalBuffer *_backingBuffer;
++	NSUInteger _bufferOffset, _bufferBytesPerRow;
+ 	bool _nativeQuartzCoreWallpaperUpload;
+ 	int _responsibleProcess;   /* as on the buffer: accounting, not behaviour */
+ }
+ @property (readonly) struct rwa_texture *mesaTexture;
+ - (void)nativeAttachSurface:(void *)surface;
++- (void)attachBuffer:(SweetNativeMetalBuffer *)buffer offset:(NSUInteger)offset
++         bytesPerRow:(NSUInteger)bytesPerRow;
+ /* Not part of MTLTexture: the depth or stencil aspect of this texture, one float and one
+  * byte per texel. Metal's own -getBytes: has no aspect to name and the compiler library
+  * refuses a depth texture through it by name, so a caller that wants to know what a depth
+@@ -2301,6 +2305,12 @@
+ - (uint64_t)halfFPConfig   { NATIVE_OBJECT_LOCK;  return 0; }
+ - (uint64_t)doubleFPConfig { NATIVE_OBJECT_LOCK;  return 0; }
+ 
++- (NSUInteger)minimumLinearTextureAlignmentForPixelFormat:(NSUInteger)format
++{ NATIVE_OBJECT_LOCK;
++	(void)format;
++	return 64;
++}
++
+ - (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)format
+ { NATIVE_OBJECT_LOCK; 
+ 	(void)format;
+@@ -2774,19 +2784,36 @@
+ 	return _responsibleProcess != 0 ? _responsibleProcess : getpid();
+ }
+ - (void)setResponsibleProcess:(int)pid { NATIVE_OBJECT_LOCK;  _responsibleProcess = pid; }
+-/*
+- * A texture laid over this buffer's memory. Textures exist now -- the comment here used to say
+- * they did not -- but the contract still has no call that lays one over a buffer we already own,
+- * so this is nil with a reason rather than nil with a stale excuse.
+- */
+-- (id)newTextureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
+-		   bytesPerRow:(NSUInteger)bytesPerRow
+-{ NATIVE_OBJECT_LOCK; 
+-	(void)descriptor; (void)offset; (void)bytesPerRow;
+-	RW_ONCE("redwoodmetal: a texture over a buffer was asked for; the contract lays a texture "
+-		"over an IOSurface and over memory of its own, but not over a buffer this driver "
+-		"already holds\n");
+-	return nil;
++- (id)newTextureWithDescriptor:(MTLTextureDescriptor *)descriptor offset:(NSUInteger)offset
++                   bytesPerRow:(NSUInteger)bytesPerRow
++{ NATIVE_OBJECT_LOCK;
++	if (!descriptor || descriptor.width > UINT32_MAX || descriptor.height > UINT32_MAX ||
++	    descriptor.textureType != MTLTextureType2D || descriptor.depth != 1 ||
++	    descriptor.arrayLength != 1 || descriptor.mipmapLevelCount != 1 || descriptor.sampleCount != 1) {
++		return nil;
++	}
++	struct rwa_texture_shape shape = {
++		.pixel_format = (unsigned)descriptor.pixelFormat,
++		.type = (unsigned)descriptor.textureType,
++		.width = (unsigned)descriptor.width,
++		.height = (unsigned)descriptor.height,
++		.depth = 1,
++		.array_length = 1,
++		.mip_levels = 1,
++		.sample_count = 1,
++		.usage = (unsigned)descriptor.usage,
++	};
++	char why[256] = { 0 };
++	struct rwa_texture *texture = rwa_texture_from_buffer(_mesa, &shape, offset, bytesPerRow,
++	                                                     why, sizeof(why));
++	if (!texture) {
++		rw_print("buffer texture: %s\n", why);
++		return nil;
++	}
++	SweetNativeMetalTexture *view = [[SweetNativeMetalTexture alloc]
++	    initWithRedwoodDevice:_owner texture:texture shape:&shape];
++	[view attachBuffer:self offset:offset bytesPerRow:bytesPerRow];
++	return view;
+ }
+ 
+ - (id)newLinearTextureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
+@@ -2802,6 +2829,14 @@
+ @end
+ 
+ @implementation SweetNativeMetalTexture
++
++- (void)attachBuffer:(SweetNativeMetalBuffer *)buffer offset:(NSUInteger)offset
++         bytesPerRow:(NSUInteger)bytesPerRow
++{ NATIVE_OBJECT_LOCK;
++	_backingBuffer = [buffer retain];
++	_bufferOffset = offset;
++	_bufferBytesPerRow = bytesPerRow;
++}
+ 
+ - (void)nativeAttachSurface:(void *)surface { NATIVE_OBJECT_LOCK; 
+     if(_nativeSurface)CFRelease(_nativeSurface);
+@@ -2851,6 +2886,7 @@
+ 	}
+     if(_nativeSurface)CFRelease(_nativeSurface);
+ 	[_nativeParentTexture release];
++	[_backingBuffer release];
+ 	[_owner release];[super dealloc];
+ }
+ 
+@@ -2872,9 +2908,9 @@
+ - (BOOL)nativeQuartzCoreWallpaperUpload { return _nativeQuartzCoreWallpaperUpload; }
+ - (NSUInteger)parentRelativeLevel  { NATIVE_OBJECT_LOCK;  return _nativeParentLevel; }
+ - (NSUInteger)parentRelativeSlice  { NATIVE_OBJECT_LOCK;  return 0; }
+-- (id)buffer                       { NATIVE_OBJECT_LOCK;  return nil; }
+-- (NSUInteger)bufferOffset         { NATIVE_OBJECT_LOCK;  return 0; }
+-- (NSUInteger)bufferBytesPerRow    { NATIVE_OBJECT_LOCK;  return 0; }
++- (id)buffer                       { NATIVE_OBJECT_LOCK;  return _backingBuffer ?: [_nativeParentTexture buffer]; }
++- (NSUInteger)bufferOffset         { NATIVE_OBJECT_LOCK;  return _backingBuffer ? _bufferOffset : [_nativeParentTexture bufferOffset]; }
++- (NSUInteger)bufferBytesPerRow    { NATIVE_OBJECT_LOCK;  return _backingBuffer ? _bufferBytesPerRow : [_nativeParentTexture bufferBytesPerRow]; }
+ - (id)iosurface                    { NATIVE_OBJECT_LOCK;  return (id)_nativeSurface; }
+ - (NSUInteger)iosurfacePlane       { NATIVE_OBJECT_LOCK;  return 0; }
+ /* MTLStorageModeShared, except for a multisample texture, which Metal does not allow to be

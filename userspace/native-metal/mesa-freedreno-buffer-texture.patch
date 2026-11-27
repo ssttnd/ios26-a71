@@ -1,0 +1,67 @@
+diff --git a/src/gallium/drivers/freedreno/freedreno_resource.c b/src/gallium/drivers/freedreno/freedreno_resource.c
+--- a/src/gallium/drivers/freedreno/freedreno_resource.c
++++ b/src/gallium/drivers/freedreno/freedreno_resource.c
+@@ -1502,9 +1502,8 @@
+  * resource_get_handle.
+  */
+ static struct pipe_resource *
+-fd_resource_from_handle(struct pipe_screen *pscreen,
+-                        const struct pipe_resource *tmpl,
+-                        struct winsys_handle *handle, unsigned usage)
++fd_resource_import(struct pipe_screen *pscreen, const struct pipe_resource *tmpl,
++                   struct winsys_handle *handle, struct fd_resource *backing)
+ {
+    struct fd_screen *screen = fd_screen(pscreen);
+    struct fd_resource *rsc = alloc_resource_struct(pscreen, tmpl);
+@@ -1524,7 +1523,8 @@
+ 
+    fd_resource_layout_init(prsc);
+ 
+-   struct fd_bo *bo = fd_screen_bo_from_handle(pscreen, handle);
++   struct fd_bo *bo = backing ? fd_bo_ref(backing->bo) :
++                               fd_screen_bo_from_handle(pscreen, handle);
+    if (!bo)
+       goto fail;
+ 
+@@ -1574,6 +1574,41 @@
+ fail:
+    fd_resource_destroy(pscreen, prsc);
+    return NULL;
++}
++
++static struct pipe_resource *
++fd_resource_from_handle(struct pipe_screen *pscreen,
++                        const struct pipe_resource *tmpl,
++                        struct winsys_handle *handle, unsigned usage)
++{
++   return fd_resource_import(pscreen, tmpl, handle, NULL);
++}
++
++struct pipe_resource *
++fd_resource_from_buffer(struct pipe_resource *buffer,
++                        const struct pipe_resource *tmpl,
++                        unsigned offset, unsigned stride);
++
++struct pipe_resource *
++fd_resource_from_buffer(struct pipe_resource *buffer,
++                        const struct pipe_resource *tmpl,
++                        unsigned offset, unsigned stride)
++{
++   struct fd_resource *backing = fd_resource(buffer);
++   if (buffer->target != PIPE_BUFFER || !backing->bo)
++      return NULL;
++
++   struct winsys_handle layout = {
++      .stride = stride,
++      .offset = offset,
++      .modifier = DRM_FORMAT_MOD_LINEAR,
++   };
++   struct pipe_resource *view = fd_resource_import(buffer->screen, tmpl, &layout, backing);
++   if (view) {
++      backing->b.is_shared = true;
++      tc_buffer_disable_cpu_storage(buffer);
++   }
++   return view;
+ }
+ 
+ bool
