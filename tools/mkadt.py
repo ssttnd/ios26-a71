@@ -253,6 +253,9 @@ def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None, n
     if product_props:
         product_props = [(k, cstr('sRGB') if k in ('artwork-display-gamut', 'display-gamut') else v)
                          for k, v in product_props]
+        if native_width:
+            product_props = [(k, u32(display_scale) if k == 'artwork-scale-factor' else v)
+                             for k, v in product_props]
     product = [node('product', [ph()] + product_props)] if product_props else []
 
     # /pram has an absolute <phys, size> just outside kernel-managed DRAM.
