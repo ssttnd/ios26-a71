@@ -3088,3 +3088,14 @@ on hold (state above).
   (Guess: the bitmap may already have shown these blocks free before; then iOS itself could have written over them.)
 - Fix ready, not run (auto mode needs the owner's OK): `tools/a71-hfs-restore-extents.py ADB IMAGE PATHS --write`
   copies each file's extent from the image back to the same blocks (~0.97 GB) and verifies by hash.
+- Owner OK'd the restore. `a71-hfs-restore-extents.py --write` rewrote the 7 dyld cache subfiles from the image,
+  each extent VERIFY OK. Recheck: all 206 candidate system files SAME as the image; `fsck -n` (loop1) "appears to
+  be OK".
+- **Boot after the repair works.** Same boot image (sbprefdtlog `04c87579...`), log continues in
+  `logs/usb-ios26-sbprefdtlog-settings.txt` from line 201085: `mounting dirty non-journaled root read-write`
+  (the kernel's usual message), launchd up, SpringBoard running (42,843 SpringBoard lines), **0 HFSINC, 0 BSSqlite
+  `disk I/O error` (was ~2,400 per boot), 0 CRASH lines, no panic** in the first 55,653 lines.
+- Still open: owner check of the UI and the Settings reopen hang on the repaired volume; `/DamagedFiles` holds links
+  to the 68 files whose overlapped blocks fsck copied (contents of those /private/var files may be mixed);
+  root is still non-journaled, so hard resets can damage it again (rerun `a71-hfs-scan.py` + `fsck -n` from TWRP
+  after crashes; never run fsck on the whole sda32 or with a bitmap that is under-allocated before a rebuild).
