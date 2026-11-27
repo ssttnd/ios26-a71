@@ -1,0 +1,29 @@
+A71 GPU: 24 outstanding jobs instead of 8. All Metal clients (backboardd and the extra slots) share one
+NativeAdrenoSubmit with eight job slots. With three clients busy (backboardd, MercuryPosterExtension, and
+PosterBoard when the lock screen poster editor opens) Mercury's submit failed with -16 (Resource busy) and
+backboardd waited 209 x 500 us for a slot; the owner saw everything restart on a long press of the lock
+screen wallpaper. The 32 KiB ring checks its own free space per submission and a full ring rolls the job
+back without poisoning, so more slots only raise how much work may be queued.
+
+diff --git a/iokit/Kernel/arm/unixnu/NativeAdrenoSubmit.h b/iokit/Kernel/arm/unixnu/NativeAdrenoSubmit.h
+index 6cc87ea..8af02ad 100644
+--- a/iokit/Kernel/arm/unixnu/NativeAdrenoSubmit.h
++++ b/iokit/Kernel/arm/unixnu/NativeAdrenoSubmit.h
+@@ -27,7 +27,7 @@ struct NativeAdrenoSubmitStats {
+ /* Kernel-side execbuf: turns validated indirect buffers into one ring
+  * submission and owns a device reference per distinct buffer until the
+  * timestamp fence is actually observed. This is not a userspace ABI and not a
+- * scheduler: at most eight jobs are outstanding, callers serialize every
++ * scheduler: at most 24 jobs are outstanding (2139; was eight), callers serialize every
+  * method, and the ring/VM must already be attached to the same live context.
+  * Buffers may be sub-ranges of a live VM mapping but never a different IOVA,
+  * unmapped handle, table pool or a range that includes unreadable bytes.
+@@ -41,7 +41,7 @@ class NativeAdrenoSubmit final {
+         NativeAdrenoSubmitResource *resources=nullptr;
+         uint32_t queue=0;
+         bool active=false;
+-    } jobs_[8];
++    } jobs_[24];   // 2139: 8 slots ran out with three Metal clients (Mercury submit -16, backboardd 209 back-offs)
+     NativeAdrenoVm *vm_=nullptr;
+     NativeAdrenoRing *ring_=nullptr;
+     NativeAdrenoSubmitStats stats_{};
