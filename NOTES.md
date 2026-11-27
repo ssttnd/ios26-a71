@@ -3182,3 +3182,9 @@ on hold (state above).
   wallpaper; the two Mercury instances start close together in both kinds. No crash of chronod/WidgetRenderer/
   PosterBoard/Mercury. Next: a good/bad pair on the same image with Mercury os_log (bt3 logs it): reboot until the
   wallpaper shows, then diff.
+- **Wallpaper good/bad pair on one kernel** (bt3 log): first boot no wallpaper; owner then restarted iOS from the UI
+  (userspace reboot at line 137867, same kernel) -> **wallpaper present**. Both had the SpringBoard/backboardd Metal
+  restart and the same start order. Mercury os_log diff (`build/merc-diff.txt`): only the bad one logged
+  `[S:N] Error received: Connection invalidated` / "client process either cancelled the connection or exited" and
+  `submit backed off (job slots held by other clients)`; VMPROT refusals for Mercury occur in good and bad boots alike
+  (not the cause). No discriminator found yet. A userspace restart is a working way to get the wallpaper back.
