@@ -2985,3 +2985,4 @@ on hold (state above).
   Calendar reopens fine, so this is not general to every app.
 - Next: log both sides in one boot (`sweetdtlog=SpringBoard,Preferences` needs 12 more bytes: e.g. drop
   `-noprogress`, which does nothing with `-v`). Check whether Preferences logs its action responses or a snapshot step.
+- 2026-11-27 stop: phone sent to TWRP with `a71:recovery` (ADB `recovery`), PC shut down at the owner's request. `boot` = `a71-ios26-2135-sbdtlog.img` (5ce03d15...); for normal use reflash 2135-pay `492b73ec...` (same kernel, with usb-shot). Installed Metal bundle = CI 45965091440 (ir3 sampler fix). Open: Settings reopen hang (next: SpringBoard+Preferences dtlog), Wi-Fi status bar bars missing (not investigated).
