@@ -2901,3 +2901,23 @@ on hold (state above).
   apply check. Metal CI `45466466276` was still running in the bundle build step at stop.
   Local CI watcher was stopped at the owner's request. The remote run and existing USB
   logger were left active. No follow-up artifact was downloaded and no further device writes.
+
+## 2026-11-27 — hackiosx.dev / HackiOS Liquid Glass research (no device or code changes)
+
+- hackiosx.dev is a docs hub (HackiOS, ios-sweet, UniXNU, community ports). Mostly already known here.
+  The new part is `Documentation/metal-glass.md` in `oosexgang/hackios-xnu-kernel` (branch `common`,
+  read through `gh api` since github.com returned 503). It reports Liquid Glass, the glass clock, the dock
+  and search field glass, and blurred alerts drawn on an Adreno 642L (A6xx) via AIR -> NIR -> ir3.
+  Their Metal work moved to `components/metal/` in that repo (7–16 Nov, Mesa 26.2.5,
+  `components/metal/tools/mesa26/darwin.patch`). Our `userspace/native-metal` is pinned to the older
+  `hackios-xnu-userland` `a79ff07` (2026-10-22) and Mesa 25.0.7, so none of that work is in our build.
+- Observed: Mesa 25.0.7 `src/freedreno/ir3/ir3_compiler_nir.c:3608` sets the fragment prefetch
+  `info.samp_idx = tex->texture_index`. HackiOS's patch changes it to `tex->sampler_index`, because
+  QuartzCore samples, for example, texture 3 with sampler 0. Nothing in our tree patches this.
+- Guess, not tested: a wrong sampler on prefetched samples in glass/backdrop shaders could explain the
+  black backdrop or outline-only glass. Other items in the doc to compare: varyings linked by name and
+  packed, constant tables at computed indices reading zeros (now `load_constant`), raster state
+  (cull/winding/depth clip) passed through, no Apple4 or tile shading claimed, a mip level taken from a
+  constant buffer (VariableBlurrer), and vector shapes (path_rect/path_cubic R32F coverage with one+one
+  blending, then path_blit framebuffer fetch `[[color(2)]]`).
+- Next: add the one-line ir3 fix to the native-metal Mesa patches, then do a Metal CI build and an A71 Glass test.

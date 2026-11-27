@@ -1,0 +1,19 @@
+ir3: a prefetched fragment sample takes the sampler's own index
+
+GL binds a texture and its sampler at one index, so ir3 used the texture index
+for both. Metal does not: QuartzCore's shaders sample, for example, texture 3
+with sampler 0, and the prefetched sample then read sampler 3. Same fix as
+HackiOS components/metal/tools/mesa26/darwin.patch (ir3_compiler_nir.c).
+
+diff --git a/src/freedreno/ir3/ir3_compiler_nir.c b/src/freedreno/ir3/ir3_compiler_nir.c
+--- a/src/freedreno/ir3/ir3_compiler_nir.c
++++ b/src/freedreno/ir3/ir3_compiler_nir.c
+@@ -3605,7 +3605,7 @@
+          sampler = ir3_COV(b, sampler, TYPE_U32, TYPE_U16);
+       } else {
+          sampler = create_immed_typed(b, tex->sampler_index, TYPE_U16);
+-         info.samp_idx = tex->texture_index;
++         info.samp_idx = tex->sampler_index;
+       }
+
+       info.samp_tex = ir3_collect(b, texture, sampler);
