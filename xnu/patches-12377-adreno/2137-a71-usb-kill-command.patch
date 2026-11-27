@@ -1,0 +1,102 @@
+A71: "a71:kill:NAME" on the USB serial port sends SIGKILL to every process whose short name (p_comm, first
+16 characters, e.g. MercuryPosterExt) is NAME; pid 0 and 1 are never matched. launchd relaunches the job, so
+the PC can restart PosterBoard, MercuryPosterExtension, WidgetRenderer_Default or bluetoothd without a reboot
+(wallpaper investigation: it is missing on some boots and comes back after a userspace reboot). Logs the
+number of matches and each pid.
+
+diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
+index bf2ff66..f5c22b0 100644
+--- a/bsd/dev/sweet_usb.c
++++ b/bsd/dev/sweet_usb.c
+@@ -42,6 +42,9 @@
+ #include <sys/kern_event.h>
+ #include <net/route.h>
+ #include <libkern/OSAtomic.h>
++#include <sys/proc.h>
++#include <sys/proc_internal.h>
++#include <sys/signal.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ extern int sweet_smmu_map_sid(unsigned sid);
+@@ -603,7 +606,43 @@ ud_rx_arm(void)
+  * phone into that mode, so a PC can get from iOS to TWRP with no hand on the phone.
+  * Only noted here (event context); ud_acm_cmd_thread does the reboot.
+  */
+-static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader, 4 screenshot, 5 cover */
++static volatile int ud_cmd;                     /* 0 none, 1 normal, 2 recovery, 3 bootloader, 4 screenshot, 5 cover, 6 kill */
++/* 2137: "a71:kill:NAME" sends SIGKILL to every process whose short name (p_comm, 16 chars) is NAME */
++static char ud_kill_name[MAXCOMLEN + 1];
++struct ud_kill_ctx {
++	pid_t pids[32];
++	unsigned n;
++};
++
++static int
++ud_kill_match(proc_t p, void *arg)
++{
++	struct ud_kill_ctx *k = arg;
++	char name[MAXCOMLEN + 1];
++	pid_t pid = proc_pid(p);
++
++	proc_name(pid, name, sizeof(name));
++	if (pid > 1 && k->n < sizeof(k->pids) / sizeof(k->pids[0]) && strncmp(name, ud_kill_name, MAXCOMLEN) == 0) {
++		k->pids[k->n++] = pid;
++	}
++	return PROC_RETURNED;
++}
++
++static void
++ud_acm_kill(void)
++{
++	struct ud_kill_ctx k = { .n = 0 };
++
++	if (ud_kill_name[0] == 0) {
++		return;
++	}
++	proc_iterate(PROC_ALLPROCLIST, ud_kill_match, &k, NULL, NULL);
++	printf("SWEET USB: host asked to kill %s: %u process(es)\n", ud_kill_name, k.n);
++	for (unsigned i = 0; i < k.n; i++) {
++		proc_signal(k.pids[i], SIGKILL);
++		printf("SWEET USB: SIGKILL %s[%d]\n", ud_kill_name, k.pids[i]);
++	}
++}
+ #define UD_SHOT_RAW_CAP (1024u * 1024u)
+ static char *ud_shot_data;
+ static size_t ud_shot_size, ud_shot_offset, ud_shot_capacity;
+@@ -695,7 +734,25 @@ ud_acm_take_command(const char *p, uint32_t len)
+ 	static const struct { const char *word; int cmd; } words[] = {
+ 		{ "a71:recovery", 2 }, { "a71:bootloader", 3 }, { "a71:reboot", 1 }, { "a71:shot", 4 }, { "a71:cover", 5 },
+ 	};
++	static const char kill_word[] = "a71:kill:";
+ 	for (uint32_t i = 0; i < len; i++) {
++		size_t kn = sizeof(kill_word) - 1;
++		if (len - i > kn && memcmp(p + i, kill_word, kn) == 0) {
++			unsigned j = 0;
++			for (uint32_t c = i + (uint32_t)kn; c < len && j < MAXCOMLEN; c++) {
++				char ch = p[c];
++				if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
++				    ch == '_' || ch == '.' || ch == '-')) {
++					break;
++				}
++				ud_kill_name[j++] = ch;
++			}
++			ud_kill_name[j] = 0;
++			if (j) {
++				ud_cmd = 6;
++			}
++			return;
++		}
+ 		for (unsigned w = 0; w < sizeof(words) / sizeof(words[0]); w++) {
+ 			size_t n = strlen(words[w].word);
+ 			if (len - i >= n && memcmp(p + i, words[w].word, n) == 0) {
+@@ -716,6 +773,10 @@ ud_acm_cmd_thread(void *arg __unused, wait_result_t wr __unused)
+ 			continue;
+ 		}
+ 		ud_cmd = 0;
++		if (cmd == 6) {
++			ud_acm_kill();
++			continue;
++		}
+ 		if (cmd == 5) {
+ 			ud_acm_cover_capture();
+ 			continue;
