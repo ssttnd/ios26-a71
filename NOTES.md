@@ -3232,3 +3232,13 @@ on hold (state above).
 - Render resolution (owner asked): the native-width option is the iPhone 12/13 mini class 1080x2340 @3x (375x812 pt):
   width 1:1 with the panel, ~1.7x today's pixels (1242x2688 would be 2.25x). Needs canvas + display-scale in mkadt and a
   MobileGestalt package (userdata write: owner OK). Planned after the current round. Not started.
+- Kernel CI `46052288068` (2136-2140) success, kernel `f8109d72...` in `research/ci-46052288068/`. **2140 works**: packer
+  split 590 bytes (shim) + 182 bytes (ADT `sweet-boot-args`), all extra args seen by the kernel.
+- `build/a71-ios26-2140-all.img` (`c929fba2...`, sweetmtlextra=SpringBoard,WidgetRenderer_Default,chronod,iconservicesagent):
+  **boot loop** (owner: does not boot). SpringBoard got a Metal slot and aborted 6x: `_MTLReportFailure` <- MPSCore <-
+  MPSImage <- SiriUICore (Siri blur/sphere setup at SpringBoard start). Our device reports only family Apple1
+  (`supportsFamily 1002..1010 -> NO`), MPS validation fails and aborts. Without a device Siri skips this path.
+  Sent to TWRP with a71:recovery during the loop, flashed `build/a71-ios26-2140-nosb.img` (`475ab0ad...`: same minus
+  SpringBoard in sweetmtlextra, dtlog bluetoothd,MobileSafari,MessagesBlastDoorService,SpringBoard): boots, SpringBoard
+  refused (as before), no SpringBoard crash. HFS scan before boot: 2 bad records, 9 overlaps (truncate bug again).
+- SpringBoard with Metal needs MPS to accept our device (feature profile / supportsFamily) or SiriUICore not to use MPS.
