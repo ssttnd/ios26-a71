@@ -3105,3 +3105,24 @@ on hold (state above).
   background transition. The `FBSceneSnapshotAction` sent at the move to background is annulled by SpringBoard when
   the scene is re-foregrounded (09:04:18.263, "anulled"). The deactivate itself is never answered either.
   Next test asked of the owner: home, wait ~10 s, reopen (and a quick reopen of Calendar for comparison).
+
+## 2026-11-27 late — Settings hang: the app's scene snapshot never finishes
+
+- `tools/a71-scene-timeline.py LOG BUNDLE --from N` (new): SpringBoard/app scene action timeline from dtlog.
+- Owner reports: reopen after 5 s worked, then a later reopen hung. Log `logs/usb-ios26-sbprefdtlog-settings.txt`:
+  - Working (pid 441, 09:52:09): SpringBoard sends `FBSceneSnapshotAction` + `Logical Deactivate`; the app logs
+    `invalidateConnection (appDidSuspend)` and `didEnterBackground`; **snapshot response success after 1.04 s**,
+    and only then (1.6 s) `Logical Deactivate completed`. The deactivate reply waits for the snapshot.
+  - Hung (pid 441, 09:52:45): snapshot action received, `invalidateConnection (appDidSuspend)` logged, then the main
+    thread logs nothing (no didEnterBackground); SpringBoard gets **snapshot `timeout` (code 2) after 5 s** with no
+    reopen in between; the later Logical Activate is never answered. Earlier hangs: the reopen came 0.6 s in and
+    annulled the pending snapshot; same end state.
+  - So the hang = the app-side scene snapshot never completes (and on real iPhones it takes tens of ms, here ~1 s).
+    Guess: the snapshot render through backboardd/our Metal driver sometimes never returns. No driver error logged.
+- Built `build/a71-ios26-2135-prefsample.img` (`591c63ef...`, kernel 2135, no Wi-Fi to free 88 bytes, usb-shot,
+  payload, rtcoff, `sweetdtlog=SpringBoard,Preferences`, `sweetsample=Preferences sweetsamplems=5000`, 587 bytes);
+  flashed VERIFY OK; log `logs/usb-ios26-prefsample.txt`. Sampler: from 90 s, every 5 s, 40 samples, all threads.
+- **New HFS damage after a clean (synced, unmounted) reboot:** `knowledgeC.db-wal` record says 535 blocks but its
+  extents (incl. overflow) map 725; the extra extents overlap 8 tracev3 files that got those blocks. Looks like the
+  kernel's HFS truncate leaves overflow extent records past EOF after freeing the blocks (sweet_hfs bug, not a hard
+  reset). Not fixed; separate task.
