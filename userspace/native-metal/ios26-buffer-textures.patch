@@ -16,6 +16,15 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
  static struct rwa_texture *
  texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shape,
+@@ -1499,7 +1506,7 @@
+        * agreement between two trees and not a hurdle.
+        */
+       unsigned texel = util_format_get_blocksize(fmt->pipe);
+-      if (import->row_bytes < width * texel) {
++      if (width > import->row_bytes / texel) {
+          say(why, why_size, "IOSurface %d has %u bytes a row, and %u texels of %u bytes "
+                             "need at least %u: this GPU's import refuses a pitch narrower "
+                             "than the image", import->id, import->row_bytes, width, texel,
 @@ -1538,6 +1545,16 @@
           return NULL;
        }
@@ -74,7 +83,16 @@ diff --git a/tools/mesa/air/air_metal.h b/tools/mesa/air/air_metal.h
 diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 --- a/userland/src/redwoodmetal.m
 +++ b/userland/src/redwoodmetal.m
-@@ -874,11 +874,15 @@
+@@ -867,6 +867,8 @@
+ }
+ @end
+ 
++@class SweetNativeMetalBuffer;
++
+ @interface SweetNativeMetalTexture : _MTLResource {
+ 	SweetNativeMetalDevice *_owner;
+ 	struct rwa_texture *_texture;
+@@ -874,11 +876,18 @@
      CFTypeRef _nativeSurface;
  	SweetNativeMetalTexture *_nativeParentTexture;
  	NSUInteger _nativeParentLevel;
@@ -85,12 +103,15 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  @property (readonly) struct rwa_texture *mesaTexture;
  - (void)nativeAttachSurface:(void *)surface;
++- (instancetype)initWithRedwoodDevice:(SweetNativeMetalDevice *)device
++                               texture:(struct rwa_texture *)texture
++                                 shape:(const struct rwa_texture_shape *)shape;
 +- (void)attachBuffer:(SweetNativeMetalBuffer *)buffer offset:(NSUInteger)offset
 +         bytesPerRow:(NSUInteger)bytesPerRow;
  /* Not part of MTLTexture: the depth or stencil aspect of this texture, one float and one
   * byte per texel. Metal's own -getBytes: has no aspect to name and the compiler library
   * refuses a depth texture through it by name, so a caller that wants to know what a depth
-@@ -2301,6 +2305,12 @@
+@@ -2301,6 +2310,12 @@
  - (uint64_t)halfFPConfig   { NATIVE_OBJECT_LOCK;  return 0; }
  - (uint64_t)doubleFPConfig { NATIVE_OBJECT_LOCK;  return 0; }
  
@@ -103,7 +124,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  - (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)format
  { NATIVE_OBJECT_LOCK; 
  	(void)format;
-@@ -2774,19 +2784,36 @@
+@@ -2774,19 +2789,36 @@
  	return _responsibleProcess != 0 ? _responsibleProcess : getpid();
  }
  - (void)setResponsibleProcess:(int)pid { NATIVE_OBJECT_LOCK;  _responsibleProcess = pid; }
@@ -153,7 +174,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (id)newLinearTextureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
-@@ -2802,6 +2829,14 @@
+@@ -2802,6 +2834,14 @@
  @end
  
  @implementation SweetNativeMetalTexture
@@ -168,7 +189,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  - (void)nativeAttachSurface:(void *)surface { NATIVE_OBJECT_LOCK; 
      if(_nativeSurface)CFRelease(_nativeSurface);
-@@ -2851,6 +2886,7 @@
+@@ -2851,6 +2891,7 @@
  	}
      if(_nativeSurface)CFRelease(_nativeSurface);
  	[_nativeParentTexture release];
@@ -176,7 +197,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	[_owner release];[super dealloc];
  }
  
-@@ -2872,9 +2908,9 @@
+@@ -2872,9 +2913,9 @@
  - (BOOL)nativeQuartzCoreWallpaperUpload { return _nativeQuartzCoreWallpaperUpload; }
  - (NSUInteger)parentRelativeLevel  { NATIVE_OBJECT_LOCK;  return _nativeParentLevel; }
  - (NSUInteger)parentRelativeSlice  { NATIVE_OBJECT_LOCK;  return 0; }
