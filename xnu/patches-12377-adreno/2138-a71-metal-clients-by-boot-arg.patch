@@ -1,0 +1,113 @@
+A71: more processes can get a Metal device, and refusals are logged. Only backboardd and the names in
+extra_client() (AegirPoster, MercuryPosterExtension, PosterBoard) may open the GPU; everyone else got
+kIOReturnNotPrivileged silently. On iOS 26 the "Clear" home screen icons come out as empty glass and widgets
+as blank white tiles, and SpringBoard logs "native A618 backend unavailable"; which process renders them is
+not known, so:
+- every refused process is logged twice: "SWEET RENDER: NAME refused: not a Metal client";
+- sweetmtlextra=NAME[,NAME...] adds names to the list without a kernel build;
+- sweetm2window=128 makes each extra client window 128 MiB instead of 256 MiB, so 6 extra slots fit in the
+  same 0x80000000..0xb0000000 range (0xb0000000.. stays the framebuffer present-copy range); sweetm2extra
+  still lowers the count. Defaults are unchanged (3 slots of 256 MiB, same names).
+
+diff --git a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+index 5425ceb..8a73de1 100644
+--- a/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
++++ b/iokit/Kernel/arm/SweetNativeAdrenoClient.cpp
+@@ -47,20 +47,43 @@ struct Backend {
+  /* Slot 0 is backboardd's original window. Extra slots are separate 256 MiB
+   * windows of the same 2 GiB arena above it, each with its own queue range,
+   * so one client's IOVAs can never collide with another's. */
+- bool slot_open[4]={false,false,false,false};
++ bool slot_open[7]={false,false,false,false,false,false,false};
+  unsigned extra_slots=3;
++ uint64_t window_bytes=0x10000000;   // 2138: sweetm2window=128 halves it (6 slots in the same 768 MiB)
+ } backend;
+ /* 0x70000000.. holds the kernel's CP firmware/ring/fence (A618_CP_IOVA): the
+- * 0129 windows overlapped it and every extra BoMap was refused as Busy. */
+-enum : uint64_t {ExtraWindowStart=0x80000000,ExtraWindowBytes=0x10000000};
++ * 0129 windows overlapped it and every extra BoMap was refused as Busy.
++ * 0xb0000000.. is the framebuffer's present-copy range (0246), so the extra windows
++ * share 0x80000000..0xb0000000: 3 x 256 MiB or (2138) 6 x 128 MiB. */
++enum : uint64_t {ExtraWindowStart=0x80000000,ExtraArenaBytes=0x30000000};
++/* 2138: names added by the boot-arg sweetmtlextra=NAME[,NAME...] (p_comm-style short names). */
++static char extra_names_arg[160];
+ /* Processes that receive a Metal device besides backboardd. AegirPoster (the
+  * configured iOS 16 wallpaper) aborts without one; sweetm2extra=0 disables. */
+ bool extra_client(const char *name)
+ {
+  static const char *const names[]={"AegirPoster", "MercuryPosterExtension", "PosterBoard"};
+  for(const char *n:names)if(!strcmp(name,n))return true;
++ for(const char *p=extra_names_arg;*p;) {
++  const char *e=p;while(*e && *e!=',')++e;
++  size_t n=(size_t)(e-p);
++  if(n && strlen(name)==n && !strncmp(name,p,n))return true;
++  p=*e?e+1:e;
++ }
+  return false;
+ }
++/* 2138: log a process that asks for a Metal device and is not on the list (twice per name, 24 names). */
++static void log_refused_client(const char *name)
++{
++ static char seen[24][32];static unsigned count[24];
++ for(unsigned i=0;i<24;i++) {
++  if(!seen[i][0]) {strlcpy(seen[i],name,sizeof seen[i]);}
++  if(!strcmp(seen[i],name)) {
++   if(count[i]++<2)IOLog("SWEET RENDER: %s refused: not a Metal client (sweetmtlextra=%s to allow)\n",name,name);
++   return;
++  }
++ }
++}
+ // Release/acquire publishes the completed backend to the framebuffer workloop.
+ static bool presentation_ready=false;
+ char last_submitter[32];   // process of the newest successful submit (diagnostics)
+@@ -285,8 +308,8 @@ bool AGXDeviceUserClient::mount(task_t task,void *securityID,UInt32 type,OSDicti
+  if(!IOUserClient::initWithTask(task,securityID,type,properties))return false;
+  task_=task;slot_=slot;info_=backend.info;
+  if(slot) {
+-  info_.va_start=ExtraWindowStart+(uint64_t)(slot-1)*ExtraWindowBytes;
+-  info_.va_size=ExtraWindowBytes;
++  info_.va_start=ExtraWindowStart+(uint64_t)(slot-1)*backend.window_bytes;
++  info_.va_size=backend.window_bytes;
+   if(info_.va_start<backend.info.va_start+backend.info.va_size)return false;
+  }
+  core_=new NativeAdrenoUserClient;
+@@ -313,7 +336,10 @@ IOReturn AGXAccelerator::newUserClient(task_t task,void *securityID,UInt32 type,
+  if(type!=0x4147 || task!=current_task())return kIOReturnUnsupported;
+  char name[32]={};proc_selfname(name,sizeof name);
+  const bool compositor=!strcmp(name,"backboardd");
+- if(!compositor && !(backend.extra_slots && extra_client(name)))return kIOReturnNotPrivileged;
++ if(!compositor && !(backend.extra_slots && extra_client(name))) {
++  log_refused_client(name);
++  return kIOReturnNotPrivileged;
++ }
+  IOLockLock(backend.lock);
+  static unsigned open_traces=0;
+  if(open_traces<16) {++open_traces;IOLog("SWEET RENDER: %s open type=%#x\n",name,type); }
+@@ -335,8 +361,8 @@ IOReturn AGXAccelerator::newUserClient(task_t task,void *securityID,UInt32 type,
+  if(compositor)backend.opened=true;
+  backend.slot_open[slot]=true;*handler=client;
+  IOLog("SWEET RENDER: %s client connected ABI=%u slot=%u window=%#llx+%#llx\n",name,NativeAdrenoAbiVersion,
+-   slot,slot?ExtraWindowStart+(uint64_t)(slot-1)*ExtraWindowBytes:backend.info.va_start,
+-   slot?(uint64_t)ExtraWindowBytes:backend.info.va_size);
++   slot,slot?ExtraWindowStart+(uint64_t)(slot-1)*backend.window_bytes:backend.info.va_start,
++   slot?backend.window_bytes:backend.info.va_size);
+  IOLockUnlock(backend.lock);return kIOReturnSuccess;
+ }
+ IOReturn AGXDeviceUserClient::clientMemoryForType(UInt32 type,IOOptionBits *options,IOMemoryDescriptor **memory)
+@@ -691,8 +717,14 @@ extern "C" int sweet_native_adreno_publish(NativeAdrenoVm *vm,NativeAdrenoSubmit
+  } else IOLog("SWEET GLES: native A618 transport published; Metal discovery disabled for GLES boot\n");
+  provider->setProperty("model","Adreno 618");
+  provider->setProperty("NativeAdrenoABI",NativeAdrenoAbiVersion,32);
+- int extra=3;PE_parse_boot_argn("sweetm2extra",&extra,sizeof(extra));
+- backend.extra_slots=extra<0?0u:(extra>3?3u:(unsigned)extra);
++ int window_mib=256;PE_parse_boot_argn("sweetm2window",&window_mib,sizeof(window_mib));
++ backend.window_bytes=window_mib==128?0x8000000ull:0x10000000ull;
++ const unsigned max_extra=(unsigned)(ExtraArenaBytes/backend.window_bytes);   // 3 or 6
++ int extra=(int)max_extra;PE_parse_boot_argn("sweetm2extra",&extra,sizeof(extra));
++ backend.extra_slots=extra<0?0u:((unsigned)extra>max_extra?max_extra:(unsigned)extra);
++ if(!PE_parse_boot_arg_str("sweetmtlextra",extra_names_arg,sizeof extra_names_arg))extra_names_arg[0]=0;
++ IOLog("SWEET RENDER: extra Metal windows %llu MiB, slots %u, added clients '%s'\n",
++   backend.window_bytes>>20,backend.extra_slots,extra_names_arg);
+  int import_sync=0;PE_parse_boot_argn("sweetimportsync",&import_sync,sizeof(import_sync));
+  native_adreno_import_sync=import_sync!=0;
+  uint32_t below_kib=2048;PE_parse_boot_argn("sweetimportmin",&below_kib,sizeof(below_kib));
