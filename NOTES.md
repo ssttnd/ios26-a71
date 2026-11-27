@@ -3036,3 +3036,20 @@ on hold (state above).
 - Proposed (needs owner OK, destructive): back up the HFS volume (first 6,291,456 x 4 KiB of userdata) to the PC,
   build static aarch64 `fsck.hfsplus` in the VM, run `-n` from TWRP to see the report, then repair with `-y` if
   acceptable. Long term: journal on the root (mkfs `-J` worked on sweet v4) or at least avoid hard resets.
+- Owner OK'd backup + check, then said no backup: the PC backup was stopped at 8.7 GB and deleted. Phone-side SHA-256
+  of the first 25,769,803,776 bytes of userdata (the HFS volume) before any repair:
+  `14378120c9eb62ef79b0fb9d2588981f7aafce8d70ad9f5a0a069c7978becab1`.
+- `fsck.hfsplus` for TWRP: Ubuntu noble arm64 `hfsprogs_540.1.linux3-5build3`, `libc6_2.39-0ubuntu8.12`,
+  `libssl3t64_3.0.13-0ubuntu3.16` from ports.ubuntu.com (SHA-256 checked against the Packages index), fetched by
+  `research/root-vm/get-fsck-arm64.sh`. Bundle `build/fsck-arm64/fsck-arm64.tgz` (`3d3d38f6...`). Run in TWRP:
+  `/tmp/fsck/lib/ld-linux-aarch64.so.1 --library-path /tmp/fsck/lib /tmp/fsck/fsck.hfsplus -f -n /dev/block/sda32`.
+- **`fsck -f -n` result (read only, exit 8, "found corrupt and needs to be repaired"):** the same 23 wrong block
+  counts / sizes as `a71-hfs-scan.py` (incl. FrontBoard `applicationState.db-wal` 81 -> 74), then
+  `Keys out of order (4, 29591)`, where it stopped (bitmap and cross-links not reached). `tools/a71-hfs-node.py`:
+  catalog leaf 29591 has thread records in the wrong order (594297 before 594132). `tools/a71-hfs-cnid.py`: those
+  thread records are orphans (no file record), left from deleted/renamed files: plists in parent 444564
+  (`com.apple.fitcored.plist`, StickerKit, inputAnalytics), `IconState.plist`, MobileAsset analytics, temp `0`
+  files. The node also holds the SplashBoard snapshot folder of com.apple.PridePoster.
+- Next (needs owner OK, destructive, no backup): `fsck.hfsplus -f -y /dev/block/sda32` in TWRP, rerun `-n` until
+  clean, rescan, boot. If repair fails, the fallback is reinstalling the root from `build/ios26-root-a71-23G90.img`
+  plus packages (all phone state lost).
