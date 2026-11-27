@@ -27,6 +27,27 @@ ROOT_ARGS = BASE_ARGS + ' rd=ufsroot0 ufsrw=1 rootrw=1 sweetfb_scale=1 launchd_u
 ADRENO_ARGS = ' sweetgpu=9 sweetgpukhz=650000 sweetfb_dcsbl=0 sweetddr=0 sweetcharge=0 sweetjetsamlimits=0'
 
 
+SHIM_LINE_MAX = 607      # mkpayload cmdline[608] incl. the terminator
+KERNEL_LINE_MAX = 1023   # XNU 12377 arm64 boot_args CommandLine[1024]
+
+
+def split_cmdline(cmdline):
+    """Keep the line for the shim if it fits; otherwise move whole arguments from the end into the
+    ADT part (xnu 2140 appends /chosen sweet-boot-args after SecureDTInit). The early arguments
+    (debug, serial, -v, rd=, sweetearlyfb, sweetusb...) come first in the line, so they stay."""
+    if len(cmdline.encode()) <= SHIM_LINE_MAX:
+        return cmdline, ''
+    if len(cmdline.encode()) > KERNEL_LINE_MAX:
+        raise SystemExit(f'command line is {len(cmdline.encode())} bytes, the kernel limit is {KERNEL_LINE_MAX}')
+    words = cmdline.split(' ')
+    main = []
+    for i, w in enumerate(words):
+        if len(' '.join(main + [w]).encode()) > SHIM_LINE_MAX:
+            return ' '.join(main), ' '.join(words[i:])
+        main.append(w)
+    return cmdline, ''
+
+
 def add_adreno_firmware(tree, directory):
     gmu = directory / 'a618_gmu.bin'
     output = tree.with_name('a71-adreno.adt')
@@ -186,7 +207,22 @@ def main():
             tree = bt_tree
         if args.adreno_firmware:
             tree = add_adreno_firmware(tree, args.adreno_firmware)
-        payload, info = mkpayload.build(args.kernel, tree, cmdline, args.ramdisk)
+        main_line, ext_line = split_cmdline(cmdline)
+        if ext_line:
+            if b'sweet-boot-args' not in kernel:
+                parser.error(f'command line is {len(cmdline.encode())} bytes (limit {SHIM_LINE_MAX}) and this kernel '
+                             'has no xnu 2140 (/chosen sweet-boot-args)')
+            ext_tree = temp / 'a71-ext.adt'
+            root, end = adt.parse(tree.read_bytes())
+            chosen = [c for c in root.children if c.name == 'chosen']
+            if len(chosen) != 1:
+                parser.error('ADT has no single /chosen')
+            chosen[0].props.append(('sweet-boot-args', 0, ext_line.encode() + b'\0'))
+            ext_tree.write_bytes(adt.serialize(root))
+            tree = ext_tree
+            print(f'boot-args: {len(main_line.encode())} bytes in the shim line, {len(ext_line.encode())} bytes in '
+                  f'/chosen sweet-boot-args: {ext_line}')
+        payload, info = mkpayload.build(args.kernel, tree, main_line, args.ramdisk)
         if info['cputype'] != '0x100000c' or info['cpusub'] != 0:
             parser.error('A71 requires a plain arm64 kernel')
         (temp / 'payload.bin').write_bytes(payload)
