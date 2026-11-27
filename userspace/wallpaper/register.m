@@ -20,14 +20,55 @@
 + (NSArray *)executeQuery:(id)query;
 @end
 
-static NSArray *queryProviders(void) {
+static NSArray *queryExtensions(NSString *extensionPoint) {
     Class q = NSClassFromString(@"_EXQuery");
     Class c = NSClassFromString(@"_EXQueryController");
     if (![q instancesRespondToSelector:@selector(initWithExtensionPointIdentifier:)] ||
         ![c respondsToSelector:@selector(executeQuery:)]) return nil;
-    id query = [[q alloc] initWithExtensionPointIdentifier:@"com.apple.posterkit.provider"];
+    id query = [[q alloc] initWithExtensionPointIdentifier:extensionPoint];
     id result = [c executeQuery:query];
     return [result isKindOfClass:[NSArray class]] ? result : nil;
+}
+
+static NSArray *queryProviders(void) {
+    return queryExtensions(@"com.apple.posterkit.provider");
+}
+
+static int queryWidgets(void) {
+    NSArray<NSString *> *identifiers = @[
+        @"com.apple.weather.widget", @"com.apple.news.widget",
+        @"com.apple.Maps.GeneralMapsWidget", @"com.apple.tips.TipsSwift",
+        @"com.apple.mobilecal.CalendarWidgetExtension",
+        @"com.apple.Batteries.BatteriesAvocadoWidgetExtension",
+        @"com.apple.mobileslideshow.PhotosReliveWidget",
+    ];
+    Class records = NSClassFromString(@"LSApplicationExtensionRecord");
+    if (![records respondsToSelector:@selector(enumeratorWithOptions:)]) return 6;
+    NSMutableSet *registeredIDs = [NSMutableSet set];
+    for (id record in [records enumeratorWithOptions:0]) {
+        if (![record respondsToSelector:@selector(bundleIdentifier)]) continue;
+        NSString *identifier = [record bundleIdentifier];
+        if ([identifiers containsObject:identifier]) [registeredIDs addObject:identifier];
+    }
+
+    NSArray *widgets = queryExtensions(@"com.apple.widgetkit-extension");
+    NSMutableSet *queryIDs = [NSMutableSet set];
+    NSUInteger readableIDs = 0;
+    for (id widget in widgets) {
+        if (![widget respondsToSelector:@selector(bundleIdentifier)]) continue;
+        NSString *identifier = [widget bundleIdentifier];
+        if (!identifier.length) continue;
+        readableIDs++;
+        if ([identifiers containsObject:identifier]) [queryIDs addObject:identifier];
+    }
+    printf("SWEET WIDGET: ExtensionFoundation results=%ld readable IDs=%lu\n",
+           widgets ? (long)widgets.count : -1L, (unsigned long)readableIDs);
+    for (NSString *identifier in identifiers) {
+        printf("SWEET WIDGET: %s LS=%d EX=%d\n", identifier.UTF8String,
+               [registeredIDs containsObject:identifier],
+               widgets && readableIDs == widgets.count ? [queryIDs containsObject:identifier] : -1);
+    }
+    return 0;
 }
 
 static BOOL registered(NSArray *results) {
@@ -106,10 +147,11 @@ int main(int argc, char **argv) {
          */
         BOOL repair = argc == 2 && strcmp(argv[1], "--register") == 0;
         BOOL rebuild = argc == 2 && strcmp(argv[1], "--rebuild-once") == 0;
-        if (argc > 1 && !repair && !rebuild) return 1;
+        BOOL widgets = argc == 2 && strcmp(argv[1], "--query-widgets") == 0;
+        if (argc > 1 && !repair && !rebuild && !widgets) return 1;
         if (getuid() != (uid_t)(rebuild ? 0 : 501)) return 2;
         alarm(rebuild ? 300 : 90);
-        freopen("/private/var/mobile/Library/Logs/sweet-wallpaper.log", "a", stdout);
+        if (!widgets) freopen("/private/var/mobile/Library/Logs/sweet-wallpaper.log", "a", stdout);
         setvbuf(stdout, NULL, _IOLBF, 0);
         printf("SWEET WALLPAPER: start uid=%d\n", getuid());
         if (!dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_NOW) ||
@@ -125,6 +167,7 @@ int main(int argc, char **argv) {
         }
         if (!repair) {
             @try {
+                if (widgets) return queryWidgets();
                 BOOL ok = registered(queryProviders());
                 puts("SWEET WALLPAPER: query-only; no registration requested");
                 return ok ? 0 : 7;
