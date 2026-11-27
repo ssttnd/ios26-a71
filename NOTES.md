@@ -3099,3 +3099,9 @@ on hold (state above).
   to the 68 files whose overlapped blocks fsck copied (contents of those /private/var files may be mixed);
   root is still non-journaled, so hard resets can damage it again (rerun `a71-hfs-scan.py` + `fsck -n` from TWRP
   after crashes; never run fsck on the whole sda32 or with a bitmap that is under-allocated before a rebuild).
+- **Owner: Settings still hangs on the repaired volume** (so the HFS damage was not its cause). Timing in every
+  captured repro: the reopen `Logical Activate` is sent 0.6–0.75 s after `Logical Deactivate` (sbdtlog 00:45:53.00
+  -> 53.74; sbprefdtlog 09:04:17.6 -> 18.27; post-repair boot 09:48:51.87 -> next activate), i.e. during the
+  background transition. The `FBSceneSnapshotAction` sent at the move to background is annulled by SpringBoard when
+  the scene is re-foregrounded (09:04:18.263, "anulled"). The deactivate itself is never answered either.
+  Next test asked of the owner: home, wait ~10 s, reopen (and a quick reopen of Calendar for comparison).
