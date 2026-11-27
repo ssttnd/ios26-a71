@@ -2940,7 +2940,16 @@ on hold (state above).
   `c6e780c3ef84f29202e2d35da2aa4098da329d0e675c687f70e3a88d6d888fab`, written from TWRP with readback
   `VERIFY OK`. `boot` matched 2135-pay `492b73ec...` beforehand and was not rewritten. Next boot USB log
   `logs/usb-ios26-glass-ir3-sampler.txt`: `SWEET PAYLOAD: finished 9/9 errno=0`, Metal discovery
-  published on A618, SpringBoard exec, GLASSU enabled, no panic so far. Visual result from the owner pending.
+  published on A618, SpringBoard exec, GLASSU enabled, no panic so far.
+- **Owner (2026-11-27): Liquid Glass now works on this build ("ДА!!!"), but there is no wallpaper.** This is
+  the first visual Glass success. The build also includes `b2160ae` (FP32 glass exports) and `bad3a9b`
+  (no Z clip for color-only glass); which change mattered is not isolated. Strongest candidate: the ir3 sampler fix.
+- Wallpaper: on the Nov 24 builds the lock screen and App Library still showed the wallpaper, but the Nov 25
+  full-export captures already had a black backdrop. So the missing wallpaper predates this build.
+  `b2160ae` and `bad3a9b` touch only `glass_*` fragment pipelines. In this boot PosterBoard starts after the
+  Metal backboardd/SpringBoard restart. MercuryPosterExtension opens the GPU (`open type=0x4147`) and creates
+  828x1792 surfaces. No Mercury crash or shader refusal is logged. Owner rebooted once afterwards; that
+  boot's result is pending. Cause not found yet.
 - Also looked at the Galaxy A51 ports (`AnkitChoudhary-1/hakios-SM-A515F`, iOS 16.5, Exynos 9611/Mali).
   Different SoC, touch, Wi-Fi and PMIC, so nothing carries over directly. Possibly useful later: their
   IPv4 DNS fallback for WebKit IPv6 stalls, and their `.ipa` injection (`inject_app.c`, `app_reg.m`).
