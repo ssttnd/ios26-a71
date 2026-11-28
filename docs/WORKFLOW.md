@@ -107,6 +107,14 @@ python -X utf8 tools/a71-pack-ios26.py --kernel KERNEL --shim research/a71-boot-
 
 `--usb` (sweetusb=3) is required for the USB log and for PC commands. Leave `--wifi` off: Wi-Fi resets the phone.
 
+### Native-width display test
+
+`--native-width` selects a 1080×2340 canvas at 3× in the iOS 26 device tree. The existing managed
+`com.apple.iokit.IOMobileGraphicsFamily.plist` also needs `canvas_width=1080` and `canvas_height=2340`.
+Save its original bytes before installing the preference. When installed through a raw payload, the preference
+takes effect on the following boot. Reboot with the same boot image after `SWEET PAYLOAD: finished`.
+Confirm `SWEET FB: swap` shows a 1080×2340 source and destination before assessing the UI.
+
 ## CI (GitHub Actions, repo ssttnd/ios26-a71, branch `codex/a71-settings`)
 
 - Kernel: workflow `xnu26.yml`, dispatch with input `adreno=true`. Patches are every

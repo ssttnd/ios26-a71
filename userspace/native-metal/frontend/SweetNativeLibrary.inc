@@ -152,6 +152,11 @@ static unsigned native_constant_bytes(NSUInteger type) {
 - (id)newFunctionWithDescriptor:(MTLFunctionDescriptor *)d error:(NSError **)e {
     return [self newFunctionWithName:d.name constantValues:d.constantValues error:e];
 }
+/* IconRendering (iOS 26) asks for its stitchable functions this way. */
+- (void)newFunctionWithDescriptor:(MTLFunctionDescriptor *)d completionHandler:(void (^)(id,NSError *))handler {
+    NSError *e=nil;id f=[self newFunctionWithDescriptor:d error:&e];
+    if(handler)handler(f,e);[f release];
+}
 @end
 /* Explicitly opt-in local capture. Never dump Apple AIR into public CI/logs.
  * Captures immutable shader/constant snapshots, not application buffer contents.

@@ -3242,3 +3242,98 @@ on hold (state above).
   SpringBoard in sweetmtlextra, dtlog bluetoothd,MobileSafari,MessagesBlastDoorService,SpringBoard): boots, SpringBoard
   refused (as before), no SpringBoard crash. HFS scan before boot: 2 bad records, 9 overlaps (truncate bug again).
 - SpringBoard with Metal needs MPS to accept our device (feature profile / supportsFamily) or SiriUICore not to use MPS.
+
+## 2026-11-28 — Bluetooth HCI trace, desktop freeze and buffer textures
+
+- `logs/usb-ios26-2140-all.txt` contains multiple boots, including boot `nosb` starting around line 33072.
+  Line 97540 confirms the `bcm_vsc.c:1021` assertion during LE scan setup after the 2136 event filter has already
+  dropped Qualcomm events. The preceding compatibility replies include `0xfce2`, `0xfe37`, `0xfe29` and `0xfe3b`.
+  Their proximity does not identify the failing reply. Some later aborts instead cite `bcm_vsc.c:196`.
+- Packed `build/a71-ios26-2140-bttrace.img`, 22,700,032 bytes, SHA-256
+  `39380972e3a4be5a224f52b828db54fc97c451a05259a0da010a4a8a21cb8c5e`, from the existing successful
+  CI `46052288068` kernel. Wi-Fi and USB on, SpringBoard excluded from the extra Metal clients, payload application
+  off for this diagnostic boot. ADT tail includes `sweetbtlog=2000`; userspace logging filters on `bluetoothd`.
+- USB recovery command stopped the console at root unmount; the owner put the phone in TWRP with the keys.
+  Confirmed `a71`, flashed only `boot`, `VERIFY OK` with the image hash above. Boot log starts around line 356763
+  of `logs/usb-ios26-2140-all.txt`. WCN3988 returned Unknown HCI Command to `0xfe3b`; the compat layer sent
+  16 return bytes (370089, 377646) and `bluetoothd` aborted immediately afterward (370095, 377648).
+  The first crash stack resolves to the `0xfe3b` callback checked through its OCF 0x23b registration. On success it
+  reads a 212-byte record. Fix `c313fdf` (2141) returns 212 zero bytes for this command only. Patch applies after
+  2136 on LF donor source. Kernel CI `46056279731` dispatched, hardware verification pending.
+- Owner reported no wallpaper and a desktop freeze on 2140-bttrace. The screenshot `build/shot-2140-bttrace.png`
+  shows a black home background and yellow icons. Mercury starts and allocates surfaces. The freeze marker is
+  the volume-up press at line 469877. USB and the HID event path stayed responsive; the panel swap count was
+  952 at uptime 162–192 s. `a71:kill:backboardd` at 480401 restarted it and SpringBoard, and the count resumed at
+  1149 by 202 s. This recovers the display pipeline. The blocking thread is still unknown.
+- `a71:kill:MercuryPosterExt` at 482063 killed one process, which relaunched at 482072. The next screenshot
+  (`build/shot-2140-mercury-restart.png`, line 482220) still shows a black background, white widget placeholders
+  and yellow icons. Poster trace image staged offline as `build/a71-ios26-2140-postertrace.img`
+  (`b88ccca6d879fcddd1b8211a78e7a050fe9d9857725bab81db86ad48d8e6cd4e`), with SpringBoard, PosterBoard and
+  Mercury os_log enabled and iconservicesagent excluded from the extra Metal clients. Not flashed.
+- Offline HFS catalog scan of the reference root found executable `.appex` payloads under `/Applications` for
+  Batteries, Maps, Calendar and Photos, plus separate placeholder directories for Maps, Calendar and Photos.
+  This verifies reference-image contents only. Added a read-only `--query-widgets` mode to the existing
+  LaunchServices helper in `e1a8c88`, to compare LS and ExtensionFoundation for the affected IDs on-device.
+- `bbed06b` implements linear 2D Metal textures backed by an MTLBuffer. The view imports the existing
+  freedreno BO, retains the Metal buffer, reports the buffer offset and pitch, and checks shape and bounds.
+  Both patch sets apply locally. Native Metal CI `46056755710` dispatched, hardware verification pending.
+- Prepared `build/a71-ios26-2140-mps1.img`
+  (`404d14942aebb65eba59d293920e5d7150bc44e9bd240a56164a1a104df27c79`) for an isolated SpringBoard GPU
+  test with `metal_profile=1` (Apple2). Flashed VERIFY OK. SpringBoard `supportsFamily 1002 -> YES`, then
+  Siri's MPS pipeline `D8F18H` failed on a pointer store and SpringBoard aborted. Rolled back via
+  `build/a71-ios26-2140-ui-sample.img` (`645ae19b...`, VERIFY OK), which traced posters and sampled UI stacks.
+- On the sampler boot, owner marked a repeat desktop freeze at log line 666204. Samples 23–24 show SpringBoard
+  main waiting synchronously in MobileBluetooth `BTLocalDeviceGetPairedDevices`, and a backboardd worker waiting
+  for MobileBluetooth `_attachSession`. Swaps held at 931 until the USB backboardd restart, then resumed at 1092.
+  Repeated Mercury `nextDrawable` failures on 128 MiB accompanied IOSurface import refusals.
+- Widget helper CI `46056921118` passed, artifact `15226678624` downloaded. Read-only TWRP check found the actual
+  Calendars plist and Maps, Batteries and Photos widget binaries on the installed root. Query helper awaits live
+  execution. PosterBoard's WidgetKit provider reports only 3 extensions in the sampler boot.
+- Kernel 2141 CI `46056279731` passed, artifact `15228085422`, kernel SHA256 `d1e9306c...`. HCI on-device
+  accepted the 212-byte reply and reached LE Scanning. Another assertion at bcm_vsc.c:196 follows `0xfdf0/0x11`.
+  Parser needs 151 bytes with preserved first byte. Patch `7377a19` (2142), CI `46058995730` dispatched.
+- Metal CI `46056755710` failed on Objective-C declaration order. `f91458c` corrected it, CI `46057250349`
+  passed, artifact `15226774833` verified against all six manifest hashes and installed. RenderBox now reaches
+  the buffer-texture implementation and logs unsupported format 90, RGB10A2Unorm. Follow-up `3e612db` adds
+  the exact Mesa mapping and MPS AIR support for single-store pointer cells passed to read-only helpers.
+  `D8F18H` built and translated to NIR in the host VM with function constants set to zero and one.
+  Metal CI `46058857783` dispatched. SpringBoard remains on the non-GPU path while awaiting hardware test.
+- Native-width test `build/a71-ios26-2141-nativewidth.img`, SHA256 `c1ab9a6e...`, used a 1080x2340 @3x ADT,
+  default 256 MiB extra windows, buffer-texture Metal and an updated canvas plist. Boot and raw package hashes
+  verified (`71295131...`, 12/12 applied); the first boot rendered 828x1792 into a 1080x2340 destination.
+  Owner confirmed wallpaper visible on this boot. The subsequent 828x1792 boot (`4a401ae5...`, rollback plist
+  3/3) rendered 1080x2340 into an 828x1792 destination, confirmed by owner photo and log line 964375.
+  The packaged canvas preference takes effect one boot late. Original preference and six old Metal files
+  saved read-only in `backup/2141-before-native-width`, full rollback package `09c015e0...`.
+
+## 2026-11-28 — repository inspection
+
+- Local HEAD `34096cb` matches the local `origin/codex/a71-settings` tracking ref.
+- GitHub Actions confirmed success for kernel 2142 (`46058995730`, `7377a19`)
+  and native Metal (`46058857783`, `3e612db`). Device results for these exact
+  artifacts were not verified during the inspection.
+- Existing local changes include TODO, workflow notes and both buffer-texture
+  patches. The phone was not queried or modified during this inspection.
+
+## 2026-11-28 midday — 3x scale fixed, icons and wallpaper back
+
+- Owner: small UI, black wallpaper, no icons on `build/a71-ios26-2141-nativewidth-3x-icons.img` (boot readback
+  `044fe76c...`). Every native-width boot ran FrontBoard mode `540x1170@2x`, though all native-width ADTs carry
+  `/chosen display-scale=3`. Cause: the protected (root 0644) MobileGestalt cache keeps main-screen-scale 2.0 in
+  CacheData slot 458 (byte 3664, float32, right after main-screen-pitch 458); MG never recomputes it.
+- A CacheExtra `main-screen-scale` key (real 3.0) does NOT work: SpringBoard got `infxinf@0x` and crash-looped.
+  Rolled back via TWRP. `tools/a71-mg-native-scale.py` patches the CacheData slot instead (checks both neighbours).
+  Package `build/2141-mg-scale3.payload` (`8f9d2db3...`, 7/7) gave mode `360x780@3x`. Rollback to the scale-2
+  cache (`research/mg/2141-3x/MG-phone.plist`): `build/2141-mg-scale3-rollback.payload` (`592f942c...`).
+- With GPU, iconservicesagent fails: IconRendering `[[stitchable]]` functions (`clampToEdges`,
+  `simplifiedShapeAwareGradientMask`, IconRendering.framework/default.metallib, function stitching) are not
+  supported; RGBA16F buffer textures are refused when the pitch is not a multiple of 128 (WIP alignment patches,
+  still uncommitted and not CI built); `-16 Resource busy` submits. Its blank 3x icons were then cached.
+- Boot `build/a71-ios26-2141-3x-cpuicons.img` (`a7605c15...`, kernel 2141 CI 46056279731, same args minus
+  `sweetmtlextra`, so iconservicesagent is refused Metal) flashed VERIFY OK. Icon store moved aside with
+  `build/2141-iconcache-reset.payload` (mv `.../systemgroup.com.apple.lsd.iconscache/Library/Caches/com.apple.IconsCache`
+  -> `com.apple.IconsCache.bad-3x-gpu`, 1/1). iconservicesagent re-rendered 71 store entries on CPU within a few
+  minutes. Screenshot `build/shot-2141-iconreset2.png`; owner confirms icons and wallpaper at 3x. Calendar and
+  Clock live icons look glassy/empty; widgets still white placeholders.
+- `SweetNativeLibrary` got `newFunctionWithDescriptor:completionHandler:` (IconRendering calls it). Not CI built.
+- Phone now: boot `a7605c15...`, MG scale-3 cache, fresh icon store. Log `logs/usb-ios26-2141-3x.txt`.
