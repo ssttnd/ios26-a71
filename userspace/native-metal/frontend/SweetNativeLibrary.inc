@@ -197,3 +197,89 @@ static BOOL native_specialize(struct rwa_device *device,id function,unsigned sta
     }
     return rwa_set_constants(device,stage,packed,i,why,n)==0;
 }
+
+/*
+ * A71: visible function tables (RenderBox's custom effects: IconRendering's clampToEdges_v1 and
+ * friends, called from uber_fragment through air.get_function_pointer_visible_function_table).
+ * A pipeline's linked functions get handles 1..n in descriptor order; a table is a buffer of
+ * 8-byte handles bound at its buffer index, and the AIR translator calls the function whose
+ * handle the shader loads (air_call_indirect).
+ */
+@interface SweetNativeFunctionHandle : NSObject {
+@public
+    id _function;
+    id _device;
+    uint64_t _handle;
+}
+@end
+@implementation SweetNativeFunctionHandle
++ (void)load {
+    Protocol *p=objc_getProtocol("MTLFunctionHandle");if(p)class_addProtocol(self,p);
+}
+- (void)dealloc {[_function release];[_device release];[super dealloc];}
+- (NSUInteger)functionType {return 5;}
+- (NSString *)name {return [_function name];}
+- (id)device {return _device;}
+- (uint64_t)gpuResourceID {return _handle;}
+@end
+
+@interface SweetNativeVisibleFunctionTable : NSObject {
+@public
+    id _device;
+    id _buffer;
+    NSUInteger _count;
+    NSString *_label;
+}
+- (id)nativeBuffer;
+@end
+@implementation SweetNativeVisibleFunctionTable
++ (void)load {
+    Protocol *p=objc_getProtocol("MTLVisibleFunctionTable");if(p)class_addProtocol(self,p);
+}
+- (void)dealloc {[_buffer release];[_device release];[_label release];[super dealloc];}
+- (id)nativeBuffer {return _buffer;}
+- (id)device {return _device;}
+- (NSString *)label {return _label;}
+- (void)setLabel:(NSString *)label {[_label release];_label=[label copy];}
+- (uint64_t)gpuResourceID {return [_buffer respondsToSelector:@selector(gpuAddress)]?[_buffer gpuAddress]:0;}
+- (NSUInteger)allocatedSize {return [_buffer length];}
+- (NSUInteger)storageMode {return 0;}
+- (NSUInteger)cpuCacheMode {return 0;}
+- (NSUInteger)hazardTrackingMode {return 0;}
+- (NSUInteger)resourceOptions {return 0;}
+- (void)setFunction:(id)function atIndex:(NSUInteger)index {
+    if(index>=_count)return;
+    uint64_t h=[function isKindOfClass:[SweetNativeFunctionHandle class]]?((SweetNativeFunctionHandle *)function)->_handle:0;
+    ((uint64_t *)[_buffer contents])[index]=h;
+    static unsigned told;
+    if(told++<8)rw_print("visible function table %p: slot %lu = handle %llu (%s)\n",self,(unsigned long)index,
+                         (unsigned long long)h,[[function name] UTF8String]?:"nil");
+}
+- (void)setFunctions:(const id *)functions withRange:(NSRange)range {
+    for(NSUInteger i=0;i<range.length;i++)[self setFunction:functions?functions[i]:nil atIndex:range.location+i];
+}
+@end
+
+/* The linked functions of one stage, from an MTLLinkedFunctions (functions, then
+ * privateFunctions), handed to the translator; returns them in handle order, or nil and
+ * a reason. A descriptor without any clears the stage. */
+static char native_linked_key;   /* the pipeline's handle order, an associated NSArray */
+static NSArray *native_link(struct rwa_device *device,id linked,unsigned stage,char *why,size_t n) {
+    NSMutableArray *order=[NSMutableArray array];
+    if(linked) {
+        if([linked respondsToSelector:@selector(functions)])[order addObjectsFromArray:[linked functions]?:@[]];
+        if([linked respondsToSelector:@selector(privateFunctions)])[order addObjectsFromArray:[linked privateFunctions]?:@[]];
+    }
+    if([order count]>16){snprintf(why,n,"more than 16 linked functions (%lu)",(unsigned long)[order count]);return nil;}
+    struct rwa_linked fns[16];unsigned count=0;
+    for(id f in order) {
+        if(![f isKindOfClass:[SweetNativeFunction class]]) {
+            snprintf(why,n,"linked function %s was not created by SweetNativeMetal",[[f name] UTF8String]?:"?");return nil;
+        }
+        SweetNativeFunction *sf=(SweetNativeFunction *)f;
+        fns[count++]=(struct rwa_linked){[sf->_nativeAIR bytes],[sf->_nativeAIR length],[sf->_nativeName UTF8String]};
+    }
+    if(rwa_set_linked(device,stage,fns,count,why,n))return nil;
+    if(count)rw_print("pipeline stage %u links %u visible function(s), first %s\n",stage,count,fns[0].name);
+    return order;
+}

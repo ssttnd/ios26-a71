@@ -1,0 +1,389 @@
+diff --git a/tools/mesa/air/air2nir.c b/tools/mesa/air/air2nir.c
+index 5bcd3bd..3e0fe7c 100644
+--- a/tools/mesa/air/air2nir.c
++++ b/tools/mesa/air/air2nir.c
+@@ -608,6 +608,40 @@ main(int argc, char **argv)
+       unsigned num_fc = air_module_function_constants(ctx, mods[k].bitcode, mods[k].size, &fc);
+       struct air_to_nir_options options = { .constants = fc, .num_constants = num_fc,
+                                         .library_wrapper = library_wrapper };
++      if (getenv("AIR2NIR_FC_ONES")) {
++         for (unsigned i = 0; i < num_fc; i++) {
++            fc[i].bits = ~0ull;
++            fc[i].bits_hi = ~0ull;
++         }
++      }
++      /* A71: AIR2NIR_LINK=FILE.bc:NAME[;FILE.bc:NAME] links visible functions (handles 1..n) */
++      struct air_linked_function linked[8];
++      unsigned num_linked = 0;
++      const char *link_env = getenv("AIR2NIR_LINK");
++      if (link_env) {
++         char *spec = ralloc_strdup(ctx, link_env);
++         for (char *item = strtok(spec, ";"); item && num_linked < 8; item = strtok(NULL, ";")) {
++            char *colon = strrchr(item, ':');
++            if (!colon)
++               continue;
++            *colon = 0;
++            FILE *lf = fopen(item, "rb");
++            if (!lf) {
++               perror(item);
++               continue;
++            }
++            fseek(lf, 0, SEEK_END);
++            long ls = ftell(lf);
++            fseek(lf, 0, SEEK_SET);
++            void *lb = ralloc_size(ctx, ls);
++            if (fread(lb, 1, ls, lf) != (size_t)ls)
++               ls = 0;
++            fclose(lf);
++            linked[num_linked++] = (struct air_linked_function){ lb, (size_t)ls, colon + 1 };
++         }
++         options.linked = linked;
++         options.num_linked = num_linked;
++      }
+       struct air_shader_info info;
+       nir_shader *nir = air_to_nir(ctx, mods[k].bitcode, mods[k].size, NULL, &options,
+                                    &default_options, &info, &err);
+diff --git a/tools/mesa/air/air_intrinsics.c b/tools/mesa/air/air_intrinsics.c
+index 9a6d6ba..b01a6f6 100644
+--- a/tools/mesa/air/air_intrinsics.c
++++ b/tools/mesa/air/air_intrinsics.c
+@@ -2272,7 +2272,26 @@ air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *nam
+    if (!strcmp(n.part[0], "is_function_constant_defined"))
+       return fc_defined_op(c, in);
+    if (!strncmp(n.part[0], "get_function_pointer", 20)) {
+-      /* no function pointers on this GPU: a null one, which the call through it reads as zero */
++      /* A71: a visible function table is a device buffer of 8-byte handles (the linked
++       * function's position + 1). The "pointer" is that handle, a 64-bit number, and a call
++       * through it is air_call_indirect. */
++      const struct air_val *table = in->num_operands > 2 ? air_get(c, in->operands[1]) : NULL;
++      if (table && table->kind == AIR_VAL_PTR && table->ptr.class == AIR_PTR_SSBO) {
++         nir_def *idx = air_get_ssa(c, in->operands[2]);
++         if (!idx)
++            return false;
++         static const struct air_type u32t = { .kind = AIR_TYPE_INT, .bits = 32 };
++         struct air_ptr slot = table->ptr;
++         nir_def *off = nir_imul_imm(&c->b, nir_u2u32(&c->b, idx), 8);
++         slot.offset = slot.offset ? nir_iadd(&c->b, slot.offset, off) : off;
++         slot.pointee = &u32t;
++         nir_def *handle = air_load_ptr(c, slot, &u32t, 4);
++         if (!handle)
++            return false;
++         air_set(c, &in->base, air_val_ssa(c, nir_u2u64(&c->b, handle)));
++         return true;
++      }
++      /* no table bound: a null pointer, which the call through it reads as zero */
+       const struct air_type *rt = in->base.type;
+       if (rt && rt->kind == AIR_TYPE_POINTER) {
+          struct air_ptr none = { .class = AIR_PTR_NONE, .pointee = rt->elem };
+diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
+index e803dbd..4669c8c 100644
+--- a/tools/mesa/air/air_metal.c
++++ b/tools/mesa/air/air_metal.c
+@@ -156,6 +156,9 @@ struct rwa_device {
+    struct pipe_framebuffer_state batch_fb;
+    struct rwa_constant constants[3][256];
+    unsigned constant_count[3];
++   /* A71: the pipeline's linked visible functions per stage (rwa_set_linked) */
++   struct air_linked_function linked[3][16];
++   unsigned linked_count[3];
+ 
+    /* What this screen requires of a buffer offset, per binding, read once. Only an
+     * argument buffer's member has an offset at all here (rwa_argbuf_encode_buffer), and
+@@ -6919,7 +6922,9 @@ rwa_render_create(struct rwa_device *device,
+    struct air_constant_value *ffc;
+    unsigned num_ffc =
+       native_constants(device, 1, render->mem_ctx, fragment_bitcode, fragment_size, &ffc);
+-   const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc };
++   const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc,
++                                             .linked = device->linked[1],
++                                             .num_linked = device->linked_count[1] };
+    const char *error;
+    nir_shader *fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
+                                fragment_entry, &fopts, device->nir_options, &render->finfo,
+diff --git a/tools/mesa/air/air_private.h b/tools/mesa/air/air_private.h
+index 0a3e9d3..1f042cc 100644
+--- a/tools/mesa/air/air_private.h
++++ b/tools/mesa/air/air_private.h
+@@ -137,6 +137,10 @@ struct air_ctx {
+    const struct air_to_nir_options *options;
+    struct air_shader_info *info;
+ 
++   /* A71: options->linked, read on first use (air_call_indirect) */
++   const struct air_module **linked_modules;
++   const struct air_function **linked_functions;
++
+    /* translated values, keyed on const struct air_value * */
+    struct hash_table *values;
+    /* air_block * -> nir_block * */
+@@ -269,5 +273,6 @@ struct air_ptr air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes
+ bool air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *name);
+ /* a call of a function defined in this module, folded in by nir_inline_functions */
+ bool air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *name);
++bool air_call_indirect(struct air_ctx *c, const struct air_inst *in, nir_def *handle);
+ 
+ #endif /* AIR_PRIVATE_H */
+diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
+index 226b996..462cb71 100644
+--- a/tools/mesa/air/air_to_nir.c
++++ b/tools/mesa/air/air_to_nir.c
+@@ -1702,6 +1702,17 @@ translate_input(struct air_ctx *c, const struct air_md *node, unsigned *next_var
+       return true;
+    }
+ 
++   if (md_key(node, "air.visible_function_table") >= 0 && t->kind == AIR_TYPE_POINTER) {
++      /* A71: the table is a device buffer of 8-byte handles at its own buffer index,
++       * filled by -[MTLVisibleFunctionTable setFunction:atIndex:] with the linked
++       * function's position + 1 (0: no function). air_call_indirect reads it. */
++      uint64_t index = 0;
++      md_key_int(node, "air.location_index", &index);
++      add_resource(c, AIR_RESOURCE_DEVICE_BUFFER, index, 0, true, false, param, node);
++      struct air_ptr p = { .class = AIR_PTR_SSBO, .binding = index, .pointee = t->elem };
++      c->params[param] = air_val_ptr(c, p);
++      return true;
++   }
+    if (md_key(node, "air.visible_function_table") >= 0 ||
+        md_key(node, "air.intersection_function_table") >= 0) {
+       air_note(c, "parameter %u is a function table: no function pointers on this GPU, so a "
+@@ -2853,6 +2864,12 @@ translate_instruction(struct air_ctx *c, const struct air_inst *in)
+    }
+    case AIR_OP_CALL: {
+       const struct air_value *callee = in->operands[0];
++      if ((callee->kind != AIR_VALUE_FUNCTION || !callee->name) &&
++          c->options && c->options->num_linked) {
++         struct air_val *h = air_get(c, callee);
++         if (h && h->kind == AIR_VAL_SSA)
++            return air_call_indirect(c, in, h->def);
++      }
+       if (callee->kind != AIR_VALUE_FUNCTION || !callee->name)
+       {
+          /* a visible function: no function pointers here, the result is zero */
+@@ -3564,6 +3581,94 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
+    return true;
+ }
+ 
++/* A71: a call through a visible-function-table pointer. The pointer is the handle the
++ * table holds (get_function_pointer in air_intrinsics.c): the linked function's position
++ * + 1. Each linked function is translated from its own module and called behind a test of
++ * the handle; no match leaves the result zero, which is what a missing function drew
++ * before. RenderBox's custom effects (IconRendering's clampToEdges_v1 and friends) are
++ * called this way from uber_fragment.
++ */
++bool
++air_call_indirect(struct air_ctx *c, const struct air_inst *in, nir_def *handle)
++{
++   const struct air_to_nir_options *o = c->options;
++   if (!c->linked_modules) {
++      c->linked_modules = rzalloc_array(c->mem_ctx, const struct air_module *, o->num_linked);
++      c->linked_functions = rzalloc_array(c->mem_ctx, const struct air_function *, o->num_linked);
++      for (unsigned k = 0; k < o->num_linked; k++) {
++         const char *err = NULL;
++         const char *want = o->linked[k].name;
++         const struct air_module *m =
++            air_module_read(c->mem_ctx, o->linked[k].bitcode, o->linked[k].size, &err);
++         if (!m)
++            return air_error(c, "reader: linked function %s: %s", want ? want : "?",
++                             err ? err : "unreadable");
++         c->linked_modules[k] = m;
++         for (unsigned i = 0; i < m->num_functions && want; i++) {
++            const struct air_function *f = m->functions[i];
++            if (f->base.name && !strcmp(f->base.name, want) && !f->is_declaration) {
++               c->linked_functions[k] = f;
++               break;
++            }
++         }
++         if (!c->linked_functions[k])
++            return air_error(c, "interface: linked function %s is not defined in its module",
++                             want ? want : "?");
++      }
++   }
++
++   unsigned nargs = in->num_operands - 1;
++   struct air_val **argv = rzalloc_array(c->mem_ctx, struct air_val *, MAX2(nargs, 1));
++   nir_def **ssa = rzalloc_array(c->mem_ctx, nir_def *, MAX2(nargs, 1));
++   for (unsigned i = 0; i < nargs; i++) {
++      argv[i] = air_get(c, in->operands[i + 1]);
++      if (!argv[i])
++         return false;
++      if (argv[i]->kind == AIR_VAL_SSA)
++         ssa[i] = argv[i]->def;
++   }
++
++   const struct air_type *rt = in->base.type;
++   bool has_ret = rt && rt->kind != AIR_TYPE_VOID;
++   if (has_ret && rt->kind == AIR_TYPE_STRUCT)
++      return air_error(c, "instruction: a call through a function pointer returning a struct");
++   nir_variable *tmp = NULL;
++   if (has_ret) {
++      tmp = nir_local_variable_create(c->b.impl, param_glsl_type(c, rt), "icallret");
++      nir_store_var(&c->b, tmp, nir_imm_zero(&c->b, air_nir_components(rt),
++                                             air_nir_bit_size(c, rt)),
++                    nir_component_mask(air_nir_components(rt)));
++   }
++
++   nir_block *join = call_split_block(c);
++   unsigned called = 0;
++   for (unsigned k = 0; k < o->num_linked; k++) {
++      const struct air_function *f = c->linked_functions[k];
++      if (f->num_args != nargs)
++         continue;
++      nir_block *yes = call_split_block(c), *next = call_split_block(c);
++      nir_goto_if(&c->b, yes, nir_ieq_imm(&c->b, handle, k + 1), next);
++      c->b.cursor = nir_after_block(yes);
++      const struct air_module *saved = c->m;
++      c->m = c->linked_modules[k];
++      bool ok = emit_module_call(c, in, f, f->base.name, argv, ssa, tmp, NULL);
++      c->m = saved;
++      if (!ok)
++         return false;
++      nir_goto(&c->b, join);
++      c->b.cursor = nir_after_block(next);
++      called++;
++   }
++   nir_goto(&c->b, join);
++   c->b.cursor = nir_after_block(join);
++   if (!called)
++      air_note(c, "a call through a function pointer matches no linked function (%u linked)",
++               o->num_linked);
++   if (has_ret)
++      air_set(c, &in->base, air_val_ssa(c, nir_load_var(&c->b, tmp)));
++   return true;
++}
++
+ /* The air.visible_input node for argument i, or NULL. The nodes carry a
+  * parameter number as their first operand rather than being in order, so they
+  * are searched by it.
+diff --git a/tools/mesa/air/nir_air.h b/tools/mesa/air/nir_air.h
+index 6969b7f..edc8c02 100644
+--- a/tools/mesa/air/nir_air.h
++++ b/tools/mesa/air/nir_air.h
+@@ -360,6 +360,20 @@ struct air_to_nir_options {
+     * entry point of the corpus and is counted separately.
+     */
+    bool library_wrapper;
++
++   /* A71: the pipeline's linked visible functions (MTLLinkedFunctions), in the order whose
++    * position + 1 is the handle a visible function table holds. A call through a pointer
++    * from air.get_function_pointer_visible_function_table loads that handle from the table
++    * buffer and calls the matching function, translated from its own module.
++    */
++   const struct air_linked_function *linked;
++   unsigned num_linked;
++};
++
++struct air_linked_function {
++   const void *bitcode;
++   size_t size;
++   const char *name;
+ };
+ 
+ /* Translates one AIR module (one function of a .metallib). entry_point may
+diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
+index ab39aed..75d129a 100644
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -1513,6 +1513,11 @@ static NSUInteger sweet_heap_texture_bytes(MTLTextureDescriptor *d)
+     if(!native_specialize(_mesa,vertex,0,nativeWhy,sizeof nativeWhy) ||
+        !native_specialize(_mesa,fragment,1,nativeWhy,sizeof nativeWhy))
+         return [self fail:error with:[NSString stringWithUTF8String:nativeWhy]];
++    /* A71: the fragment stage's linked visible functions (RenderBox custom effects) */
++    NSArray *nativeLinked=native_link(_mesa,[descriptor respondsToSelector:@selector(fragmentLinkedFunctions)]?
++                                      [descriptor fragmentLinkedFunctions]:nil,1,nativeWhy,sizeof nativeWhy);
++    if(!nativeLinked)
++        return [self fail:error with:[NSString stringWithUTF8String:nativeWhy]];
+ 	struct rwa_render *render = mesa.render_create(_mesa,
+ 	    vertex_air != nil ? [vertex_air bytes] : NULL,
+ 	    vertex_air != nil ? [vertex_air length] : 0,
+@@ -1541,10 +1546,13 @@ static NSUInteger sweet_heap_texture_bytes(MTLTextureDescriptor *d)
+ 	}
+ 	native_drawlog_remember(render, [[descriptor label] UTF8String],
+ 	    vertex != nil ? [[vertex name] UTF8String] : "(generated)", [[fragment name] UTF8String], descriptor);
+-	return [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self
++	id pipeline = [[SweetNativeMetalRenderPipeline alloc] initWithRedwoodDevice:self
+ 								 render:render
+ 								   info:&info
+ 							     descriptor:descriptor];
++	if (pipeline != nil)
++		objc_setAssociatedObject(pipeline, &native_linked_key, nativeLinked, OBJC_ASSOCIATION_RETAIN);
++	return pipeline;
+ }
+ 
+ - (id)newRenderPipelineStateWithDescriptor:(id)descriptor
+@@ -3376,6 +3384,52 @@ static BOOL sweet_family_override(NSInteger family)
+ 
+ @implementation SweetNativeMetalRenderPipeline
+ 
++/* A71: handles and tables for the linked visible functions (SweetNativeLibrary.inc). Only the
++ * fragment stage links functions here; a handle is the function's position + 1. */
++- (id)functionHandleWithFunction:(id)function stage:(NSUInteger)stage
++{ NATIVE_OBJECT_LOCK;
++	(void)stage;
++	NSArray *linked = objc_getAssociatedObject(self, &native_linked_key);
++	NSUInteger i = [linked indexOfObjectIdenticalTo:function];
++	if (i == NSNotFound) {
++		for (NSUInteger k = 0; k < [linked count]; k++)
++			if ([[linked[k] name] isEqualToString:[function name]]) { i = k; break; }
++	}
++	if (i == NSNotFound) {
++		rw_print("function handle: %s is not linked into this pipeline (%lu linked)\n",
++		         [[function name] UTF8String] ?: "nil", (unsigned long)[linked count]);
++		return nil;
++	}
++	SweetNativeFunctionHandle *h = [SweetNativeFunctionHandle new];
++	h->_function = [function retain];
++	h->_device = [_owner retain];
++	h->_handle = i + 1;
++	return [h autorelease];
++}
++- (id)functionHandleWithFunction:(id)function
++{
++	return [self functionHandleWithFunction:function stage:2];
++}
++- (id)newVisibleFunctionTableWithDescriptor:(id)descriptor stage:(NSUInteger)stage
++{ NATIVE_OBJECT_LOCK;
++	(void)stage;
++	NSUInteger count = [descriptor respondsToSelector:@selector(functionCount)] ? [descriptor functionCount] : 0;
++	SweetNativeVisibleFunctionTable *t = [SweetNativeVisibleFunctionTable new];
++	t->_device = [_owner retain];
++	t->_count = count;
++	t->_buffer = [_owner newBufferWithLength:(count ? count : 1) * 8 options:0];
++	if (t->_buffer == nil) {
++		[t release];
++		return nil;
++	}
++	memset([t->_buffer contents], 0, (count ? count : 1) * 8);
++	return t;
++}
++- (id)newVisibleFunctionTableWithDescriptor:(id)descriptor
++{
++	return [self newVisibleFunctionTableWithDescriptor:descriptor stage:2];
++}
++
+ - (instancetype)initWithRedwoodDevice:(SweetNativeMetalDevice *)device
+ 			       render:(struct rwa_render *)render
+ 				 info:(const struct rwa_render_info *)info
+@@ -5759,14 +5813,20 @@ controlPointIndexBufferOffset:(NSUInteger)controlPointOffset
+ 	[self redwoodNoFunctionTables];
+ }
+ - (void)setFragmentVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
+-{ NATIVE_OBJECT_LOCK; 
+-	(void)table; (void)index;
++{
++	/* A71: a table is its handle buffer at that index (air_call_indirect reads it) */
++	if ([table isKindOfClass:[SweetNativeVisibleFunctionTable class]]) {
++		[self setFragmentBuffer:[table nativeBuffer] offset:0 atIndex:index];
++		return;
++	}
++	{ NATIVE_OBJECT_LOCK;
+ 	[self redwoodNoFunctionTables];
++	}
+ }
+ - (void)setFragmentVisibleFunctionTables:(const id *)tables withBufferRange:(NSRange)range
+-{ NATIVE_OBJECT_LOCK; 
+-	(void)tables; (void)range;
+-	[self redwoodNoFunctionTables];
++{
++	for (NSUInteger i = 0; i < range.length; i++)
++		[self setFragmentVisibleFunctionTable:tables ? tables[i] : nil atBufferIndex:range.location + i];
+ }
+ - (void)setTileVisibleFunctionTable:(id)table atBufferIndex:(NSUInteger)index
+ { NATIVE_OBJECT_LOCK; 

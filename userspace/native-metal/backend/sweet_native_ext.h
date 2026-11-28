@@ -19,6 +19,10 @@ int rwa_library_function(const struct rwa_library *, unsigned, const void **, si
  * 64 bits, including small vectors such as QuartzCore's uchar3 opcodes. */
 struct rwa_constant { unsigned index; const char *name; uint64_t bits; unsigned bytes; };
 int rwa_set_constants(struct rwa_device *, unsigned stage, const struct rwa_constant *, unsigned, char *, size_t);
+/* A71: the visible functions a pipeline links (MTLLinkedFunctions) for one stage, in handle
+ * order (position + 1 is what a visible function table holds). Bytes and names are copied. */
+struct rwa_linked { const void *bitcode; size_t size; const char *name; };
+int rwa_set_linked(struct rwa_device *, unsigned stage, const struct rwa_linked *, unsigned, char *, size_t);
 /* One context transaction per committed Metal command buffer. end waits once,
  * including the prefix of a command buffer whose later encoding was refused. */
 int rwa_barrier(struct rwa_device *, char *, size_t);

@@ -58,6 +58,23 @@ int rwa_set_constants(struct rwa_device *d,unsigned stage,const struct rwa_const
    }
    return 0;
 }
+int rwa_set_linked(struct rwa_device *d,unsigned stage,const struct rwa_linked *fns,unsigned count,
+                   char *why,size_t n)
+{
+   if(!d || stage>=3 || count>16 || (count&&!fns)) {say(why,n,"invalid linked function table");return -1;}
+   for(unsigned i=0;i<d->linked_count[stage];i++) {
+      free((void*)d->linked[stage][i].bitcode);free((void*)d->linked[stage][i].name);
+   }
+   d->linked_count[stage]=0;
+   for(unsigned i=0;i<count;i++) {
+      void *b=fns[i].size?malloc(fns[i].size):NULL;char *nm=fns[i].name?strdup(fns[i].name):NULL;
+      if(!b || !nm){free(b);free(nm);say(why,n,"out of memory copying a linked function");return -1;}
+      memcpy(b,fns[i].bitcode,fns[i].size);
+      d->linked[stage][i]=(struct air_linked_function){b,fns[i].size,nm};
+      d->linked_count[stage]++;
+   }
+   return 0;
+}
 static unsigned native_constants(struct rwa_device *d,unsigned stage,void *ctx,const void *bytes,
                                   size_t size,struct air_constant_value **out)
 {
