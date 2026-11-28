@@ -70,6 +70,20 @@ Reboot once before concluding a build is broken; it has always booted the second
   (2026-11-20). Install at mount only.
 - Do not touch bootloaders, recovery, modem, persist or the backups. Other destructive steps need the owner's OK.
 
+## Buttons and touch from the PC (xnu 2144)
+
+Write to `logs/usb-command.txt` (USB logger running): `a71:key:N[:MS]` (0 power, 1 volume up, 2 volume down,
+3 home; default 100 ms), `a71:tap:X,Y`, `a71:swipe:X1,Y1,X2,Y2[,MS]` (default 300 ms), panel pixels 1080x2400.
+Wake and unlock before a screenshot: `a71:key:0`, then `a71:swipe:540,2350,540,1200,250`. If the key turned the
+screen off (it was already on), send `a71:key:0` again. The log shows `SWEET USB: host key|tap|swipe ...`.
+
+## Metal CI builds the donor's frontend
+
+The iOS 26 job (`native-metal.yml`, input `ios26=true`) compiles DC28088's `SweetNativeLibrary.inc` and
+`sweet_native_ext.c/h`, not `userspace/native-metal/frontend|backend`. Put every Metal change in a patch listed in
+that job (`ios26-*.patch`). Generate patches against a tree made from `build/buffer-texture-base` plus the earlier
+patches, and keep each file's original line endings (the donor files are CRLF there, LF in CI; git stores LF).
+
 ## USB screenshots (xnu 2126)
 
 Build with `--usb --usb-shot`. With the USB logger running, send

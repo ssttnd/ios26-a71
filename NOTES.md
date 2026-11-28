@@ -3364,3 +3364,38 @@ on hold (state above).
   functions behind a switch on the table handle.
 - Wallpaper: boots with the wallpaper show Mercury `Captured levelset` snapshots; boots without did not (yet).
   Not resolved.
+
+## 2026-11-28 ~13:00 — 2144: 1125x2436 works, PC key/swipe, GPU icon pipelines reach the linked body
+
+- Owner rule (memory): no temporary workarounds; keep the target config (GPU iconservicesagent) and fix root causes.
+- CI pitfall: the iOS 26 Metal job (`native-metal.yml` build-ios26) compiles the DONOR's frontend/backend
+  (`SweetNativeLibrary.inc`, `sweet_native_ext.c/h` from DC28088 4ff9b8e), NOT `userspace/native-metal/frontend|backend`.
+  Every change must go into a patch applied in that job. Commit 1297455 (visible type) and the
+  completionHandler edit in our copies never reached a build. First VFT build `46122578874` failed on that.
+- Kernel 2144 (CI `46121727953`, includes 2143): `a71:key:N[:MS]` (0 power, 1 vol+, 2 vol-, 3 home),
+  `a71:tap:X,Y`, `a71:swipe:X1,Y1,X2,Y2[,MS]` in panel pixels via `logs/usb-command.txt`. Verified on the phone:
+  log `SWEET USB: host key 0 for 100 ms`, `host swipe 540,2350 -> 540,1200`; swipe up unlocks.
+- 2143 verified: with `--native-width 1125x2436` + `build/2141-canvas1125.payload`-style prefs the second boot
+  runs `375x812@3x` and draws (no black screen). Dock higher, widgets smaller, layout like iPhone X/12 mini.
+- Auto-Lock Never: `tools/a71-autolock.py` (maxInactivity 2147483647 in UserConfigurationProfiles
+  UserSettings + EffectiveUserSettings; originals in research/autolock, was 60 s). Installed in
+  `build/2144-all.payload` (`24a7da03...`, 25/25 with Metal 46122908404, canvas 1125, icon cache reset).
+  Effect on screen timeout not yet confirmed by the owner.
+- `ios26-visible-function-tables.patch` (Metal CI `46122908404`, then `46123704488` at 6fa1219):
+  pipelines link `fragmentLinkedFunctions` (handles 1..n), function handles, MTLVisibleFunctionTable as a
+  buffer of 8-byte handles, `get_function_pointer` loads the handle, calls through a pointer switch over the
+  linked functions translated from their own modules (air_call_indirect), and
+  `NAME.MTL_VISIBLE_FN_REF` declarations resolve to the linked function. On the phone RenderBox links one
+  function per custom_effect pipeline: `clampToEdges_v1` (262x), `simplifiedShapeAwareGradientMask_v1` (97),
+  `glow_v1` (13). With 6fa1219 the MTL_VISIBLE_FN_REF refusals are gone; the next refusal is inside the
+  linked body: `intrinsic: argument 1 is not a sampler` (the linked module's constexpr `__air_sampler_state`
+  is not bound when its function is translated into the caller). Also 3x `loop-carried pointer phi` and
+  `Could not make MTLTextureView` (follows the refused pipelines). Icons are still grey plates.
+- GPU memory: at 1125x2436 with GPU icons backboardd hit `would not allocate 1126x2436 RGBA16F / 1132x2444
+  BGRA8`; owned BO pool 384/384 MiB with 207 fallbacks. `--arg sweetbopool=768` (boot
+  `build/a71-ios26-2144-1125-pool768.img`, `220c4804...`): `owned BO pool reserved 768 of 768 MiB in 12 blocks`,
+  zero allocation refusals in that boot.
+- Wallpaper: still black on the lock and home screen at 1125 (lock-screen clock renders). Not resolved.
+- `a71:recovery` twice rebooted into iOS instead of TWRP (lines 1253966, 2165625); a second send worked.
+- Phone now: boot `220c4804...` (2144, 1125x2436, GPU iconservicesagent, pool 768), Metal 46123704488,
+  icon store reset (`.old-ref1`). Log `logs/usb-ios26-2141-3x.txt` from line 2291698.
