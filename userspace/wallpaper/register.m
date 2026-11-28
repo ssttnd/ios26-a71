@@ -13,6 +13,8 @@
 + (id)defaultWorkspace;
 + (id)enumeratorWithOptions:(NSUInteger)options;
 - (NSString *)bundleIdentifier;
+- (NSURL *)URL;
+- (id)initWithBundleIdentifier:(NSString *)identifier requireValid:(BOOL)valid error:(NSError **)error;
 - (void)registerPlugin:(NSURL *)url;
 - (BOOL)registerApplication:(NSURL *)url;
 - (BOOL)_LSPrivateRebuildApplicationDatabasesForSystemApps:(BOOL)s internal:(BOOL)i user:(BOOL)u;
@@ -67,6 +69,16 @@ static int queryWidgets(void) {
         printf("SWEET WIDGET: %s LS=%d EX=%d\n", identifier.UTF8String,
                [registeredIDs containsObject:identifier],
                widgets && readableIDs == widgets.count ? [queryIDs containsObject:identifier] : -1);
+        if (![records instancesRespondToSelector:@selector(initWithBundleIdentifier:requireValid:error:)]) continue;
+        for (NSNumber *requireValid in @[@NO, @YES]) {
+            NSError *error = nil;
+            id record = [[records alloc] initWithBundleIdentifier:identifier
+                                                    requireValid:requireValid.boolValue error:&error];
+            NSString *path = [record respondsToSelector:@selector(URL)] ? [[record URL] path] : nil;
+            printf("SWEET WIDGET: lookup %s valid=%d found=%d path=%s error=%s/%ld\n",
+                   identifier.UTF8String, requireValid.boolValue, record != nil,
+                   (path ?: @"-").UTF8String, (error.domain ?: @"-").UTF8String, (long)error.code);
+        }
     }
     return 0;
 }

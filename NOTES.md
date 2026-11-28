@@ -3459,3 +3459,16 @@ on hold (state above).
   error comes after `newTextureViewWithPixelFormat:` returns nil on a texture it created over an `MTLBuffer`.
   Extended the whole-texture change to re-import the original BO at its original offset and row pitch for
   compatible RGBA8/BGRA8 linear-sRGB pairs, retaining the parent. Other pairs still report their formats.
+- Superseded selector-only CI `46126563188` with `46126804872` at `cafdbd0` and requested cancellation
+  of the old run. Verified rollback to the installed gradient build in `build/2144-metal-whole-view-rollback.payload`,
+  SHA-256 `9d7c9614a1a33f0dfd5bfa43aa5ab3bc2fb3f79374eb2ad3b9b8768a0ff37ef2`.
+- IconRendering's format table showed the mask pair is R8Unorm (10) to A8Unorm (1), added in `a67d65a`.
+  Final CI `46126978723` succeeded and superseded `46126804872`. The owner also approved installing the
+  read-only WidgetKit query job and its separate executable. Helper SHA-256 matches CI `46056921118`.
+- Repacked the verified 2144 image with the same kernel, canvas, GPU clients and firmware, changing only
+  `sweetdtlog` to SpringBoard, chronod, WidgetRenderer, WidgetRenderer_Default, pkd, lsd and iconservicesagent.
+  Flash readback matched `8fa9e3bd6f493b16af6f2c47dcafa25872185552a27d9613a785fb85cb983e7b`.
+  Saved original merged launchd plist and verified rollback payload
+  `4647cb59c4d51131b8dcb5afd9e1cf8736dd1a13056c78f1e8c8405b66c96c6c`.
+  Combined Metal + widget query package `build/2144-metal-alpha-widget.payload` read back as
+  `6d7c0e5787bdc7a5a73686078615c641c694cd449062963c99d6dd2af3198e0f`; recovery reboot requested.
