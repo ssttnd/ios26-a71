@@ -3431,3 +3431,26 @@ on hold (state above).
   `autoLockTimeoutDuration = 2147483647` (Never) and disabled its idle timer during the home transition.
   Before unlocking, the lock screen still used a separate 6-second timer on this boot. After over 60 seconds
   without input, USB shot `build/shot-2144-linked-idle.png` (log line 2597198) still showed the home screen.
+
+## 2026-11-28 — RenderBox gradient-loop fix
+
+- Reproduced the device's `pointer phi` refusal offline in RenderBox `primitive_gradient_fragment`,
+  `accumulator_gradient_fragment` and `mask_gradient_fragment`. The loop in `sample_stops_binary`
+  selects between two values derived from the same unbound optional buffer. Both leaves are `AIR_PTR_NONE`,
+  but the back edge is tagged `AIR_VAL_PTR_SELECT` and the old check rejected that tag outright.
+- `e40ad6f` recursively validates the leaves and still rejects any bound leaf on an unbound phi.
+  QEMU rebuild succeeded. Full RenderBox reports for zero and one function constants differ from baseline
+  only on the three gradient shaders, which all now translate. iOS 26 Metal CI `46125926895` dispatched.
+- Owner approved subsequent test Metal packages and moving aside the icon cache. Staged verified rollback
+  to CI `46124841253` as `build/2144-metal-gradient-rollback.payload`, SHA-256
+  `2dad3705881b12bffbadb5baefcf139a6948fe380f255fc91a4a6da302da52df`.
+- Read-only TWRP scan before the new package: 273,523 records, 3 bad records and 26 overlaps in the last
+  checkpoint (`logs/hfs-before-gradient-46125926895.txt`). The listed overlaps include older saved icon
+  caches, but no active `.IconsCache` files or `SweetMetal2.bundle` files. No repair was performed.
+- CI `46125926895` succeeded, artifact `15255837093` matched all six file hashes. TWRP readback verified
+  `build/2144-metal-gradient.payload` SHA-256 `926c8f4f906137141156efae1e788b1a33dfbf1fde1ac664b09bbb9730135268`.
+  Installed 10/10 on 2144, with the old cache moved to `.before-ci-46125926895`. USB log from byte
+  `196419911` shows 123 icon store entries so far, zero phi and sampler refusals, 209 `Could not make MTLTextureView`
+  messages and four missing fragment errors at the first count. The home shot `build/shot-2144-gradient.png`
+  still shows several missing glyphs. The single-argument Metal texture-view selector was a stub that always
+  returned `nil`; the next patch routes it through the existing full-range view implementation.

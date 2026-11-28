@@ -1,0 +1,35 @@
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -3032,20 +3032,18 @@
+ 	return YES;
+ }
+ 
+-/* A view of a texture is another texture over the same memory, and the compiler library has
+- * no call for that yet; nil is the honest answer, and it is better than a view that aliases
+- * nothing. */
+-- (id)newTextureViewWithPixelFormat:(NSUInteger)format { NATIVE_OBJECT_LOCK;  (void)format; return nil; }
+-
+-/*
+- * THE REST OF WHAT <MTLTexture>, <MTLTextureSPI>, <MTLResource> AND <MTLResourceSPI>
+- * REQUIRE: 27 methods with no answer anywhere in this chain before this section. The same
+- * three kinds as everywhere else -- served, true by construction, or refused out loud.
+- *
+- * The two view calls are the only ones here that hand nothing back, and they say so: a view
+- * is a second texture over the first one's memory, and rwa has no call that makes one. A
+- * view that aliased nothing would be found much later, by a picture that did not change.
+- */
++- (id)newTextureViewWithPixelFormat:(NSUInteger)format
++{ NATIVE_OBJECT_LOCK;
++	NSUInteger levels = _shape.mip_levels ? _shape.mip_levels : 1;
++	NSUInteger slices = _shape.array_length ? _shape.array_length : 1;
++	if (_shape.type == MTLTextureTypeCube || _shape.type == MTLTextureTypeCubeArray)
++		slices *= 6;
++	if (format == _shape.pixel_format && !_nativeSurface)
++		return [self retain];
++	return [self newTextureViewWithPixelFormat:format textureType:_shape.type
++	                                   levels:NSMakeRange(0, levels) slices:NSMakeRange(0, slices)];
++}
++
+ - (id)newTextureViewWithPixelFormat:(NSUInteger)format
+ 			textureType:(NSUInteger)type
+ 			     levels:(NSRange)levels

@@ -82,6 +82,7 @@ jobs:
               subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_MPS_POINTER_PATCH']], check=True)
               subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_VFT_PATCH']], check=True)
               subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_GRADIENT_PHI_PATCH']], check=True)
+              subprocess.run(['git', '-C', generated, 'apply', os.environ['A71_WHOLE_TEXTURE_VIEW_PATCH']], check=True)
               # Mesa patch: prepare_mesa applies everything listed from tools/mesa.
               import shutil
               shutil.copy2(os.environ['A71_IR3_SAMPLER_PATCH'],
@@ -106,6 +107,7 @@ jobs:
           A71_MPS_POINTER_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-mps-pointer-cells.patch
           A71_VFT_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-visible-function-tables.patch
           A71_GRADIENT_PHI_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-gradient-pointer-phi.patch
+          A71_WHOLE_TEXTURE_VIEW_PATCH: ${{ github.workspace }}/userspace/native-metal/ios26-whole-texture-view.patch
           A71_MESA_BUFFER_TEXTURE_PATCH: ${{ github.workspace }}/userspace/native-metal/mesa-freedreno-buffer-texture.patch
           A71_IR3_SAMPLER_PATCH: ${{ github.workspace }}/userspace/native-metal/mesa-ir3-sampler-index.patch
         run: |
