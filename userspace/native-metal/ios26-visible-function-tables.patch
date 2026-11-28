@@ -277,6 +277,162 @@ index 6969b7f..edc8c02 100644
  };
  
  /* Translates one AIR module (one function of a .metallib). entry_point may
+diff --git a/tools/mesa/air/sweet_native_ext.c b/tools/mesa/air/sweet_native_ext.c
+index a2856d4..1cca251 100644
+--- a/tools/mesa/air/sweet_native_ext.c
++++ b/tools/mesa/air/sweet_native_ext.c
+@@ -57,9 +57,29 @@ int rwa_library_function(const struct rwa_library *lib,unsigned index,const void
+ {
+    if(!lib || index>=lib->lib.num_functions || !bytes || !size || !type)return -1;
+    const struct air_metallib_function *f=&lib->lib.functions[index];
++   /* A71: metallib TYPE 4 = air.visible ([[visible]]/[[stitchable]] library functions such as
++    * IconRendering's clampToEdges_v1), MTLFunctionTypeVisible 5: linked into a pipeline, not an entry. */
++   if(f->type==4){*bytes=f->bitcode;*size=f->bitcode_size;*type=5;return 0;}
+    if(f->type<0 || f->type>2)return -1;
+    *bytes=f->bitcode;*size=f->bitcode_size;*type=f->type+1;return 0;
+ }
++int rwa_set_linked(struct rwa_device *d,unsigned stage,const struct rwa_linked *fns,unsigned count,
++                   char *why,size_t n)
++{
++   if(!d || stage>=3 || count>16 || (count&&!fns)) {say(why,n,"invalid linked function table");return -1;}
++   for(unsigned i=0;i<d->linked_count[stage];i++) {
++      free((void*)d->linked[stage][i].bitcode);free((void*)d->linked[stage][i].name);
++   }
++   d->linked_count[stage]=0;
++   for(unsigned i=0;i<count;i++) {
++      void *b=fns[i].size?malloc(fns[i].size):NULL;char *nm=fns[i].name?strdup(fns[i].name):NULL;
++      if(!b || !nm){free(b);free(nm);say(why,n,"out of memory copying a linked function");return -1;}
++      memcpy(b,fns[i].bitcode,fns[i].size);
++      d->linked[stage][i]=(struct air_linked_function){b,fns[i].size,nm};
++      d->linked_count[stage]++;
++   }
++   return 0;
++}
+ int rwa_set_constants(struct rwa_device *d,unsigned stage,const struct rwa_constant *values,
+                       unsigned count,char *why,size_t n)
+ {
+diff --git a/tools/mesa/air/sweet_native_ext.h b/tools/mesa/air/sweet_native_ext.h
+index 36648dc..c219d80 100644
+--- a/tools/mesa/air/sweet_native_ext.h
++++ b/tools/mesa/air/sweet_native_ext.h
+@@ -19,6 +19,10 @@ int rwa_library_function(const struct rwa_library *, unsigned, const void **, si
+  * 64 bits, including small vectors such as QuartzCore's uchar3 opcodes. */
+ struct rwa_constant { unsigned index; const char *name; uint64_t bits; unsigned bytes; uint64_t bits_hi; };
+ int rwa_set_constants(struct rwa_device *, unsigned stage, const struct rwa_constant *, unsigned, char *, size_t);
++/* A71: the visible functions a pipeline links (MTLLinkedFunctions) for one stage, in handle
++ * order (position + 1 is what a visible function table holds). Bytes and names are copied. */
++struct rwa_linked { const void *bitcode; size_t size; const char *name; };
++int rwa_set_linked(struct rwa_device *, unsigned stage, const struct rwa_linked *, unsigned, char *, size_t);
+ /* One context transaction per committed Metal command buffer. end waits once,
+  * including the prefix of a command buffer whose later encoding was refused. */
+ int rwa_barrier(struct rwa_device *, char *, size_t);
+diff --git a/userland/src/SweetNativeLibrary.inc b/userland/src/SweetNativeLibrary.inc
+index ceb39f6..42bb669 100644
+--- a/userland/src/SweetNativeLibrary.inc
++++ b/userland/src/SweetNativeLibrary.inc
+@@ -166,6 +166,12 @@ static unsigned native_constant_bytes(NSUInteger type) {
+ - (id)newFunctionWithDescriptor:(MTLFunctionDescriptor *)d error:(NSError **)e { NATIVE_OBJECT_LOCK; 
+     return [self newFunctionWithName:d.name constantValues:d.constantValues error:e];
+ }
++/* A71: IconRendering asks RenderBox for its custom-effect functions this way */
++- (void)newFunctionWithDescriptor:(MTLFunctionDescriptor *)d completionHandler:(void (^)(id,NSError *))handler {
++    NSError *e=nil;id f=[self newFunctionWithDescriptor:d error:&e];
++    if(!f)rw_print("function %s (descriptor): %s\n",[d.name UTF8String]?:"nil",[[e localizedDescription] UTF8String]?:"?");
++    if(handler)handler(f,e);[f release];
++}
+ @end
+ /* Explicitly opt-in local capture. Never dump Apple AIR into public CI/logs.
+  * Captures immutable shader/constant snapshots, not application buffer contents.
+@@ -231,3 +237,89 @@ static BOOL native_specialize(struct rwa_device *device,id function,unsigned sta
+     }
+     return rwa_set_constants(device,stage,packed,i,why,n)==0;
+ }
++
++/*
++ * A71: visible function tables (RenderBox's custom effects: IconRendering's clampToEdges_v1 and
++ * friends, called from uber_fragment through air.get_function_pointer_visible_function_table).
++ * A pipeline's linked functions get handles 1..n in descriptor order; a table is a buffer of
++ * 8-byte handles bound at its buffer index, and the AIR translator calls the function whose
++ * handle the shader loads (air_call_indirect).
++ */
++@interface SweetNativeFunctionHandle : NSObject {
++@public
++    id _function;
++    id _device;
++    uint64_t _handle;
++}
++@end
++@implementation SweetNativeFunctionHandle
+++ (void)load {
++    Protocol *p=objc_getProtocol("MTLFunctionHandle");if(p)class_addProtocol(self,p);
++}
++- (void)dealloc {[_function release];[_device release];[super dealloc];}
++- (NSUInteger)functionType {return 5;}
++- (NSString *)name {return [_function name];}
++- (id)device {return _device;}
++- (uint64_t)gpuResourceID {return _handle;}
++@end
++
++@interface SweetNativeVisibleFunctionTable : NSObject {
++@public
++    id _device;
++    id _buffer;
++    NSUInteger _count;
++    NSString *_label;
++}
++- (id)nativeBuffer;
++@end
++@implementation SweetNativeVisibleFunctionTable
+++ (void)load {
++    Protocol *p=objc_getProtocol("MTLVisibleFunctionTable");if(p)class_addProtocol(self,p);
++}
++- (void)dealloc {[_buffer release];[_device release];[_label release];[super dealloc];}
++- (id)nativeBuffer {return _buffer;}
++- (id)device {return _device;}
++- (NSString *)label {return _label;}
++- (void)setLabel:(NSString *)label {[_label release];_label=[label copy];}
++- (uint64_t)gpuResourceID {return [_buffer respondsToSelector:@selector(gpuAddress)]?[_buffer gpuAddress]:0;}
++- (NSUInteger)allocatedSize {return [_buffer length];}
++- (NSUInteger)storageMode {return 0;}
++- (NSUInteger)cpuCacheMode {return 0;}
++- (NSUInteger)hazardTrackingMode {return 0;}
++- (NSUInteger)resourceOptions {return 0;}
++- (void)setFunction:(id)function atIndex:(NSUInteger)index {
++    if(index>=_count)return;
++    uint64_t h=[function isKindOfClass:[SweetNativeFunctionHandle class]]?((SweetNativeFunctionHandle *)function)->_handle:0;
++    ((uint64_t *)[_buffer contents])[index]=h;
++    static unsigned told;
++    if(told++<8)rw_print("visible function table %p: slot %lu = handle %llu (%s)\n",self,(unsigned long)index,
++                         (unsigned long long)h,[[function name] UTF8String]?:"nil");
++}
++- (void)setFunctions:(const id *)functions withRange:(NSRange)range {
++    for(NSUInteger i=0;i<range.length;i++)[self setFunction:functions?functions[i]:nil atIndex:range.location+i];
++}
++@end
++
++/* The linked functions of one stage, from an MTLLinkedFunctions (functions, then
++ * privateFunctions), handed to the translator; returns them in handle order, or nil and
++ * a reason. A descriptor without any clears the stage. */
++static char native_linked_key;   /* the pipeline's handle order, an associated NSArray */
++static NSArray *native_link(struct rwa_device *device,id linked,unsigned stage,char *why,size_t n) {
++    NSMutableArray *order=[NSMutableArray array];
++    if(linked) {
++        if([linked respondsToSelector:@selector(functions)])[order addObjectsFromArray:[linked functions]?:@[]];
++        if([linked respondsToSelector:@selector(privateFunctions)])[order addObjectsFromArray:[linked privateFunctions]?:@[]];
++    }
++    if([order count]>16){snprintf(why,n,"more than 16 linked functions (%lu)",(unsigned long)[order count]);return nil;}
++    struct rwa_linked fns[16];unsigned count=0;
++    for(id f in order) {
++        if(![f isKindOfClass:[SweetNativeFunction class]]) {
++            snprintf(why,n,"linked function %s was not created by SweetNativeMetal",[[f name] UTF8String]?:"?");return nil;
++        }
++        SweetNativeFunction *sf=(SweetNativeFunction *)f;
++        fns[count++]=(struct rwa_linked){[sf->_nativeAIR bytes],[sf->_nativeAIR length],[sf->_nativeName UTF8String]};
++    }
++    if(rwa_set_linked(device,stage,fns,count,why,n))return nil;
++    if(count)rw_print("pipeline stage %u links %u visible function(s), first %s\n",stage,count,fns[0].name);
++    return order;
++}
 diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
 index ab39aed..75d129a 100644
 --- a/userland/src/redwoodmetal.m
