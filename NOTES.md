@@ -3405,3 +3405,29 @@ on hold (state above).
   Working tree: `build/vft-tree` (base = buffer-texture-base + buffer-textures patch; regenerate the patch with
   `git diff HEAD` there, keep each file's EOL). Next: compile-check in the VM, Metal CI (`ios26=true`),
   install, reset the icon store, check icons. Then the 3x `loop-carried pointer phi` refusal, then wallpaper.
+
+## 2026-11-28 — linked samplers validated offline
+
+- Remote `codex/a71-settings` confirmed at `fbb1045`. Dispatched iOS 26 Metal run `46124841253` at that SHA.
+- QEMU host `air2nir` is up to date; its `air_to_nir.c` SHA-256 matches `build/vft-tree`. RenderBox
+  `custom_effect_fragment` translated to NIR with each of `clampToEdges_v1`,
+  `simplifiedShapeAwareGradientMask_v1`, and `glow_v1` linked separately, with function constants all zero
+  and all one. That test does not exercise actual GPU execution or the phone's specialization values.
+- Owner approved installing the Metal package and moving the icon cache aside. Verified all six files
+  from previous Metal CI `46123704488` and staged `build/2144-metal-sampler-rollback.payload`, SHA-256
+  `b2bc6c00b20c510e72d8c3826be8f81b5876847c5af49574456a82690f525bb6`. The existing 2144 boot with the
+  768 MiB pool already has `sweetpayload=1`. Awaiting the new artifact before device testing.
+
+- CI `46124841253` succeeded. Downloaded artifact `15254929500` and matched all six manifest hashes.
+  TWRP readback confirmed existing `boot` SHA-256 `220c48047ca058c11240bec2c983cf040e9b9f1a090dea15eff6e5ea5fd2656c`.
+  Wrote `build/2144-metal-linked-samplers.payload`, readback SHA-256
+  `f7435aa393aedcc660e8301f113bb807fc2c49e23f47d7dc1bf6af610fed9485`. Package applied 10/10 at
+  USB log line 2458410, including the cache move to `.before-ci46124841253`. Boot partition was not rewritten.
+- New boot shows 1125x2436 frames, no `argument 1 is not a sampler` in the observed log, and repeated
+  `loop-carried pointer phi starts unbound and is advanced into a buffer` refusals. The USB desktop shot
+  `build/shot-2144-linked-desktop.png` shows wallpaper and most GPU icons. Widgets and several icons are
+  still blank. The same boot also logs `Runtime corruption detected on iOSRoot`; filesystem repair was not run.
+- USB power key wakes the device and the subsequent swipe unlocked it. SpringBoard reports
+  `autoLockTimeoutDuration = 2147483647` (Never) and disabled its idle timer during the home transition.
+  Before unlocking, the lock screen still used a separate 6-second timer on this boot. After over 60 seconds
+  without input, USB shot `build/shot-2144-linked-idle.png` (log line 2597198) still showed the home screen.
