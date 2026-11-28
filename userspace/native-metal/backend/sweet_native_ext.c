@@ -34,6 +34,10 @@ int rwa_library_function(const struct rwa_library *lib,unsigned index,const void
 {
    if(!lib || index>=lib->lib.num_functions || !bytes || !size || !type)return -1;
    const struct air_metallib_function *f=&lib->lib.functions[index];
+   /* metallib TYPE 0..2 = vertex/fragment/kernel (MTLFunctionType 1..3); 4 = air.visible, the
+    * [[visible]]/[[stitchable]] library functions (IconRendering's clampToEdges), MTLFunctionTypeVisible 5.
+    * A visible function is not a pipeline entry point; callers link or stitch it. */
+   if(f->type==4){*bytes=f->bitcode;*size=f->bitcode_size;*type=5;return 0;}
    if(f->type<0 || f->type>2)return -1;
    *bytes=f->bitcode;*size=f->bitcode_size;*type=f->type+1;return 0;
 }
