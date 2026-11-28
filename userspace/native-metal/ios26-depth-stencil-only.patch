@@ -1,0 +1,128 @@
+--- a/tools/mesa/air/air_metal.c
++++ b/tools/mesa/air/air_metal.c
+@@ -6765,8 +6765,13 @@
+       say(why, why_size, "a render pipeline with no attachment description");
+       return NULL;
+    }
+-   if (!fragment_bitcode || fragment_size < 4) {
++   const bool has_fragment = fragment_bitcode != NULL;
++   if ((has_fragment && fragment_size < 4) || (!has_fragment && fragment_size != 0)) {
+       say(why, why_size, "%zu bytes is not a fragment shader module", fragment_size);
++      return NULL;
++   }
++   if (!has_fragment && !vertex_bitcode) {
++      say(why, why_size, "a pipeline without a fragment shader requires a vertex shader");
+       return NULL;
+    }
+    /* No colour attachment is allowed only with a depth one, which is Metal's own rule
+@@ -6919,34 +6924,47 @@
+     * error between the stages cannot surface until the draw, because ir3 compiles and
+     * links at draw time (ir3_cache_lookup), so the two belong to two different calls.
+     */
+-   struct air_constant_value *ffc;
+-   unsigned num_ffc =
+-      native_constants(device, 1, render->mem_ctx, fragment_bitcode, fragment_size, &ffc);
+-   const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc,
+-                                             .linked = device->linked[1],
+-                                             .num_linked = device->linked_count[1] };
+    const char *error;
+-   nir_shader *fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
+-                               fragment_entry, &fopts, device->nir_options, &render->finfo,
+-                               &error);
+-   if (!fs) {
+-      say(why, why_size, "%s", error ? error : "the fragment module could not be translated");
+-      goto fail;
+-   }
+-   if (render->finfo.stage != MESA_SHADER_FRAGMENT) {
+-      say(why, why_size, "%s is a %s shader, and this makes render pipelines with a "
+-                         "fragment stage",
+-          render->finfo.entry_point ? render->finfo.entry_point : "the function",
+-          render->finfo.stage >= MESA_SHADER_VERTEX &&
+-          render->finfo.stage < MESA_SHADER_STAGES
+-             ? _mesa_shader_stage_to_string(render->finfo.stage) : "non-fragment");
+-      goto fail;
+-   }
+-   native_prune_direct_resources(fs, &render->finfo);
+-   slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);
+-   count_resources(&render->finfo, render->frag_slots, &out.fragment_buffers,
+-                   &out.fragment_textures, &out.fragment_samplers);
+-   out.fragment_writes_depth = fragment_writes_depth(fs) ? 1 : 0;
++   nir_shader *fs;
++   if (has_fragment) {
++      struct air_constant_value *ffc;
++      unsigned num_ffc =
++         native_constants(device, 1, render->mem_ctx, fragment_bitcode, fragment_size, &ffc);
++      const struct air_to_nir_options fopts = { .constants = ffc, .num_constants = num_ffc,
++                                                .linked = device->linked[1],
++                                                .num_linked = device->linked_count[1] };
++      fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
++                                  fragment_entry, &fopts, device->nir_options, &render->finfo,
++                                  &error);
++      if (!fs) {
++         say(why, why_size, "%s", error ? error : "the fragment module could not be translated");
++         goto fail;
++      }
++      if (render->finfo.stage != MESA_SHADER_FRAGMENT) {
++         say(why, why_size, "%s is a %s shader, and this makes render pipelines with a "
++                            "fragment stage",
++             render->finfo.entry_point ? render->finfo.entry_point : "the function",
++             render->finfo.stage >= MESA_SHADER_VERTEX &&
++             render->finfo.stage < MESA_SHADER_STAGES
++                ? _mesa_shader_stage_to_string(render->finfo.stage) : "non-fragment");
++         goto fail;
++      }
++      native_prune_direct_resources(fs, &render->finfo);
++      slot_shapes(fs, render->frag_slots, render->frag_compare_sampler);
++      count_resources(&render->finfo, render->frag_slots, &out.fragment_buffers,
++                      &out.fragment_textures, &out.fragment_samplers);
++      out.fragment_writes_depth = fragment_writes_depth(fs) ? 1 : 0;
++   } else {
++      /* The rasterizer still drives depth and stencil. Gallium needs a
++       * fragment stage object, so supply one with no inputs or outputs. */
++      nir_builder builder = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT,
++                                                          device->nir_options, "depth/stencil only");
++      fs = builder.shader;
++      ralloc_steal(render->mem_ctx, fs);
++      render->finfo.stage = MESA_SHADER_FRAGMENT;
++      render->shape.color_blend_count = render->shape.color_count;
++      memset(render->shape.color_blend, 0, sizeof(render->shape.color_blend));
++   }
+ 
+    /* A shader that stores to [[depth]] with nowhere to store it is refused here, by name.
+     *
+@@ -7125,7 +7143,7 @@
+    if (!blend_tables_are_shaped_right(why, why_size))
+       goto fail;
+    struct pipe_blend_state blend;
+-   if (!blend_state_from_metal(shape, device->screen, &blend, &out.blend_enabled_mask,
++   if (!blend_state_from_metal(&render->shape, device->screen, &blend, &out.blend_enabled_mask,
+                                &out.color_write_masks, why, why_size))
+       goto fail;
+    if (render->glass_control) {
+--- a/userland/src/redwoodmetal.m
++++ b/userland/src/redwoodmetal.m
+@@ -1334,11 +1334,10 @@
+ 	id vertex = [descriptor vertexFunction];
+ 	id fragment = [descriptor fragmentFunction];
+ 
+-	if (fragment == nil) {
+-		return [self fail:error with:@"the descriptor has no fragment function, and this "
+-					     @"driver has nothing to draw without one"];
+-	}
+-	if (![fragment respondsToSelector:bitcode] ||
++	if (fragment == nil && vertex == nil) {
++		return [self fail:error with:@"the descriptor has neither a vertex nor a fragment function"];
++	}
++	if ((fragment != nil && ![fragment respondsToSelector:bitcode]) ||
+ 	    (vertex != nil && ![vertex respondsToSelector:bitcode])) {
+ 		return [self fail:error with:@"a function in this descriptor does not answer "
+ 					     @"bitcodeData, so its AIR cannot be read"];
+@@ -1347,7 +1346,7 @@
+ 	NSData *vertex_air = vertex != nil ?
+ 	    ((NSData *(*)(id, SEL))objc_msgSend)(vertex, bitcode) : nil;
+ 
+-	if (fragment_air == nil || [fragment_air length] == 0) {
++	if (fragment != nil && (fragment_air == nil || [fragment_air length] == 0)) {
+ 		return [self fail:error with:@"the fragment function has no bitcode"];
+ 	}
+ 
