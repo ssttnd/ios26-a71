@@ -21,7 +21,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
     {  94, "MTLPixelFormatBGR10A2Unorm",   PIPE_FORMAT_B10G10R10A2_UNORM },
     { 103, "MTLPixelFormatRG32Uint",        PIPE_FORMAT_R32G32_UINT },
     { 104, "MTLPixelFormatRG32Sint",        PIPE_FORMAT_R32G32_SINT },
-@@ -1120,7 +1120,14 @@
+@@ -1120,7 +1120,15 @@
  struct rwa_surface_import {
     int id;
     unsigned offset, row_bytes;
@@ -29,6 +29,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  };
 +
 +#ifdef GALLIUM_FREEDRENO
++unsigned fd_buffer_texture_alignment(struct pipe_screen *screen, enum pipe_format format);
 +struct pipe_resource *fd_resource_from_buffer(struct pipe_resource *buffer,
 +                                              const struct pipe_resource *tmpl,
 +                                              unsigned offset, unsigned stride);
@@ -36,7 +37,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
  
  static struct rwa_texture *
  texture_of_shape(struct rwa_device *device, const struct rwa_texture_shape *shape,
-@@ -1499,7 +1506,7 @@
+@@ -1499,7 +1507,7 @@
         * agreement between two trees and not a hurdle.
         */
        unsigned texel = util_format_get_blocksize(fmt->pipe);
@@ -45,7 +46,7 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
           say(why, why_size, "IOSurface %d has %u bytes a row, and %u texels of %u bytes "
                              "need at least %u: this GPU's import refuses a pitch narrower "
                              "than the image", import->id, import->row_bytes, width, texel,
-@@ -1538,6 +1545,17 @@
+@@ -1538,6 +1546,17 @@
           return NULL;
        }
  
@@ -63,10 +64,21 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
        texture->res = device->screen->resource_from_handle(device->screen, &templ, &whandle,
                                                            PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
        if (!texture->res) {
-@@ -1600,6 +1618,23 @@
+@@ -1600,6 +1619,39 @@
        .id = surface_id, .offset = offset, .row_bytes = row_bytes };
  
     return texture_of_shape(device, shape, &import, why, why_size);
++}
++
++unsigned
++rwa_linear_texture_alignment(struct rwa_device *device, unsigned format)
++{
++#ifdef GALLIUM_FREEDRENO
++   const struct rwa_pixel_format *fmt = pixel_format(format);
++   if (device && !device->software && fmt)
++      return fd_buffer_texture_alignment(device->screen, fmt->pipe);
++#endif
++   return 64;
 +}
 +
 +struct rwa_texture *
@@ -80,6 +92,11 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 +      say(why, why_size, "invalid 2D linear buffer texture shape, alignment or bounds");
 +      return NULL;
 +   }
++   unsigned alignment = rwa_linear_texture_alignment(buffer->device, shape->pixel_format);
++   if (offset % alignment || row_bytes % alignment) {
++      say(why, why_size, "buffer texture offset and pitch require %u-byte alignment", alignment);
++      return NULL;
++   }
 +   const struct rwa_surface_import import = {
 +      .offset = offset, .row_bytes = row_bytes, .buffer = buffer,
 +   };
@@ -90,10 +107,11 @@ diff --git a/tools/mesa/air/air_metal.c b/tools/mesa/air/air_metal.c
 diff --git a/tools/mesa/air/air_metal.h b/tools/mesa/air/air_metal.h
 --- a/tools/mesa/air/air_metal.h
 +++ b/tools/mesa/air/air_metal.h
-@@ -174,6 +174,10 @@
+@@ -174,6 +174,11 @@
   * NULL and a sentence on anything. A screen that imports nothing says so by name, which is
   * what the software screen on a build machine does.
   */
++unsigned rwa_linear_texture_alignment(struct rwa_device *device, unsigned format);
 +struct rwa_texture *rwa_texture_from_buffer(struct rwa_buffer *buffer,
 +                                            const struct rwa_texture_shape *shape,
 +                                            size_t offset, size_t row_bytes,
@@ -132,20 +150,19 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  /* Not part of MTLTexture: the depth or stencil aspect of this texture, one float and one
   * byte per texel. Metal's own -getBytes: has no aspect to name and the compiler library
   * refuses a depth texture through it by name, so a caller that wants to know what a depth
-@@ -2301,6 +2310,12 @@
+@@ -2301,6 +2310,11 @@
  - (uint64_t)halfFPConfig   { NATIVE_OBJECT_LOCK;  return 0; }
  - (uint64_t)doubleFPConfig { NATIVE_OBJECT_LOCK;  return 0; }
  
 +- (NSUInteger)minimumLinearTextureAlignmentForPixelFormat:(NSUInteger)format
 +{ NATIVE_OBJECT_LOCK;
-+	(void)format;
-+	return 64;
++	return rwa_linear_texture_alignment(_mesa, (unsigned)format);
 +}
 +
  - (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)format
  { NATIVE_OBJECT_LOCK; 
  	(void)format;
-@@ -2774,19 +2789,36 @@
+@@ -2774,19 +2788,36 @@
  	return _responsibleProcess != 0 ? _responsibleProcess : getpid();
  }
  - (void)setResponsibleProcess:(int)pid { NATIVE_OBJECT_LOCK;  _responsibleProcess = pid; }
@@ -195,7 +212,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  }
  
  - (id)newLinearTextureWithDescriptor:(id)descriptor offset:(NSUInteger)offset
-@@ -2802,6 +2834,14 @@
+@@ -2802,6 +2833,14 @@
  @end
  
  @implementation SweetNativeMetalTexture
@@ -210,7 +227,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  
  - (void)nativeAttachSurface:(void *)surface { NATIVE_OBJECT_LOCK; 
      if(_nativeSurface)CFRelease(_nativeSurface);
-@@ -2851,6 +2891,7 @@
+@@ -2851,6 +2890,7 @@
  	}
      if(_nativeSurface)CFRelease(_nativeSurface);
  	[_nativeParentTexture release];
@@ -218,7 +235,7 @@ diff --git a/userland/src/redwoodmetal.m b/userland/src/redwoodmetal.m
  	[_owner release];[super dealloc];
  }
  
-@@ -2872,9 +2913,9 @@
+@@ -2872,9 +2912,9 @@
  - (BOOL)nativeQuartzCoreWallpaperUpload { return _nativeQuartzCoreWallpaperUpload; }
  - (NSUInteger)parentRelativeLevel  { NATIVE_OBJECT_LOCK;  return _nativeParentLevel; }
  - (NSUInteger)parentRelativeSlice  { NATIVE_OBJECT_LOCK;  return 0; }

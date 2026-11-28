@@ -69,8 +69,9 @@ def main():
     root = parser.add_mutually_exclusive_group(required=True)
     root.add_argument('--ramdisk', type=Path, help='raw HFSX volume containing the diagnostic PID 1')
     root.add_argument('--product-adt', type=Path, help='N104AP ADT for booting an installed iOS 26 root from userdata')
-    parser.add_argument('--native-width', action='store_true',
-                        help='use a 1080x2340 canvas at 3x for the installed iOS 26 root')
+    parser.add_argument('--native-width', nargs='?', const='1080x2340', choices=('1080x2340', '1125x2436'),
+                        help='3x canvas for the installed iOS 26 root: 1080x2340 (360x780 pt, panel width 1:1) '
+                             'or 1125x2436 (375x812 pt, iPhone X-class layout, scaled to the panel)')
     parser.add_argument('--touch', action='store_true', help='enable the Samsung SEC_TS driver in an A71 kernel build')
     parser.add_argument('--keys', action='store_true', help='enable the power and volume key driver')
     parser.add_argument('--wifi', action='store_true', help='enable the A71 WLAN device tree and wland kernel interfaces')

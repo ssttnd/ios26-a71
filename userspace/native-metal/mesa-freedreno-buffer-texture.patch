@@ -23,7 +23,7 @@ diff --git a/src/gallium/drivers/freedreno/freedreno_resource.c b/src/gallium/dr
     if (!bo)
        goto fail;
  
-@@ -1574,6 +1574,41 @@
+@@ -1574,6 +1574,52 @@
  fail:
     fd_resource_destroy(pscreen, prsc);
     return NULL;
@@ -35,6 +35,17 @@ diff --git a/src/gallium/drivers/freedreno/freedreno_resource.c b/src/gallium/dr
 +                        struct winsys_handle *handle, unsigned usage)
 +{
 +   return fd_resource_import(pscreen, tmpl, handle, NULL);
++}
++
++unsigned fd_buffer_texture_alignment(struct pipe_screen *pscreen, enum pipe_format format);
++
++unsigned
++fd_buffer_texture_alignment(struct pipe_screen *pscreen, enum pipe_format format)
++{
++   struct fd_screen *screen = fd_screen(pscreen);
++   unsigned texel = util_format_get_blocksize(format);
++   return MAX2(is_a6xx(screen) || is_a5xx(screen) ? 64u : 32u,
++               texel * screen->info->gmem_align_w);
 +}
 +
 +struct pipe_resource *

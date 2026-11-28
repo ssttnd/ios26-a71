@@ -87,7 +87,11 @@ def build(seed=None, qemu=False, highmem=False, ios26=False, product_adt=None, n
     if native_width:
         if not ios26 or qemu:
             raise ValueError('native-width mode requires the iOS 26 phone device tree')
-        canvas_width, canvas_height, display_scale = 1080, 2340, 3
+        # True or '1080x2340': panel width 1:1 (360x780 pt, no real iPhone has it, SpringBoard's dock sits
+        # too low). '1125x2436': 375x812 pt like iPhone X/11 Pro/12 mini, scaled to the panel by sweetfb.
+        size = '1080x2340' if native_width is True else native_width
+        canvas_width, canvas_height = {'1080x2340': (1080, 2340), '1125x2436': (1125, 2436)}[size]
+        display_scale = 3
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
     # XNU 8796's QEMU path needs /pram. The XNU 12377 donor boots without it.
     # On A71, 12377 faults in PE_create_console while zeroing the I/O mapping.
