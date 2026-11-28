@@ -1,0 +1,29 @@
+--- a/tools/mesa/air/air_to_nir.c
++++ b/tools/mesa/air/air_to_nir.c
+@@ -3971,6 +3971,17 @@
+ }
+ 
+ static bool
++ptr_phi_is_unbound(const struct air_val *v)
++{
++   if (!v)
++      return false;
++   if (v->kind == AIR_VAL_PTR)
++      return v->ptr.class == AIR_PTR_NONE;
++   return v->kind == AIR_VAL_PTR_SELECT && v->num_elems == 2 &&
++          ptr_phi_is_unbound(v->elems[0]) && ptr_phi_is_unbound(v->elems[1]);
++}
++
++static bool
+ ptr_phi_same_buffer(const struct air_ptr *a, const struct air_ptr *b)
+ {
+    return a->class == b->class && a->binding == b->binding && a->is_image == b->is_image;
+@@ -4367,7 +4378,7 @@
+                struct hash_entry *e = _mesa_hash_table_search(c->values, in->operands[k]);
+                struct air_val *v = e ? e->data : NULL;
+                if (pp->offset_base && pp->offset_base->ptr.class == AIR_PTR_NONE) {
+-                  if (!v || v->kind != AIR_VAL_PTR || v->ptr.class != AIR_PTR_NONE)
++                  if (!ptr_phi_is_unbound(v))
+                      return air_error(c, "instruction: a loop-carried pointer phi starts unbound "
+                                          "and is advanced into a buffer");
+                   continue;
