@@ -33,20 +33,26 @@
  - (id)newTextureViewWithPixelFormat:(NSUInteger)format
  			textureType:(NSUInteger)type
  			     levels:(NSRange)levels
-@@ -3090,6 +3088,16 @@
+@@ -3090,6 +3088,22 @@
  		}
  		if (format == sf)
  			return [self retain];
-+		if (_backingBuffer && type == MTLTextureType2D && levels.length == 1 && slices.length == 1) {
-+			MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format
-+			                                                                             width:_shape.width height:_shape.height mipmapped:NO];
-+			d.usage = (MTLTextureUsage)_shape.usage;
-+			SweetNativeMetalTexture *view = [_backingBuffer newTextureWithDescriptor:d
-+			                                                                 offset:_bufferOffset bytesPerRow:_bufferBytesPerRow];
-+			if (view)
-+				view->_nativeParentTexture = [self retain];
-+			return view;
-+		}
++	}
++	/* IconRendering's mask texture uses the same byte as red in the backing
++	 * texture and alpha in the view. Re-import the buffer with the view format
++	 * so sampling gets the right channel without copying the mask. */
++	const bool alphaView = sf == MTLPixelFormatR8Unorm && format == MTLPixelFormatA8Unorm;
++	if (_backingBuffer && (twin || alphaView) && type == MTLTextureType2D && type == _shape.type &&
++	    levels.location == 0 && levels.length == 1 && _shape.mip_levels == 1 &&
++	    slices.location == 0 && slices.length == 1) {
++		MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format
++		                                                                             width:_shape.width height:_shape.height mipmapped:NO];
++		d.usage = (MTLTextureUsage)_shape.usage;
++		SweetNativeMetalTexture *view = [_backingBuffer newTextureWithDescriptor:d
++		                                                                 offset:_bufferOffset bytesPerRow:_bufferBytesPerRow];
++		if (view)
++			view->_nativeParentTexture = [self retain];
++		return view;
  	}
  	if (!_nativeSurface && format == sf && type == MTLTextureType2D && type == _shape.type &&
  	    slices.location == 0 && slices.length == 1 && levels.location < _shape.mip_levels &&
