@@ -3337,3 +3337,30 @@ on hold (state above).
   Clock live icons look glassy/empty; widgets still white placeholders.
 - `SweetNativeLibrary` got `newFunctionWithDescriptor:completionHandler:` (IconRendering calls it). Not CI built.
 - Phone now: boot `a7605c15...`, MG scale-3 cache, fresh icon store. Log `logs/usb-ios26-2141-3x.txt`.
+
+## 2026-11-28 afternoon — 1125x2436 canvas, plane pitch, GPU icons
+
+- Owner: at 360x780 pt the dock sits too low and lock-screen buttons are too big (no real iPhone has 360x780;
+  the iPhone 12 mini is 375x812 @3x rendered 1125x2436 and scaled to 1080x2340). Owner rule: no temporary
+  workarounds (no CPU fallback for iconservicesagent); fix the real path even if icons are missing meanwhile.
+- Packer `--native-width 1125x2436` + `tools/a71-canvas-prefs.py` (MG MainScreenCanvasSizes, managed
+  IOMobileGraphicsFamily canvas). `build/a71-ios26-2141-1125.img` (`fc2976f0...`) + `build/2141-canvas1125.payload`
+  (`39beb2e0...`, 10/10): second boot ran `375x812@3x`, swaps 1125x2436, but the screen stayed black.
+  Cause: backboardd/Mercury '&BGA' surfaces have IOSurfaceBytesPerRow 4544 but plane 0 rows of 4608;
+  SweetNativeMetal refuses `planar IOSurface textures are not implemented (1 planes)` on every frame. At 1080
+  both are 4352. Fix: xnu 2143 `2143-a71-surface-single-plane-pitch.patch` (one plane covering the surface ->
+  surface pitch = plane pitch). Kernel CI `46121204155` (cfb8862). Rolled back meanwhile with
+  `build/2141-canvas1080-rollback.payload` (`38697d9c...`) + `a7605c15...` boot.
+- Metal CI `46119511064` (1bca70a, freedreno linear pitch alignment = cpp*gmem_align_w, min 64) installed
+  (`build/2141-metal-align-gpuicons.payload`, `675a306d...`; rollback to `46058857783`:
+  `build/2141-metal-46058857783-rollback.payload`, `d64af2a7...`). With GPU iconservicesagent all buffer
+  texture refusals are gone. Icons still blank: every icon effect needs IconRendering's [[stitchable]]
+  `clampToEdges` (default.metallib, air.stitching_info) and RenderBox links it into its uber fragment through a
+  visible function table (renderbox metallib has air.visible_function_table / get_function_pointer); our AIR
+  lowering returns zero for any call through a function pointer. Also `-16 Resource busy` submits.
+- 1297455: visible library functions are handed out as MTLFunctionTypeVisible (was "function absent").
+  Metal CI `46121272766`. Next: see on hardware which API RenderBox uses next (stitched library / linked
+  functions / visible function table) and implement function-pointer calls by inlining the linked visible
+  functions behind a switch on the table handle.
+- Wallpaper: boots with the wallpaper show Mercury `Captured levelset` snapshots; boots without did not (yet).
+  Not resolved.
