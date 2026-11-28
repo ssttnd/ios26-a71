@@ -33,3 +33,20 @@
  - (id)newTextureViewWithPixelFormat:(NSUInteger)format
  			textureType:(NSUInteger)type
  			     levels:(NSRange)levels
+@@ -3090,6 +3088,16 @@
+ 		}
+ 		if (format == sf)
+ 			return [self retain];
++		if (_backingBuffer && type == MTLTextureType2D && levels.length == 1 && slices.length == 1) {
++			MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(MTLPixelFormat)format
++			                                                                             width:_shape.width height:_shape.height mipmapped:NO];
++			d.usage = (MTLTextureUsage)_shape.usage;
++			SweetNativeMetalTexture *view = [_backingBuffer newTextureWithDescriptor:d
++			                                                                 offset:_bufferOffset bytesPerRow:_bufferBytesPerRow];
++			if (view)
++				view->_nativeParentTexture = [self retain];
++			return view;
++		}
+ 	}
+ 	if (!_nativeSurface && format == sf && type == MTLTextureType2D && type == _shape.type &&
+ 	    slices.location == 0 && slices.length == 1 && levels.location < _shape.mip_levels &&

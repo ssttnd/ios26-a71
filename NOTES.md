@@ -3454,3 +3454,8 @@ on hold (state above).
   messages and four missing fragment errors at the first count. The home shot `build/shot-2144-gradient.png`
   still shows several missing glyphs. The single-argument Metal texture-view selector was a stub that always
   returned `nil`; the next patch routes it through the existing full-range view implementation.
+- Later screenshot `build/shot-2144-gradient-later.png` shows Calendar, Wallet and Settings painted after the
+  cache filled, with Reminders, News and Health still blank. Confirmed offline that the exact IconRendering
+  error comes after `newTextureViewWithPixelFormat:` returns nil on a texture it created over an `MTLBuffer`.
+  Extended the whole-texture change to re-import the original BO at its original offset and row pitch for
+  compatible RGBA8/BGRA8 linear-sRGB pairs, retaining the parent. Other pairs still report their formats.
