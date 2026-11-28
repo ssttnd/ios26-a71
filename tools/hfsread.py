@@ -9,6 +9,9 @@ import struct, sys, plistlib
 class HFS:
     def __init__(self, path):
         self.f = open(path, 'rb')
+        self._init()
+
+    def _init(self):
         h = self.read(1024, 512)
         assert h[:2] in (b'H+', b'HX'), h[:2]
         self.sig = h[:2]
@@ -18,6 +21,9 @@ class HFS:
         self.catfork = h[272:352]
         self.extfork = h[192:272]
         self.cat_ext = self.fork_extents(self.catfork)
+        catalog_blocks = struct.unpack_from('>I', self.catfork, 12)[0]
+        if sum(count for _, count in self.cat_ext) < catalog_blocks:
+            self.cat_ext = self.overflow_extents(4, self.cat_ext)  # catalog file CNID
         hdr = self.fork_read(self.cat_ext, 0, 512)
         self.root_node = struct.unpack('>I', hdr[16:20])[0]
         self.node_size = struct.unpack('>H', hdr[14 + 18:14 + 20])[0]

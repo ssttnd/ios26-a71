@@ -3472,3 +3472,40 @@ on hold (state above).
   `4647cb59c4d51131b8dcb5afd9e1cf8736dd1a13056c78f1e8c8405b66c96c6c`.
   Combined Metal + widget query package `build/2144-metal-alpha-widget.payload` read back as
   `6d7c0e5787bdc7a5a73686078615c641c694cd449062963c99d6dd2af3198e0f`; recovery reboot requested.
+
+## 2026-11-28 — remaining icon rendering and widget identity failures
+
+- Metal CI `46126978723` artifact `15256058205` applied 16/16. Trace confirms 10→1 texture views at
+  120×120 and 192×192; no `Could not make MTLTextureView`, sampler or gradient-phi errors through 123
+  icon records. `build/shot-2144-alpha.png` still shows blank glyphs. RenderBox also refuses some pipelines
+  with no fragment function. Added depth/stencil rasterization with no color writes in `d214f5d`, CI
+  `46127954211`. C syntax and type checks passed offline. Native Linux x86 object compilation stops at
+  the donor's ARM64-only TLS inline assembly. An earlier dispatch without `ios26=true` (`46127745918`)
+  was canceled because it selected the iOS 16 job.
+- `chronod` rejected Weather, News, Maps and Calendar with `Unknown extension process`. SpringBoard's
+  local widget provider reports 0 widget extensions. ChronoKit's lookup calls
+  `LSApplicationExtensionRecord initWithBundleIdentifier:requireValid:error:`. `0125732` queries that exact
+  selector in both modes; CI `46127562615` artifact `15256003736` passed and verified. Diagnostic package
+  `509f333acab8253a9c0d822b1c861bbb1c3b8e51484cdbc5694fec696dc14d29` applied 6/6 with `RunAtLoad` and the
+  timed retry. Requested another normal reboot because PID 1 was already running before the plist write.
+- Display log confirms `hw=0`. The donor's CPU path uses nearest-neighbor for the 1125×2436 canvas on
+  the 1080×2400 panel, which explains uneven thin edges; USB captures sample only 180×400 as well.
+- Owner reported missing wallpaper; `build/shot-2144-current.png` confirms a black home background after
+  the diagnostic reboot and some blank icons. Mercury processes start and allocate surfaces. Added Mercury
+  os_log to the next diagnostic boot, verified flash SHA-256
+  `f1f1aa7d5382b3e84e683030c0acee5733f31c9282df30514c681fa4b11d88b9`.
+- TWRP confirmed the merged launchd plist and query executable were installed, but no query execution was
+  observed with the merged entry. Prepared a standalone job plist and a disk log in addition to the merged
+  entry. Read-only extent comparisons matched all nine checked files against the reference root, including
+  Reminders/News/Health `Assets.car` and Weather/News widget Info.plists and executables.
+- Standalone widget-query job package verified in TWRP (`99e81a83976ee4ad42b3b23b41e5408a17925e91fe29d6737e2ab057de286edd`).
+  Requested normal reboot. No new USB or ADB session appeared after the first reboot attempt, and the owner
+  was asked for a physical power-button restart. No application marker has been seen for this package yet.
+- Device reconnected; standalone package applied 4/4 at line 3395395. Mercury allocated surfaces and
+  produced transport output, but no `Captured levelset` in the observed window. At the following TWRP visit the
+  read-only HFS reader hit a catalog-extent overflow. Shared reader initialization now expands catalog extents;
+  a local fixture verifies reading a node in the ninth extent, and the reference HFSX still reads.
+- Depth/stencil CI `46127954211` succeeded, artifact `15256203028` matched all six hashes. TWRP readback verified
+  `build/2144-metal-depth-only.payload` SHA-256 `2ab5decd2fbdbd1d3db08ebae61c18d0f8d3a42a095d8cc5a4d680cb3ff7b9fd`.
+  New boot log starts at byte `259300589`; package applied 10/10 and `exec a71-widget-query` appeared at
+  line 3510430. The standalone job writes to `/private/var/mobile/Library/Logs/a71-widget-query.log`.

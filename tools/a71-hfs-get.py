@@ -56,23 +56,7 @@ class Remote:
 class RemoteHFS(hfsread.HFS):
     def __init__(self, adb):
         self.f = Remote(adb)
-        self._init()   # the same steps as hfsread.HFS.__init__, which opens a local file
-
-    def _init(self):
-        import struct
-        h = self.read(1024, 512)
-        assert h[:2] in (b'H+', b'HX'), h[:2]
-        self.sig = h[:2]
-        self.attrs = struct.unpack('>I', h[4:8])[0]
-        self.lastmount = h[8:12]
-        self.files, self.folders, self.bs, self.total = struct.unpack('>IIII', h[32:48])
-        self.catfork = h[272:352]
-        self.extfork = h[192:272]
-        self.cat_ext = self.fork_extents(self.catfork)
-        hdr = self.fork_read(self.cat_ext, 0, 512)
-        self.root_node = struct.unpack('>I', hdr[16:20])[0]
-        self.node_size = struct.unpack('>H', hdr[14 + 18:14 + 20])[0]
-        self.keycmp = hdr[14 + 37]
+        self._init()
 
 
 def main():
