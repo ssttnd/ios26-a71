@@ -101,21 +101,22 @@ index e803dbd..4669c8c 100644
     nir_shader *fs = air_to_nir(render->mem_ctx, fragment_bitcode, fragment_size,
                                 fragment_entry, &fopts, device->nir_options, &render->finfo,
 diff --git a/tools/mesa/air/air_private.h b/tools/mesa/air/air_private.h
-index 0a3e9d3..f409dc2 100644
+index 0a3e9d3..261b7f3 100644
 --- a/tools/mesa/air/air_private.h
 +++ b/tools/mesa/air/air_private.h
-@@ -137,6 +137,10 @@ struct air_ctx {
+@@ -137,6 +137,11 @@ struct air_ctx {
     const struct air_to_nir_options *options;
     struct air_shader_info *info;
  
 +   /* A71: options->linked, read on first use (air_call_indirect) */
 +   const struct air_module **linked_modules;
 +   const struct air_function **linked_functions;
++   void **linked_plans;   /* struct air_global_plan * per linked module, planned on first call */
 +
     /* translated values, keyed on const struct air_value * */
     struct hash_table *values;
     /* air_block * -> nir_block * */
-@@ -269,5 +273,7 @@ struct air_ptr air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes
+@@ -269,5 +274,7 @@ struct air_ptr air_ptr_add(struct air_ctx *c, struct air_ptr ptr, nir_def *bytes
  bool air_translate_call(struct air_ctx *c, const struct air_inst *in, const char *name);
  /* a call of a function defined in this module, folded in by nir_inline_functions */
  bool air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *name);
@@ -124,7 +125,7 @@ index 0a3e9d3..f409dc2 100644
  
  #endif /* AIR_PRIVATE_H */
 diff --git a/tools/mesa/air/air_to_nir.c b/tools/mesa/air/air_to_nir.c
-index 226b996..b499c32 100644
+index 226b996..5a01701 100644
 --- a/tools/mesa/air/air_to_nir.c
 +++ b/tools/mesa/air/air_to_nir.c
 @@ -225,6 +225,27 @@ ret_member_is_number(const struct air_type *m)
@@ -213,7 +214,7 @@ index 226b996..b499c32 100644
        if (callee->kind != AIR_VALUE_FUNCTION || !callee->name)
        {
           /* a visible function: no function pointers here, the result is zero */
-@@ -3564,6 +3622,94 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
+@@ -3564,6 +3622,109 @@ air_call_in_module(struct air_ctx *c, const struct air_inst *in, const char *nam
     return true;
  }
  
@@ -224,6 +225,8 @@ index 226b996..b499c32 100644
 + * before. RenderBox's custom effects (IconRendering's clampToEdges_v1 and friends) are
 + * called this way from uber_fragment.
 + */
++static void plan_globals(struct air_ctx *c, bool samplers);
++
 +bool
 +air_call_indirect(struct air_ctx *c, const struct air_inst *in, nir_def *handle)
 +{
@@ -231,6 +234,7 @@ index 226b996..b499c32 100644
 +   if (!c->linked_modules) {
 +      c->linked_modules = rzalloc_array(c->mem_ctx, const struct air_module *, o->num_linked);
 +      c->linked_functions = rzalloc_array(c->mem_ctx, const struct air_function *, o->num_linked);
++      c->linked_plans = rzalloc_array(c->mem_ctx, void *, o->num_linked);
 +      for (unsigned k = 0; k < o->num_linked; k++) {
 +         const char *err = NULL;
 +         const char *want = o->linked[k].name;
@@ -285,9 +289,21 @@ index 226b996..b499c32 100644
 +      nir_block *yes = call_split_block(c), *next = call_split_block(c);
 +      nir_goto_if(&c->b, yes, nir_ieq_imm(&c->b, handle, k + 1), next);
 +      c->b.cursor = nir_after_block(yes);
++      /* The linked module's own globals -- its constexpr samplers (clampToEdges_v1 samples
++       * through `__air_sampler_state`), constant data -- are planned for that module, once,
++       * and the caller's plan is put back afterwards. */
 +      const struct air_module *saved = c->m;
++      struct air_global_plan *saved_plan = c->global_plan;
 +      c->m = c->linked_modules[k];
-+      bool ok = emit_module_call(c, in, f, f->base.name, argv, ssa, tmp, NULL);
++      if (!c->linked_plans[k]) {
++         c->global_plan = NULL;
++         plan_globals(c, false);
++         plan_globals(c, true);
++         c->linked_plans[k] = c->global_plan;
++      }
++      c->global_plan = c->linked_plans[k];
++      bool ok = !c->error[0] && emit_module_call(c, in, f, f->base.name, argv, ssa, tmp, NULL);
++      c->global_plan = saved_plan;
 +      c->m = saved;
 +      if (!ok)
 +         return false;

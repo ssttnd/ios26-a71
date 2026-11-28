@@ -3399,3 +3399,9 @@ on hold (state above).
 - `a71:recovery` twice rebooted into iOS instead of TWRP (lines 1253966, 2165625); a second send worked.
 - Phone now: boot `220c4804...` (2144, 1125x2436, GPU iconservicesagent, pool 768), Metal 46123704488,
   icon store reset (`.old-ref1`). Log `logs/usb-ios26-2141-3x.txt` from line 2291698.
+- Sampler fix written, NOT built or tested: `ios26-visible-function-tables.patch` now plans each linked
+  module's own globals (`c->linked_plans`, plan_globals for the linked module) so its `__air_sampler_state`
+  becomes a shader sampler resource (fixes `argument 1 is not a sampler` in clampToEdges_v1 & co.).
+  Working tree: `build/vft-tree` (base = buffer-texture-base + buffer-textures patch; regenerate the patch with
+  `git diff HEAD` there, keep each file's EOL). Next: compile-check in the VM, Metal CI (`ios26=true`),
+  install, reset the icon store, check icons. Then the 3x `loop-carried pointer phi` refusal, then wallpaper.
